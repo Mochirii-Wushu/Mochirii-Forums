@@ -1,0 +1,33 @@
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local caches, logs, and generated evidence
+.artifacts/
+.cache/
+coverage/
+tmp/
+*.log
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials/
+secrets/
+
+# Runtime, dependency, and database state is not part of this seed
+node_modules/
+vendor/
+storage/
+*.db
+*.sqlite*
+*.dump
