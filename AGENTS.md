@@ -28,6 +28,11 @@ configuration.
 - Do not add runnable Discourse source, vendored upstream core, `app.yml`,
   containers, plugins, themes, provider settings, hostnames, or public copy until
   a separately reviewed ownership and implementation packet authorizes them.
+- The only approved external source reference is the pull-only official
+  `discourse/discourse_docker` upstream documented by ADR 0002. Never add an
+  upstream push path, Git URL rewrite, automatic pin update, or vendored bytes.
+- Keep upstream inspection manual, read-only, and unscheduled. Upstream drift is
+  a review finding and must never promote itself.
 - Do not deploy, publish, create paid resources, or mutate GitHub or any provider
   from this repository without exact authorization.
 - Keep production independent of any workstation and private recovery folder.
@@ -38,3 +43,6 @@ configuration.
 Before importing or generating forum source, update the ownership ADR and this
 repository contract in a focused reviewed pull request. Record origin, license,
 history-preservation method, update policy, rollback boundary, and validation.
+Close the architecture, security, cost, backup, isolated restore, monitoring,
+incident-response, and release-evidence gates in `docs/operations` before adding
+runtime or provider configuration.

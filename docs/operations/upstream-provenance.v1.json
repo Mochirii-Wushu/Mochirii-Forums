@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-29",
+  "upstream": {
+    "repository": "https://github.com/discourse/discourse_docker.git",
+    "branch": "main",
+    "revision": "a2e8beb8cbdfd1545a7b2971bf277fbcfe2a0d67",
+    "license": "MIT",
+    "reviewStatus": "source-only-pin-not-approved-for-install"
+  },
+  "files": [
+    {
+      "path": "LICENSE",
+      "bytes": 1099,
+      "sha256": "45cae34dde2c68902d1307499e088277feae27db954cf02b93db1497c2e659d8"
+    },
+    {
+      "path": "discourse-setup",
+      "bytes": 4866,
+      "sha256": "6e9d1eb677b602ac9e8b304fb34976b49bef6c57ca6641b824ebd79383555db5"
+    },
+    {
+      "path": "launcher",
+      "bytes": 25507,
+      "sha256": "06703ea3f1badab41d9dfbc6a94fe59e8d745fc17263ecf748b511c0d8af3c7e"
+    },
+    {
+      "path": "samples/standalone.yml",
+      "bytes": 4878,
+      "sha256": "7690f2d3ee2eee6db7a701311bff310a7822ebdd62a0fa6687c5cb5b72296644"
+    }
+  ]
+}

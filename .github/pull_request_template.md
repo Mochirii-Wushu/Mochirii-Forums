@@ -7,11 +7,13 @@ Describe the single causal change and why it belongs in this repository.
 - [ ] The diff is source-only and contains no credentials, private values, databases, archives, or generated binaries.
 - [ ] No provider, runtime, deployment, cost, hostname, or public-copy change is included.
 - [ ] Any future upstream-source introduction is covered by an approved ownership and history decision.
+- [ ] Any upstream evidence change follows the pull-only provenance policy and was reviewed at an exact revision.
 
 ## Verification
 
 - [ ] `pwsh -NoLogo -NoProfile -File ./scripts/check-repository.ps1`
 - [ ] PowerShell parsing, YAML parsing when available, and `git diff --check` pass.
+- [ ] Isolated upstream-policy and offline provenance checks pass.
 - [ ] Required CI is successful for this exact pull-request head.
 
 ## Review and release boundary
