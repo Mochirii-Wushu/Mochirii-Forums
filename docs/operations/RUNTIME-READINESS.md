@@ -4,6 +4,10 @@ This checklist defines evidence required before Mōchirīī Forums can gain
 runnable source or provider configuration. It is not an installation or
 deployment runbook, and it creates no runtime or recurring cost.
 
+The source-only contracts in `SOURCE-INTRODUCTION-READINESS.md` define and test
+the fail-closed inputs for this checklist. They do not mark any operational gate
+complete.
+
 ## Architecture and cost
 
 - Record the supported Discourse topology, exact upstream revision, operating

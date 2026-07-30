@@ -22,16 +22,23 @@ $requiredFiles = @(
     'SECURITY.md'
     'docs/adr/0001-clean-initialization-and-canonical-ownership.md'
     'docs/adr/0002-pull-only-upstream-and-source-introduction.md'
+    'docs/adr/0003-supported-source-introduction-packet.md'
+    'docs/operations/SOURCE-INTRODUCTION-READINESS.md'
     'docs/operations/CURRENT-STATE.md'
     'docs/operations/RELEASE-EVIDENCE.md'
     'docs/operations/RUNTIME-READINESS.md'
     'docs/operations/SOURCE-PROVENANCE.md'
+    'docs/operations/backup-restore-contract.v1.json'
     'docs/operations/customizations.v1.json'
     'docs/operations/release-evidence.v1.example.json'
+    'docs/operations/runtime-config.v1.example.json'
+    'docs/operations/source-introduction.v1.json'
     'docs/operations/upstream-provenance.v1.json'
     'scripts/check-repository.ps1'
+    'scripts/check-source-introduction.ps1'
     'scripts/configure-upstream.ps1'
     'scripts/test-upstream-policy.ps1'
+    'scripts/test-source-introduction.ps1'
     'scripts/verify-upstream-policy.ps1'
     'scripts/verify-upstream-provenance.ps1'
 )
@@ -289,6 +296,10 @@ foreach ($scriptFile in $scriptFiles) {
     -RepositoryRoot $repositoryRoot
 
 & (Join-Path $repositoryRoot 'scripts/test-upstream-policy.ps1')
+
+& (Join-Path $repositoryRoot 'scripts/check-source-introduction.ps1')
+
+& (Join-Path $repositoryRoot 'scripts/test-source-introduction.ps1')
 
 $diffCheck = & git diff --check 2>&1
 if ($LASTEXITCODE -ne 0) {

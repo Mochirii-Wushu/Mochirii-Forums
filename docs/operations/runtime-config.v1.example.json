@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "status": "redacted-non-runnable-example",
+  "environment": "candidate",
+  "source": {
+    "repositoryCommit": null,
+    "repositoryTree": null,
+    "upstreamRevision": "a2e8beb8cbdfd1545a7b2971bf277fbcfe2a0d67",
+    "imageDigest": null,
+    "sbomDigest": null,
+    "provenanceReference": null
+  },
+  "runtime": {
+    "provider": null,
+    "region": null,
+    "operatingSystem": null,
+    "containerEngine": null,
+    "hostname": null,
+    "publicExposureEnabled": false,
+    "jobsEnabled": false,
+    "mailEnabled": false
+  },
+  "data": {
+    "databaseVolume": null,
+    "uploadsVolume": null,
+    "backupDestination": null,
+    "retentionPolicy": null
+  },
+  "secrets": {
+    "runtimeStore": null,
+    "databasePassword": null,
+    "applicationSecret": null,
+    "mailCredential": null
+  },
+  "network": {
+    "tlsTermination": null,
+    "ingressAllowlist": [],
+    "administrativeAccess": null,
+    "outboundAllowlist": []
+  },
+  "ownership": {
+    "releaseOwner": null,
+    "runtimeOwner": null,
+    "backupOwner": null,
+    "incidentOwner": null
+  },
+  "cost": {
+    "approvedMonthlyMinimumUsd": null,
+    "approvedMonthlyExpectedUsd": null,
+    "approvedMonthlyMaximumUsd": null,
+    "approvalReference": null
+  },
+  "activation": {
+    "sourceIntroductionApproved": false,
+    "providerApproved": false,
+    "secretsConfigured": false,
+    "backupRestorePassed": false,
+    "rollbackPassed": false,
+    "releaseApproved": false
+  }
+}

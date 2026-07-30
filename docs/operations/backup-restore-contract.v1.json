@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "status": "unexecuted-contract",
+  "scope": [
+    "database",
+    "uploads",
+    "reviewed-runtime-configuration",
+    "required-encryption-key-references"
+  ],
+  "backup": {
+    "encrypted": true,
+    "immutableRetentionRequired": true,
+    "leastPrivilegeRequired": true,
+    "independentFreshnessMonitoringRequired": true,
+    "destination": null,
+    "retention": null,
+    "measuredRpoSeconds": null
+  },
+  "restore": {
+    "isolatedTargetRequired": true,
+    "sameApplicationVersionRequired": true,
+    "outboundMailSuppressed": true,
+    "publicExposureDisabled": true,
+    "databaseIntegrityPassed": false,
+    "memberBoundaryPassed": false,
+    "uploadsPassed": false,
+    "jobsPassed": false,
+    "measuredRtoSeconds": null,
+    "evidenceReference": null
+  },
+  "rollback": {
+    "preChangeBackupRequired": true,
+    "sourceCommitRequired": true,
+    "imageDigestRequired": true,
+    "configurationDigestRequired": true,
+    "migrationCompatibilityDecisionRequired": true,
+    "rehearsalPassed": false,
+    "evidenceReference": null
+  },
+  "approvalReference": null
+}

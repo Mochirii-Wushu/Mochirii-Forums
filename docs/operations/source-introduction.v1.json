@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "status": "source-only-proposal",
+  "repository": "Mochirii-Wushu/Mochirii-Forums",
+  "upstream": {
+    "repository": "https://github.com/discourse/discourse_docker.git",
+    "revision": "a2e8beb8cbdfd1545a7b2971bf277fbcfe2a0d67",
+    "manifest": "docs/operations/upstream-provenance.v1.json",
+    "fetchPolicy": "pull-only-exact-revision",
+    "pushPolicy": "disabled",
+    "sourceImported": false
+  },
+  "historyPreservation": {
+    "selectedMethod": null,
+    "reviewRequired": true,
+    "upstreamCoreModificationAllowed": false
+  },
+  "customizationBoundary": {
+    "manifest": "docs/operations/customizations.v1.json",
+    "plugins": [],
+    "themes": [],
+    "integrations": []
+  },
+  "releaseRequirements": {
+    "exactSourceCommit": true,
+    "exactSourceTree": true,
+    "immutableImageDigest": true,
+    "sbom": true,
+    "provenance": true,
+    "configurationDigest": true,
+    "isolatedRestore": true,
+    "rollbackRehearsal": true,
+    "accountableReview": true
+  },
+  "providerMutationAuthorized": false,
+  "paidResourceAuthorized": false
+}

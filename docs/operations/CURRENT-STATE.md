@@ -26,6 +26,11 @@ policy rejects pushes, URL rewrites, and extra remotes in an isolated fixture.
 The manual inspection workflow has no schedule or write permission and reports
 upstream drift without promoting it.
 
+ADR 0003 adds a cost-neutral source-introduction proposal. Its redacted runtime,
+backup, isolated-restore, and rollback contracts remain non-runnable and fail
+closed. No upstream source, executable configuration, host, hostname, provider,
+secret, public surface, or recurring cost has been introduced.
+
 ## Review boundary
 
 CODEOWNERS has no matching rule because no existing user or team has been approved.
@@ -34,11 +39,11 @@ human review are therefore required procedural gates before any merge.
 
 ## Remaining separately approved decisions
 
-Before introducing forum software, approve the exact history-preservation and
-source-introduction packet described by ADR 0002. Before adding runtime or
+Before introducing forum software, approve the exact history-preservation
+method and source boundary proposed by ADR 0003. Before adding runtime or
 provider configuration, close every gate in `RUNTIME-READINESS.md`, including
-architecture, ownership, cost, security, secrets, email, backup, isolated
-restore proof, upgrade, rollback, monitoring, and incident response.
+ownership, cost, security, secrets, email, backup, isolated restore proof,
+upgrade, rollback, monitoring, and incident response.
 
 This state record does not authorize a commit, push, pull request, GitHub setting
 change, source import, deployment, or provider mutation.

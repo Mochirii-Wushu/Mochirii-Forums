@@ -2,9 +2,10 @@
 
 Private canonical repository for the future Mōchirīī forums source boundary.
 
-This initial state contains governance and validation only. It intentionally has
-no runnable forum software, public experience, hostname, provider integration,
-deployment configuration, database, secret, binary, or vendored upstream core.
+This state contains governance and a fail-closed source-introduction proposal.
+It intentionally has no runnable forum software, public experience, hostname,
+provider integration, deployment configuration, database, secret, binary, or
+vendored upstream core.
 
 ## Current contents
 
@@ -22,7 +23,9 @@ See [the current state](docs/operations/CURRENT-STATE.md) and
 [ADR 0002](docs/adr/0002-pull-only-upstream-and-source-introduction.md)
 before adding source. The [source-provenance policy](docs/operations/SOURCE-PROVENANCE.md)
 and [runtime-readiness gates](docs/operations/RUNTIME-READINESS.md) define what
-must be reviewed first.
+must be reviewed first. The
+[source-introduction packet](docs/operations/SOURCE-INTRODUCTION-READINESS.md)
+records the remaining decisions without creating a runtime or cost.
 
 ## Validate locally
 

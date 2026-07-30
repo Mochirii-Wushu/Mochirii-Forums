@@ -28,6 +28,9 @@ configuration.
 - Do not add runnable Discourse source, vendored upstream core, `app.yml`,
   containers, plugins, themes, provider settings, hostnames, or public copy until
   a separately reviewed ownership and implementation packet authorizes them.
+- Source-only ADRs, redacted non-runnable examples, validation contracts, and
+  backup/restore/rollback evidence schemas are allowed when every activation,
+  provider, secret, public-exposure, mail, and paid-resource field fails closed.
 - The only approved external source reference is the pull-only official
   `discourse/discourse_docker` upstream documented by ADR 0002. Never add an
   upstream push path, Git URL rewrite, automatic pin update, or vendored bytes.
@@ -46,3 +49,6 @@ history-preservation method, update policy, rollback boundary, and validation.
 Close the architecture, security, cost, backup, isolated restore, monitoring,
 incident-response, and release-evidence gates in `docs/operations` before adding
 runtime or provider configuration.
+
+ADR 0003 and its source-only contracts prepare that review packet but do not
+authorize source import, installation, provider configuration, or billing.
