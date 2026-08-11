@@ -83,6 +83,87 @@ try {
     & $configureScript -RepositoryRoot $workPath -Apply
     & $verifyScript -RepositoryRoot $workPath
 
+    $pushDefault = @(& git -C $workPath config --local --get-all remote.pushDefault)
+    $pullFf = @(& git -C $workPath config --local --get-all pull.ff)
+    $tagOpt = @(& git -C $workPath config --local --get-all remote.upstream.tagOpt)
+    $fetchSpec = @(& git -C $workPath config --local --get-all remote.upstream.fetch)
+    if (($pushDefault -join "`n") -cne 'origin' -or
+        ($pullFf -join "`n") -cne 'only' -or
+        ($tagOpt -join "`n") -cne '--no-tags' -or
+        ($fetchSpec -join "`n") -cne '+refs/heads/main:refs/remotes/upstream/main') {
+        throw 'The configurator did not install the exact push/pull/tag/refspec defaults.'
+    }
+
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', 'remote.pushDefault', 'upstream'
+    )
+    $wrongPushDefaultRejected = $false
+    try {
+        & $verifyScript -RepositoryRoot $workPath *> $null
+    }
+    catch {
+        $wrongPushDefaultRejected = $true
+    }
+    if (-not $wrongPushDefaultRejected) {
+        throw 'The verifier did not reject a non-origin push default.'
+    }
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', 'remote.pushDefault', 'origin'
+    )
+
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', 'pull.ff', 'false'
+    )
+    $nonFfPullRejected = $false
+    try {
+        & $verifyScript -RepositoryRoot $workPath *> $null
+    }
+    catch {
+        $nonFfPullRejected = $true
+    }
+    if (-not $nonFfPullRejected) {
+        throw 'The verifier did not reject a non-fast-forward-only pull policy.'
+    }
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', 'pull.ff', 'only'
+    )
+
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', 'remote.upstream.tagOpt', '--tags'
+    )
+    $tagFollowingRejected = $false
+    try {
+        & $verifyScript -RepositoryRoot $workPath *> $null
+    }
+    catch {
+        $tagFollowingRejected = $true
+    }
+    if (-not $tagFollowingRejected) {
+        throw 'The verifier did not reject automatic upstream tag following.'
+    }
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', 'remote.upstream.tagOpt', '--no-tags'
+    )
+
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', '--replace-all', 'remote.upstream.fetch',
+        '+refs/heads/*:refs/remotes/upstream/*'
+    )
+    $broadFetchRejected = $false
+    try {
+        & $verifyScript -RepositoryRoot $workPath *> $null
+    }
+    catch {
+        $broadFetchRejected = $true
+    }
+    if (-not $broadFetchRejected) {
+        throw 'The verifier did not reject a broad upstream branch refspec.'
+    }
+    Invoke-GitChecked -WorkingDirectory $workPath -Arguments @(
+        'config', '--local', '--replace-all', 'remote.upstream.fetch',
+        '+refs/heads/main:refs/remotes/upstream/main'
+    )
+
     $refsBefore = @(& git --git-dir=$upstreamPath for-each-ref --format='%(refname):%(objectname)')
     Push-Location -LiteralPath $workPath
     try {

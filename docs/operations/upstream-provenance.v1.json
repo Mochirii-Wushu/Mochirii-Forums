@@ -1,18 +1,84 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-07-29",
+  "recordedAt": "2026-08-02",
   "upstream": {
     "repository": "https://github.com/discourse/discourse_docker.git",
     "branch": "main",
-    "revision": "a2e8beb8cbdfd1545a7b2971bf277fbcfe2a0d67",
+    "revision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
     "license": "MIT",
+    "revisionTree": "1a397a459ae60c588ed79ab5db1a225fe977caf0",
+    "revisionCommitSignatureVerified": true,
+    "revisionCommitSignatureReason": "valid",
     "reviewStatus": "source-only-pin-not-approved-for-install"
+  },
+  "driftObservation": {
+    "observedAt": "2026-08-11",
+    "mainRevision": "e6d7b508b43f9610950166f53cb1be1bd78435a9",
+    "mainTree": "720f6aa67199841469b76191baae55db849c2eec",
+    "mainCommitSignatureVerified": true,
+    "mainCommitSignatureReason": "valid",
+    "commitsAheadOfPin": 11,
+    "commitsBehindPin": 0,
+    "pinIsAncestor": true,
+    "selectedForRuntime": false,
+    "automaticPinUpdateAllowed": false,
+    "materialChangesReviewed": false,
+    "materialChangesInventoryComplete": false,
+    "materialChangesScope": "notable-non-exhaustive-compatibility-gates",
+    "materialChanges": [
+      {
+        "commit": "09493049db7e4873f3dcff1356249ccf879ca6ec",
+        "area": "postgresql-18-dump-restore",
+        "requiredGate": "three-database-sized-copies-free-space-and-isolated-restore-rehearsal"
+      },
+      {
+        "commit": "7de2cf5c5a3c41ef7d2056e216190887e7b5f59a",
+        "area": "postgresql-18-free-disk-calculation",
+        "requiredGate": "capacity-calculation-review-and-measured-headroom"
+      },
+      {
+        "commit": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
+        "area": "single-core-cpu-detection",
+        "requiredGate": "one-core-install-and-rebuild-compatibility-test"
+      },
+      {
+        "commit": "9a064388b76beb41527b7c7b650566a5f94075aa",
+        "area": "postgresql-18-all-databases",
+        "requiredGate": "multi-database-preservation-and-restore-rehearsal"
+      },
+      {
+        "commit": "a4d4cb41aeb6266f8cfc84b88477435629317787",
+        "area": "debian-trixie",
+        "requiredGate": "operating-system-and-container-compatibility-review"
+      },
+      {
+        "commit": "a2351299445cf4d8946e84c1e76343d151c223fa",
+        "area": "ruby-3.4.10",
+        "requiredGate": "plugin-and-build-compatibility-review"
+      },
+      {
+        "commit": "dfdddb8505c71b4b3b5e6a741f4e90e4a9c9e0a7",
+        "area": "debian-redis-package",
+        "requiredGate": "runtime-data-log-and-restart-review"
+      },
+      {
+        "commit": "e6d7b508b43f9610950166f53cb1be1bd78435a9",
+        "area": "redis-log-directory",
+        "requiredGate": "persistent-log-path-permissions-and-restart-review"
+      }
+    ],
+    "reviewStatus": "drift-detected-review-required"
   },
   "files": [
     {
       "path": "LICENSE",
       "bytes": 1099,
       "sha256": "45cae34dde2c68902d1307499e088277feae27db954cf02b93db1497c2e659d8"
+    },
+    {
+      "path": "install-discourse",
+      "bytes": 4612,
+      "sha256": "77df1fba636b84d242e81e00c887af3f7754df84aa48680c49f69041528b14cb"
     },
     {
       "path": "discourse-setup",

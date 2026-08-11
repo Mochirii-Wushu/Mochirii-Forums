@@ -15,7 +15,7 @@ vendored upstream core.
 - exact upstream provenance and empty customization manifests;
 - cost-neutral runtime-readiness and release-evidence gates;
 - least-privilege GitHub Actions validation;
-- an unscheduled, read-only upstream inspection workflow; and
+- a monthly and manually dispatched read-only upstream inspection workflow; and
 - GitHub Actions-only dependency update configuration.
 
 See [the current state](docs/operations/CURRENT-STATE.md) and
@@ -36,6 +36,8 @@ pwsh -NoLogo -NoProfile -File ./scripts/check-repository.ps1
 Passing local validation does not authorize a merge, deployment, provider
 change, or public release.
 
-The `inspect-forums-upstream` workflow is manual-only. It verifies the pinned
-official bytes and fails when upstream `main` moves; it never updates the pin
-or writes repository/provider state.
+Once an explicitly authorized bootstrap places it on `main`, the
+`inspect-forums-upstream` workflow is configured for monthly and manual runs. It
+is currently inert in the empty origin. It verifies pinned official bytes and
+the recorded upstream-drift observation; it never updates a pin, opens a pull
+request, promotes a release, or writes repository/provider state.

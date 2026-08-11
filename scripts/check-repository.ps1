@@ -30,9 +30,12 @@ $requiredFiles = @(
     'docs/operations/SOURCE-PROVENANCE.md'
     'docs/operations/backup-restore-contract.v1.json'
     'docs/operations/customizations.v1.json'
+    'docs/operations/forum-central-identity.consumer.v1.json'
     'docs/operations/release-evidence.v1.example.json'
+    'docs/operations/repository-capabilities.v1.json'
     'docs/operations/runtime-config.v1.example.json'
     'docs/operations/source-introduction.v1.json'
+    'docs/operations/third-party-components.v1.json'
     'docs/operations/upstream-provenance.v1.json'
     'scripts/check-repository.ps1'
     'scripts/check-source-introduction.ps1'
@@ -76,6 +79,8 @@ $prohibitedNamePattern = '(?i)(^|/)(?:app\.ya?ml|dockerfile(?:\..*)?|docker-comp
 $secretAssignmentPattern = '(?i)^\s*(?:export\s+)?(?<name>[A-Z0-9_]*(?:API_KEY|CLIENT_SECRET|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[A-Z0-9_]*)\s*[:=]\s*(?<value>.+?)\s*$'
 $safeReferencePattern = '^\$\{\{\s*github\.token\s*\}\}$'
 $maxBytes = 1MB
+$prohibitedFixedZone = 'Etc/GMT' + '-8'
+$prohibitedDisplayLabelField = 'displayTimeZone' + 'Label'
 
 foreach ($relativePath in $inventory) {
     if ($relativePath -match $prohibitedNamePattern) {
@@ -117,6 +122,11 @@ foreach ($relativePath in $inventory) {
     }
     if ($text.StartsWith('version https://git-lfs.github.com/spec/v1', [StringComparison]::Ordinal)) {
         throw "Git LFS pointers are not allowed in the governance seed: $relativePath"
+    }
+    if ($text.Contains($prohibitedFixedZone, [StringComparison]::Ordinal) -or
+        $text.Contains($prohibitedDisplayLabelField, [StringComparison]::Ordinal) -or
+        $text -match '(?i)\b480[- ]minute\b') {
+        throw "Fixed-offset or manually maintained display-time authority is not allowed: $relativePath"
     }
 
     $lineNumber = 0
@@ -198,8 +208,14 @@ for ($index = $onIndex + 1; $index -lt $inspectionLines.Count; $index++) {
         $onBlock.Add($line)
     }
 }
-if ($onBlock.Count -ne 1 -or $onBlock[0] -cne '  workflow_dispatch:') {
-    throw 'The upstream inspection workflow trigger set must equal workflow_dispatch only.'
+$expectedOnBlock = @(
+    '  workflow_dispatch:',
+    '  schedule:',
+    "    - cron: '17 22 3 * *'",
+    '      timezone: Asia/Singapore'
+)
+if (($onBlock -join "`n") -cne ($expectedOnBlock -join "`n")) {
+    throw 'The upstream inspection workflow must use the exact manual plus monthly Asia/Singapore schedule.'
 }
 
 $permissionHeaders = @($inspectionLines | Where-Object {
@@ -225,6 +241,22 @@ if ($permissionsBlock.Count -ne 1 -or $permissionsBlock[0] -cne '  contents: rea
 if ($inspectionWorkflow -match '(?im)^\s*(?:environment|''environment''|"environment"|secrets|''secrets''|"secrets")\s*:') {
     throw 'The upstream inspection workflow must not bind an environment or secrets.'
 }
+if ($inspectionWorkflow -match '(?im)^\s*(?:git\s+push|gh\s+(?:pr|release)|docker\s+push)\b' -or
+    $inspectionWorkflow -match '(?i)actions/(?:upload-artifact|cache)@') {
+    throw 'The upstream inspection workflow must not push, open a PR/release, or publish/cache artifacts.'
+}
+
+$inspectionUses = @(
+    [regex]::Matches($inspectionWorkflow, '(?im)^\s*-?\s*uses:\s*([^\s#]+)') |
+        ForEach-Object { $_.Groups[1].Value.Trim() }
+)
+if (($inspectionUses -join "`n") -cne
+    'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' -or
+    $inspectionWorkflow -notmatch '(?m)^\s+fetch-depth:\s+1\s*$' -or
+    $inspectionWorkflow -notmatch '(?m)^\s+persist-credentials:\s+false\s*$' -or
+    $inspectionWorkflow -notmatch '(?m)^\s+ref:\s+\$\{\{ github\.sha \}\}\s*$') {
+    throw 'The upstream inspection workflow checkout must use exact immutable v7.0.1 settings.'
+}
 
 function Assert-InspectionWorkflowExpressions {
     param([Parameter(Mandatory)][string]$WorkflowText)
@@ -233,10 +265,10 @@ function Assert-InspectionWorkflowExpressions {
         [regex]::Matches($WorkflowText, '\$\{\{\s*(?<expression>.*?)\s*\}\}') |
             ForEach-Object { $_.Groups['expression'].Value.Trim() }
     )
-    $expectedExpressions = @('github.ref', 'github.sha', 'github.token')
+    $expectedExpressions = @('github.ref', 'github.sha', 'github.sha')
     if (($expressions | Sort-Object) -join "`n" -cne
         (($expectedExpressions | Sort-Object) -join "`n")) {
-        throw 'The upstream inspection workflow may use only the reviewed GitHub ref, SHA, and token expressions.'
+        throw 'The upstream inspection workflow may use only the reviewed GitHub ref and exact repeated SHA expressions.'
     }
 }
 
@@ -254,6 +286,28 @@ catch {
 }
 if (-not $secretExpressionRejected) {
     throw 'The workflow-expression contract did not reject the secret-context fixture.'
+}
+
+$dependabotText = Get-Content -Raw -LiteralPath (
+    Join-Path $repositoryRoot '.github/dependabot.yml'
+)
+$dependabotLines = @(
+    $dependabotText -split "`r?`n" | Where-Object { $_ -cne '' }
+)
+$expectedDependabotLines = @(
+    'version: 2',
+    'updates:',
+    '  - package-ecosystem: github-actions',
+    '    directory: /',
+    '    schedule:',
+    '      interval: monthly',
+    '      time: "22:43"',
+    '      timezone: Asia/Singapore',
+    '    target-branch: main',
+    '    open-pull-requests-limit: 5'
+)
+if (($dependabotLines -join "`n") -cne ($expectedDependabotLines -join "`n")) {
+    throw 'Dependabot must use the exact monthly Asia/Singapore schedule.'
 }
 
 $customizationsPath = Join-Path $repositoryRoot 'docs/operations/customizations.v1.json'
@@ -290,6 +344,20 @@ foreach ($scriptFile in $scriptFiles) {
         $messages = @($parseErrors | ForEach-Object { $_.Message })
         throw "PowerShell parsing failed for ${scriptFile}: $($messages -join '; ')"
     }
+}
+
+$provenanceVerifierText = Get-Content -Raw -LiteralPath (
+    Join-Path $repositoryRoot 'scripts/verify-upstream-provenance.ps1'
+)
+$boundedDownloadCalls = @(
+    [regex]::Matches($provenanceVerifierText, '(?m)Get-RemoteBytes -Client[^\r\n]+') |
+        ForEach-Object { $_.Value }
+)
+if ($provenanceVerifierText -match 'GetByteArrayAsync' -or
+    $provenanceVerifierText -notmatch 'ResponseHeadersRead' -or
+    $boundedDownloadCalls.Count -ne 9 -or
+    @($boundedDownloadCalls | Where-Object { $_ -notmatch '-MaxBytes\s+' }).Count -ne 0) {
+    throw 'Every online provenance response must use the reviewed bounded streaming reader.'
 }
 
 & (Join-Path $repositoryRoot 'scripts/verify-upstream-provenance.ps1') `

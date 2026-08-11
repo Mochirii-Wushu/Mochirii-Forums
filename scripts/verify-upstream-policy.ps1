@@ -70,8 +70,21 @@ try {
         throw 'The upstream push URL is not the required nonfunctional sentinel.'
     }
     if ($upstreamFetchSpec.Count -ne 1 -or
-        $upstreamFetchSpec[0] -cne '+refs/heads/*:refs/remotes/upstream/*') {
-        throw 'The upstream fetch refspec is not the expected heads-only mapping.'
+        $upstreamFetchSpec[0] -cne '+refs/heads/main:refs/remotes/upstream/main') {
+        throw 'The upstream fetch refspec must map only official main.'
+    }
+
+    $pushDefault = @(Get-LocalConfigValues -Key 'remote.pushDefault')
+    if ($pushDefault.Count -ne 1 -or $pushDefault[0] -cne 'origin') {
+        throw 'The local push default must be exactly origin.'
+    }
+    $pullFf = @(Get-LocalConfigValues -Key 'pull.ff')
+    if ($pullFf.Count -ne 1 -or $pullFf[0] -cne 'only') {
+        throw 'The local pull policy must be fast-forward-only.'
+    }
+    $upstreamTagOpt = @(Get-LocalConfigValues -Key 'remote.upstream.tagOpt')
+    if ($upstreamTagOpt.Count -ne 1 -or $upstreamTagOpt[0] -cne '--no-tags') {
+        throw 'The upstream remote must disable automatic tag following.'
     }
 
     $rewriteLines = @(& git config --get-regexp '^url\..*\.(insteadOf|pushInsteadOf)$' 2>$null)

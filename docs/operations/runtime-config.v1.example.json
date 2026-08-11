@@ -1,14 +1,50 @@
 {
   "schemaVersion": 1,
+  "recordedAt": "2026-08-02",
   "status": "redacted-non-runnable-example",
   "environment": "candidate",
   "source": {
     "repositoryCommit": null,
     "repositoryTree": null,
-    "upstreamRevision": "a2e8beb8cbdfd1545a7b2971bf277fbcfe2a0d67",
+    "upstreamRevision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
     "imageDigest": null,
     "sbomDigest": null,
     "provenanceReference": null
+  },
+  "layout": {
+    "deploymentModel": "official-discourse-docker-standalone",
+    "repositoryRoot": "/var/discourse",
+    "upstreamTemplatePath": "samples/standalone.yml",
+    "hostRuntimeConfigPath": "/var/discourse/containers/app.yml",
+    "hostPersistentPath": "/var/discourse/shared/standalone",
+    "containerPersistentPath": "/shared",
+    "runtimeConfigCommitted": false,
+    "runtimeConfigRootOwnedRequired": true,
+    "runtimeConfigContainsSecrets": true
+  },
+  "installer": {
+    "upstreamPath": "install-discourse",
+    "reviewedRevision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
+    "reviewedSha256": "77df1fba636b84d242e81e00c887af3f7754df84aa48680c49f69041528b14cb",
+    "directNetworkPipeExecutionAllowed": false,
+    "transitiveInputsPinned": false,
+    "setupWizardImageDigest": null,
+    "executionApproved": false
+  },
+  "resources": {
+    "minimum": {
+      "cpuCores": 1,
+      "memoryMiB": 1024,
+      "swapMiB": 2048,
+      "diskGiB": 10
+    },
+    "recommended": {
+      "cpuCores": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 20
+    },
+    "selectedCapacity": null,
+    "requirementsVerified": false
   },
   "runtime": {
     "provider": null,
@@ -20,11 +56,50 @@
     "jobsEnabled": false,
     "mailEnabled": false
   },
+  "time": {
+    "civilTimeZone": "Asia/Singapore",
+    "businessCalendarTimeZone": "Asia/Singapore",
+    "displayTimeZone": "Asia/Singapore",
+    "schedulerTimeZone": "Asia/Singapore",
+    "storageTimeZone": "UTC",
+    "protocolTimeZone": "UTC",
+    "displayOffsetDerivedFromIanaAtInstant": true,
+    "supportedSiteWideAuthorityIdentified": false,
+    "supportedConfigurationArtifact": null,
+    "customizationManifestEntry": null,
+    "runtimeTzdbVersion": null,
+    "runtimeTzdbEvidence": null,
+    "browserEvidence": null,
+    "historicalInstantEvidence": null,
+    "runtimeVerified": false
+  },
+  "identity": {
+    "contract": "docs/operations/forum-central-identity.consumer.v1.json",
+    "role": "discourse-connect-consumer",
+    "customCorePluginAllowed": false,
+    "producerEndpoint": null,
+    "secretReference": null,
+    "configured": false,
+    "verified": false
+  },
   "data": {
     "databaseVolume": null,
     "uploadsVolume": null,
     "backupDestination": null,
-    "retentionPolicy": null
+    "retentionPolicy": null,
+    "persistentSharedStorageVerified": false
+  },
+  "mail": {
+    "mochiriiSmtpRequiredBeforeLaunch": true,
+    "smtpProvider": null,
+    "smtpEndpoint": null,
+    "discourseIdAlternativeApproved": false,
+    "noSendCandidateRequired": true,
+    "deliverabilityVerified": false,
+    "spfVerified": false,
+    "dkimVerified": false,
+    "dmarcVerified": false,
+    "bounceAndComplaintHandlingVerified": false
   },
   "secrets": {
     "runtimeStore": null,
@@ -36,7 +111,45 @@
     "tlsTermination": null,
     "ingressAllowlist": [],
     "administrativeAccess": null,
-    "outboundAllowlist": []
+    "outboundAllowlist": [],
+    "databasePublicExposureEnabled": false,
+    "redisPublicExposureEnabled": false,
+    "localOrPrivateHostnameAllowed": false
+  },
+  "maintenance": {
+    "supportedUpgradeMethods": [
+      "admin-upgrade",
+      "launcher-rebuild-app"
+    ],
+    "exactVersionAndDigestRequired": true,
+    "preChangeBackupRequired": true,
+    "automaticMutablePromotionAllowed": false,
+    "isolatedUpgradeRehearsalPassed": false,
+    "rollbackDecisionDocumented": false,
+    "evidenceReference": null
+  },
+  "health": {
+    "requiredChecks": [
+      "bounded-https-readiness",
+      "database",
+      "redis",
+      "background-jobs",
+      "persistent-storage",
+      "tls-certificate",
+      "outbound-mail",
+      "backup-freshness",
+      "resource-saturation",
+      "post-reboot",
+      "workstation-off"
+    ],
+    "passed": false,
+    "evidenceReference": null
+  },
+  "workstationIndependence": {
+    "workstationRuntimeDependencyAllowed": false,
+    "privateRecoveryRuntimeDependencyAllowed": false,
+    "localScheduledTaskAllowed": false,
+    "verified": false
   },
   "ownership": {
     "releaseOwner": null,
@@ -52,10 +165,21 @@
   },
   "activation": {
     "sourceIntroductionApproved": false,
+    "supportedReleaseSelected": false,
+    "installerInputsPinned": false,
     "providerApproved": false,
+    "resourceMinimumsVerified": false,
+    "persistentSharedStorageVerified": false,
     "secretsConfigured": false,
+    "smtpVerified": false,
+    "soleIanaTimeAuthorityImplemented": false,
+    "soleIanaTimeAuthorityBrowserTested": false,
+    "runtimeTzdbVerified": false,
     "backupRestorePassed": false,
+    "upgradeRehearsalPassed": false,
     "rollbackPassed": false,
+    "healthChecksPassed": false,
+    "workstationIndependencePassed": false,
     "releaseApproved": false
   }
 }

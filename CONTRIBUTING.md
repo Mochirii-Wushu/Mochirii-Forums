@@ -16,9 +16,10 @@ exists, the workflow below applies without exception.
 7. Obtain accountable human review of the final exact head before merge.
 
 For upstream evidence changes, also follow
-`docs/operations/SOURCE-PROVENANCE.md`. Upstream drift is never merged or
-promoted automatically. Record the exact upstream revision, verify its official
-bytes, review the diff and license, and keep any source introduction separate.
+`docs/operations/SOURCE-PROVENANCE.md`. The monthly/manual read-only inspection
+may report upstream drift, but drift is never merged or promoted automatically.
+Record the exact upstream revision, verify its official bytes, review the diff
+and license, and keep any runtime/configuration introduction separate.
 
 ## Exact-head review boundary
 

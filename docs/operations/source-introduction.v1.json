@@ -4,16 +4,20 @@
   "repository": "Mochirii-Wushu/Mochirii-Forums",
   "upstream": {
     "repository": "https://github.com/discourse/discourse_docker.git",
-    "revision": "a2e8beb8cbdfd1545a7b2971bf277fbcfe2a0d67",
+    "revision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
     "manifest": "docs/operations/upstream-provenance.v1.json",
-    "fetchPolicy": "pull-only-exact-revision",
+    "remoteFetchPolicy": "pull-only-main-drift-observation",
+    "evidencePinPolicy": "exact-revision",
     "pushPolicy": "disabled",
     "sourceImported": false
   },
   "historyPreservation": {
-    "selectedMethod": null,
-    "reviewRequired": true,
-    "upstreamCoreModificationAllowed": false
+    "selectedMethod": "external-upstream-reference-no-import",
+    "reviewRequired": false,
+    "repositoryOwnershipModel": "configuration-and-isolated-overlays-only",
+    "upstreamCoreModificationAllowed": false,
+    "vendoredCoreAllowed": false,
+    "forkedCoreAllowed": false
   },
   "customizationBoundary": {
     "manifest": "docs/operations/customizations.v1.json",
@@ -21,13 +25,42 @@
     "themes": [],
     "integrations": []
   },
+  "thirdPartyBoundary": {
+    "manifest": "docs/operations/third-party-components.v1.json",
+    "coreRevisionSelected": false,
+    "licensesReviewed": false,
+    "trademarkReviewComplete": false,
+    "dependencyInventoryComplete": false
+  },
+  "identityBoundary": {
+    "contract": "docs/operations/forum-central-identity.consumer.v1.json",
+    "producerRepository": "Mochirii-Wushu/Mochirii-Website",
+    "consumerRepository": "Mochirii-Wushu/Mochirii-Forums",
+    "producerContractVersion": null,
+    "consumerProposalVersion": "1.0.0-proposal",
+    "customCorePluginAllowed": false,
+    "activationReady": false
+  },
   "releaseRequirements": {
     "exactSourceCommit": true,
     "exactSourceTree": true,
+    "exactCoreRevision": true,
+    "supportedRelease": true,
+    "installerChecksum": true,
+    "transitiveInstallerInputs": true,
     "immutableImageDigest": true,
     "sbom": true,
+    "thirdPartyNoticeArtifact": true,
+    "licenseReview": true,
+    "trademarkReview": true,
     "provenance": true,
     "configurationDigest": true,
+    "minimumResources": true,
+    "persistentSharedStorage": true,
+    "smtp": true,
+    "soleIanaTimeAuthority": true,
+    "health": true,
+    "workstationIndependence": true,
     "isolatedRestore": true,
     "rollbackRehearsal": true,
     "accountableReview": true

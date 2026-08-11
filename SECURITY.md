@@ -26,11 +26,12 @@ runtime release.
 
 ## Upstream and dependency response
 
-The manual upstream inspection workflow may identify a new official revision,
-security notice, or dependency change. Treat that result as untrusted input for
-review: do not execute it, update the reviewed pin automatically, or introduce
-runnable source in the same change. Assess impact and license, verify official
-bytes, document the decision, and use a focused exact-head pull request.
+The monthly/manual read-only upstream inspection workflow may identify a new
+official revision, security notice, or dependency change. Treat that result as
+untrusted input for review: do not execute it, update the reviewed pin
+automatically, or introduce runnable configuration in the same change. Assess
+impact and license, verify official bytes, document the decision, and use a
+focused exact-head pull request.
 
 Once runtime source exists under separate approval, define severity targets,
 supported versions, dependency inventory, coordinated disclosure, emergency

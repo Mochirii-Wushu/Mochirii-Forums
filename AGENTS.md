@@ -31,11 +31,15 @@ configuration.
 - Source-only ADRs, redacted non-runnable examples, validation contracts, and
   backup/restore/rollback evidence schemas are allowed when every activation,
   provider, secret, public-exposure, mail, and paid-resource field fails closed.
-- The only approved external source reference is the pull-only official
-  `discourse/discourse_docker` upstream documented by ADR 0002. Never add an
-  upstream push path, Git URL rewrite, automatic pin update, or vendored bytes.
-- Keep upstream inspection manual, read-only, and unscheduled. Upstream drift is
-  a review finding and must never promote itself.
+- The only remotes are canonical `origin` and the pull-only official
+  `discourse/discourse_docker` upstream documented by ADR 0002. The upstream
+  fetch URL remains enabled for official `main` only, automatic tag following
+  is disabled, its sole push URL is `disabled://upstream-push`, `origin` is the
+  push default, and pulls are fast-forward-only. Never add a Git URL rewrite,
+  automatic pin update, or vendored upstream bytes.
+- Keep upstream inspection read-only. The approved low-frequency monthly
+  schedule and manual dispatch may report drift, but may never update a pin,
+  create a branch or pull request, promote a release, or mutate a provider.
 - Do not deploy, publish, create paid resources, or mutate GitHub or any provider
   from this repository without exact authorization.
 - Keep production independent of any workstation and private recovery folder.
@@ -43,10 +47,13 @@ configuration.
 
 ## Future source introduction
 
-Before importing or generating forum source, update the ownership ADR and this
-repository contract in a focused reviewed pull request. Record origin, license,
-history-preservation method, update policy, rollback boundary, and validation.
-Close the architecture, security, cost, backup, isolated restore, monitoring,
+Discourse core and `discourse_docker` are permanent external upstream owners;
+this repository remains configuration/overlay-only and never imports or vendors
+their source trees. Before adding runnable Mōchirīī configuration, a theme, or
+another customization, update the ownership ADR and repository contract in a
+focused reviewed pull request. Record origin, license, exact immutable revision,
+update policy, rollback boundary, and validation. Close the architecture,
+security, identity, cost, backup, isolated restore, monitoring,
 incident-response, and release-evidence gates in `docs/operations` before adding
 runtime or provider configuration.
 

@@ -2,6 +2,9 @@ name: inspect-forums-upstream
 
 'on':
   workflow_dispatch:
+  schedule:
+    - cron: '17 22 3 * *'
+      timezone: Asia/Singapore
 
 permissions:
   contents: read
@@ -15,39 +18,27 @@ jobs:
     name: provenance
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    env:
-      EXPECTED_SHA: ${{ github.sha }}
     steps:
-      - name: Fetch exact event head without persisting credentials
+      - name: Check out exact event head without persisting credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Verify exact event head
         shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          git init .
-          git remote add origin "https://github.com/$env:GITHUB_REPOSITORY.git"
-          $basic = [Convert]::ToBase64String(
-            [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GITHUB_TOKEN")
-          )
-          git -c "http.extraheader=AUTHORIZATION: basic $basic" fetch `
-            --no-tags --depth=1 origin $env:EXPECTED_SHA
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Exact-head fetch failed.'
-          }
-          git checkout --detach FETCH_HEAD
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Exact-head checkout failed.'
-          }
           $actualSha = (git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $actualSha -ne $env:EXPECTED_SHA) {
+          if ($LASTEXITCODE -ne 0 -or $actualSha -ne '${{ github.sha }}') {
             throw 'Checked out SHA does not match the event head.'
           }
-          git remote set-url origin "https://github.com/$env:GITHUB_REPOSITORY.git"
 
       - name: Validate the governance contract
         shell: pwsh
         run: ./scripts/check-repository.ps1
 
-      - name: Verify pinned official upstream bytes and detect main drift
+      - name: Verify pinned official bytes and recorded upstream drift
         shell: pwsh
         run: ./scripts/verify-upstream-provenance.ps1 -Online -RequireCurrentMain

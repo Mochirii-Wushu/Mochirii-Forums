@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-11",
+  "status": "source-only-inventory-runtime-unapproved",
+  "application": {
+    "name": "Discourse core",
+    "repository": "https://github.com/discourse/discourse.git",
+    "revision": null,
+    "sourceImported": false,
+    "licenseSpdx": "GPL-2.0-or-later",
+    "licenseEvidenceUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/LICENSE.txt",
+    "copyrightEvidenceUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/COPYRIGHT.md",
+    "securityGuideUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/docs/SECURITY.md",
+    "evidenceFiles": [
+      {
+        "path": "LICENSE.txt",
+        "bytes": 18092,
+        "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+      },
+      {
+        "path": "COPYRIGHT.md",
+        "bytes": 2347,
+        "sha256": "72aef96034240c4ad5de7ee98fd703e402771983b635f40e430a5a372dbe4c81"
+      },
+      {
+        "path": "README.md",
+        "bytes": 7515,
+        "sha256": "784611a56172ef4a2f57f79946df034f2cde084dfef0f999f2c9f788b524b6b2"
+      },
+      {
+        "path": "docs/SECURITY.md",
+        "bytes": 4570,
+        "sha256": "e47f0680555db3748ff7fef3a756f9f4344f2aee8403c1308de5bd5c784a7fab"
+      },
+      {
+        "path": "lib/version.rb",
+        "bytes": 456,
+        "sha256": "03c22af27c90cb46d96f6964b0c1d7776c4e6e4fcc47f3665a2c8dab8722cbbb"
+      }
+    ],
+    "exactRevisionRequiredBeforeRelease": true
+  },
+  "supportedReleaseObservation": {
+    "observedAt": "2026-08-11",
+    "releaseIndex": "https://releases.discourse.org/",
+    "releasePage": "https://releases.discourse.org/changelog/v2026.7.1/",
+    "tagUrl": "https://github.com/discourse/discourse/tree/v2026.7.1",
+    "releaseFamily": "v2026.7",
+    "channel": "ESR",
+    "tag": "v2026.7.1",
+    "tagObjectSha1": "11c70a765e46c3229d66e108883fa2d33f5d0b81",
+    "tagObjectType": "tag",
+    "tagSignatureStatus": "unsigned",
+    "peeledCommitSha1": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+    "peeledCommitTreeSha1": "0aeceebe79c4d2da8cf0fab213514335c201bfa7",
+    "peeledCommitSignatureStatus": "unsigned",
+    "releasedAt": "2026-07-31",
+    "plannedEndOfSupport": "2027-03-30",
+    "selectedForRuntime": false,
+    "compatibilityReviewed": false
+  },
+  "deployment": {
+    "name": "Discourse Docker",
+    "repository": "https://github.com/discourse/discourse_docker.git",
+    "revision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
+    "sourceImported": false,
+    "licenseSpdx": "MIT",
+    "provenanceManifest": "docs/operations/upstream-provenance.v1.json"
+  },
+  "timeBehaviorObservation": {
+    "observedAt": "2026-08-11",
+    "coreCommit": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+    "railsStorageBaseline": "UTC",
+    "siteWideDisplayAuthorityProvidedByCore": false,
+    "localDatesMayUseBrowserOrUserZone": true,
+    "calendarMayUseBrowserZone": true,
+    "localDatesEmailTimeZoneDefault": "Etc/UTC",
+    "nonSingaporeSuggestedOrDefaultZonesPresent": true,
+    "supportedRuntimeSolutionSelected": false,
+    "runtimeAndBrowserVerified": false,
+    "evidenceFiles": [
+      {
+        "path": "config/application.rb",
+        "bytes": 9851,
+        "sha256": "6482c99fc85303969ea074474a0b55544380ac0c88224f415695415c478f9184"
+      },
+      {
+        "path": "plugins/discourse-local-dates/config/settings.yml",
+        "bytes": 511,
+        "sha256": "d90d44142b07791601a82424cd8930487e24b88e2f6d563e3477884c87beec4b"
+      },
+      {
+        "path": "plugins/discourse-local-dates/assets/javascripts/lib/format-local-date.js",
+        "bytes": 1211,
+        "sha256": "1695dbe04cbe0ac94fb5cd45a4b53e9e739771c1c12bb0846e5eaef483680593"
+      },
+      {
+        "path": "plugins/discourse-local-dates/assets/javascripts/discourse/components/modal/local-dates-create.gjs",
+        "bytes": 16898,
+        "sha256": "9e7f075f78f58c091032eb80b215965a529a1a91006dbef99c3dd8a5681c9f8f"
+      },
+      {
+        "path": "plugins/discourse-calendar/assets/javascripts/discourse/components/event-date.gjs",
+        "bytes": 3243,
+        "sha256": "25700659167534b665275606b259d9a401172e40c07e83ec76f7f01a5ffcd377"
+      }
+    ]
+  },
+  "trademark": {
+    "owner": "Civilized Discourse Construction Kit, Inc.",
+    "evidenceUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/README.md#copyright--license",
+    "brandGuidanceUrl": "https://www.discourse.org/brand",
+    "brandGuidanceAccessedAt": "2026-08-02",
+    "officialMarksUsedPublicly": false,
+    "reviewRequiredBeforePublicUse": true
+  },
+  "plugins": [],
+  "themes": [],
+  "integrations": [],
+  "dependencies": {
+    "status": "unavailable-until-exact-core-and-image",
+    "completeGraphAuditRequired": true,
+    "sbomRequired": true,
+    "licenseReviewRequired": true,
+    "noticeArtifactRequired": true
+  },
+  "providerMutationAuthorized": false,
+  "paidResourceAuthorized": false
+}

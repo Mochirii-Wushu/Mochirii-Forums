@@ -4,5 +4,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+      time: "22:43"
+      timezone: Asia/Singapore
     target-branch: main
     open-pull-requests-limit: 5

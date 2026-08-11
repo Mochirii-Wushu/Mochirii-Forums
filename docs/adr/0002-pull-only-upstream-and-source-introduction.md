@@ -18,9 +18,11 @@ data, and public copy.
 
 ## Decision
 
-Use `https://github.com/discourse/discourse_docker.git` as the only approved
-external source reference. A future authorized working clone may configure it
-as a pull-only `upstream` remote with:
+Use `https://github.com/discourse/discourse_docker.git` as the only configured
+Git upstream and deployment-source remote. Discourse core remains a separate
+immutable evidence reference, not another configured remote. A future authorized
+working clone may configure the deployment source as a pull-only `upstream`
+remote with:
 
 - the exact HTTPS fetch URL;
 - the nonfunctional push sentinel `disabled://upstream-push`;
@@ -30,9 +32,17 @@ as a pull-only `upstream` remote with:
 
 The repository records a reviewed upstream revision and hashes for a small set
 of official source files. Those hashes are evidence, not vendored source and
-not approval to install or execute anything. A manual read-only workflow may
-verify that exact evidence and report upstream drift. It may not create a
-branch, commit, pull request, release, deployment, or provider change.
+not approval to install or execute anything. A low-frequency monthly and
+manually dispatched read-only workflow may verify that exact evidence and report
+upstream drift. It may not update a pin or create a branch, commit, pull request,
+release, deployment, or provider change.
+
+The local clone has exactly `origin` and `upstream`: `origin` is the push
+default, `pull.ff=only`, and `upstream` uses the official HTTPS fetch URL plus
+exactly one `disabled://upstream-push` push URL. Automatic tag following is
+disabled and the fetch refspec maps only official `main`; exact tags are
+inspected directly without importing them. This is an
+accident-prevention control; authorization and review remain separate.
 
 Any future source introduction requires a separate reviewed ADR and change that
 defines the history-preservation method, exact upstream revision, license
@@ -53,5 +63,5 @@ and deployment authorization.
 ## Primary references
 
 - [Official Discourse Docker repository](https://github.com/discourse/discourse_docker)
-- [Official Discourse installation documentation](https://github.com/discourse/discourse/blob/main/docs/INSTALL.md)
+- [Pinned Discourse installation documentation](https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/docs/INSTALL.md)
 - [GitHub secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
