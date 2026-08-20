@@ -330,11 +330,17 @@ __MOCHIRII_TLS_RUN__
           test "$(find public -maxdepth 1 -type f
           \( -name '403*.html' -o -name '422*.html' -o -name '500*.html' -o -name '503*.html' \)
           | wc -l)" -eq 196
-        - >-
+        - |-
           for status in 403 422 500 503; do
-            find public -maxdepth 1 -type f -name "${status}*.html"
-            ! -name "${status}.html" -exec
-            cp -- "public/${status}.html" {} \;;
+            source="public/${status}.html"
+            [ -f "$source" ] && [ ! -L "$source" ] || exit 1
+            set -- "public/${status}".*.html
+            [ "$#" -eq 48 ] || exit 1
+            for target; do
+              [ -f "$target" ] && [ ! -L "$target" ] || exit 1
+              cp -- "$source" "$target" || exit 1
+              cmp -s -- "$source" "$target" || exit 1
+            done
           done
         - >-
           test "$(find public -maxdepth 1 -type f

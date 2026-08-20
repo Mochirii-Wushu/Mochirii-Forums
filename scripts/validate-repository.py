@@ -793,6 +793,20 @@ def validate_template() -> None:
     )
     if app.index("location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$") > app.index("location ~* ^/session/email-login/ {"):
         fail("Canonical administrator recovery privacy route is shadowed by its denial boundary.")
+    localized_error_copy = '''        - |-
+          for status in 403 422 500 503; do
+            source="public/${status}.html"
+            [ -f "$source" ] && [ ! -L "$source" ] || exit 1
+            set -- "public/${status}".*.html
+            [ "$#" -eq 48 ] || exit 1
+            for target; do
+              [ -f "$target" ] && [ ! -L "$target" ] || exit 1
+              cp -- "$source" "$target" || exit 1
+              cmp -s -- "$source" "$target" || exit 1
+            done
+          done'''
+    if app.count(localized_error_copy) != 1 or app.count("for status in 403 422 500 503; do") != 1:
+        fail("Localized error-page copy is not the exact fail-closed literal command.")
     tokens = set(re.findall(r"__MOCHIRII_[A-Z0-9_]+__", app))
     if not tokens or any(app.count(token) != 1 for token in tokens):
         fail("Every runtime token must occur exactly once.")

@@ -26,6 +26,22 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+LOCALIZED_ERROR_COPY_BLOCK = '''        - |-
+          for status in 403 422 500 503; do
+            source="public/${status}.html"
+            [ -f "$source" ] && [ ! -L "$source" ] || exit 1
+            set -- "public/${status}".*.html
+            [ "$#" -eq 48 ] || exit 1
+            for target; do
+              [ -f "$target" ] && [ ! -L "$target" ] || exit 1
+              cp -- "$source" "$target" || exit 1
+              cmp -s -- "$source" "$target" || exit 1
+            done
+          done'''
+LOCALIZED_ERROR_COPY_COMMAND = "\n".join(
+    line[10:] for line in LOCALIZED_ERROR_COPY_BLOCK.splitlines()[1:]
+)
+
 
 def module_from(relative: str, name: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / relative)
@@ -250,6 +266,90 @@ def test_renderer() -> None:
         )
         if any(value not in rendered for value in required):
             raise RuntimeError("Stage 4 fixture is not loopback-only and externally inactive.")
+        if (
+            rendered.count(LOCALIZED_ERROR_COPY_BLOCK) != 1
+            or rendered.count("for status in 403 422 500 503; do") != 1
+        ):
+            raise RuntimeError("Rendered localized error-page copy lost its exact literal shell contract.")
+
+    if os.name != "nt":
+        localized_names = [
+            "locale space",
+            "line\nbreak",
+            "-leading-dash",
+            *(f"locale-{index:02d}" for index in range(3, 48)),
+        ]
+
+        def prepare_error_pages(directory: str) -> tuple[Path, list[tuple[Path, Path]]]:
+            public = Path(directory) / "public"
+            public.mkdir()
+            pairs: list[tuple[Path, Path]] = []
+            for status in (403, 422, 500, 503):
+                source = public / f"{status}.html"
+                source.write_bytes(f"branded-{status}\n".encode("ascii"))
+                source.chmod(0o644)
+                for index, locale in enumerate(localized_names):
+                    target = public / f"{status}.{locale}.html"
+                    target.write_bytes(b"upstream-content\n")
+                    target.chmod(0o600 if index == 0 else 0o644)
+                    pairs.append((source, target))
+            return public, pairs
+
+        def run_error_page_copy(directory: str, *, path: str | None = None) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["sh", "-c", LOCALIZED_ERROR_COPY_COMMAND],
+                cwd=directory,
+                env={"LC_ALL": "C", "PATH": path or os.environ.get("PATH", "/usr/bin:/bin")},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=20,
+                check=False,
+            )
+
+        with tempfile.TemporaryDirectory(prefix="mochirii-error-pages-pass-") as directory:
+            public, pairs = prepare_error_pages(directory)
+            identities = {
+                target: (target.stat().st_uid, target.stat().st_gid, stat.S_IMODE(target.stat().st_mode))
+                for _, target in pairs
+            }
+            result = run_error_page_copy(directory)
+            if result.returncode != 0:
+                raise RuntimeError("Localized error-page copy rejected its exact safe inventory.")
+            if len(list(public.glob("*.html"))) != 196:
+                raise RuntimeError("Localized error-page copy changed the exact inventory.")
+            for source, target in pairs:
+                identity = (target.stat().st_uid, target.stat().st_gid, stat.S_IMODE(target.stat().st_mode))
+                if target.read_bytes() != source.read_bytes() or identity != identities[target]:
+                    raise RuntimeError("Localized error-page copy changed content or file identity incorrectly.")
+
+        for scenario in ("missing", "extra", "symlink", "false-success"):
+            with tempfile.TemporaryDirectory(prefix=f"mochirii-error-pages-{scenario}-") as directory:
+                public, pairs = prepare_error_pages(directory)
+                path = None
+                if scenario == "missing":
+                    pairs[0][1].unlink()
+                elif scenario == "extra":
+                    (public / "403.extra.html").write_bytes(b"unexpected\n")
+                elif scenario == "symlink":
+                    victim = Path(directory) / "victim"
+                    victim.write_bytes(b"victim-must-survive\n")
+                    pairs[0][1].unlink()
+                    pairs[0][1].symlink_to(victim)
+                else:
+                    fake_bin = Path(directory) / "bin"
+                    fake_bin.mkdir()
+                    fake_cp = fake_bin / "cp"
+                    true_command = shutil.which("true")
+                    if true_command is None:
+                        raise RuntimeError("Localized error-page hostile fixture cannot locate true(1).")
+                    fake_cp.symlink_to(true_command)
+                    path = f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '/usr/bin:/bin')}"
+                result = run_error_page_copy(directory, path=path)
+                if result.returncode == 0:
+                    raise RuntimeError(f"Localized error-page copy accepted hostile {scenario} state.")
+                if scenario == "symlink" and (Path(directory) / "victim").read_bytes() != b"victim-must-survive\n":
+                    raise RuntimeError("Localized error-page copy followed a hostile symlink.")
 
     connect_fixture = "b" * 64
     with tempfile.TemporaryDirectory(prefix="mochirii-render-connect-fixture-") as directory:
