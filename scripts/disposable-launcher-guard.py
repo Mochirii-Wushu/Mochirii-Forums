@@ -40,6 +40,327 @@ EVENT_SETTLE_TIMEOUT = 0.25
 EVENT_STOP_TIMEOUT = 5
 MAX_MEMINFO_BYTES = 65536
 RESOURCE_COMMAND_TIMEOUT = 5
+MAX_PUPS_TRACE_BYTES = 1024
+PUPS_TRACE_MODE = "stage4-fixture-pups-1.4.0-v1"
+PUPS_TRACE_PLAN = "pups-1.4.0-stage4-92-v1"
+PUPS_TRACE_STAGES = {
+    "postgres", "redis", "web-pre-code", "code", "redis-after-code",
+    "mochirii-after-code", "web-config", "web", "yarn", "bundle-exec",
+    "plugin-compatibility", "pre-db-migrate", "db-migrate",
+    "clear-stuck-web-upgrades", "assets-precompile-build", "assets-precompile",
+    "web-finalize", "rate-limit", "mochirii-files", "mochirii-final", "plan-drift",
+}
+PUPS_TRACE_PHASES = {"terminal-failure"}
+PUPS_TRACE_EXEC_COUNTS = {
+    18: 1, 19: 1, 23: 3, 29: 1, 35: 1, 36: 1, 37: 1, 38: 1,
+    39: 1, 40: 3, 41: 1, 49: 17, 51: 1, 52: 1, 53: 16,
+    57: 2, 58: 1, 59: 1, 60: 1, 61: 4, 62: 1, 63: 1,
+    64: 1, 65: 1, 66: 1, 67: 1, 68: 1, 92: 9,
+}
+
+PUPS_TRACE_OBSERVER = r'''# frozen_string_literal: true
+
+ENV.delete("RUBYOPT")
+trace_mode = ENV.delete("MOCHIRII_PUPS_TRACE_MODE")
+trace_state = ENV.delete("MOCHIRII_PUPS_TRACE_STATE")
+hostile_fixture_mode = ENV.delete("MOCHIRII_DISPOSABLE_LAUNCHER_MODE")
+require "json"
+
+production_state = trace_state&.match?(%r{\A/shared/[.]mochirii-ci-pups-trace/[0-9a-f]{32}/state/trace[.]json\z})
+hostile_fixture_state = hostile_fixture_mode == "source-only-hostile-fixture" &&
+  trace_state&.match?(%r{\A/tmp/mochirii-disposable-[A-Za-z0-9_.-]+/var/discourse/shared/standalone/[.]mochirii-ci-pups-trace/[0-9a-f]{32}/state/trace[.]json\z})
+
+if trace_mode == "stage4-fixture-pups-1.4.0-v1" && (production_state || hostile_fixture_state)
+  module MochiriiPupsTrace
+    PLAN_VERSION = "pups-1.4.0-stage4-92-v1"
+    MAX_BYTES = 1024
+    MAX_ITEMS = 256
+    ALLOWED_KINDS = %w[exec file merge replace].freeze
+    ALLOWED_HOOKS = %w[
+      postgres redis code web_config web yarn bundle_exec plugin_compatibility
+      db_migrate clear_stuck_web_upgrades assets_precompile_build assets_precompile
+    ].freeze
+    EXPECTED_KINDS = %w[
+      file file file file file
+      replace replace replace replace replace replace replace replace replace replace replace replace
+      exec exec file file file exec
+      file file file replace replace exec replace replace replace replace replace exec exec exec exec
+      exec exec exec file file file file file file replace exec replace exec exec exec replace replace replace
+      exec exec exec exec exec exec exec exec exec exec exec exec
+      replace
+      file file file file file file file file file file file file file file file file file file file file file file
+      exec
+    ].freeze
+    EXPECTED_HOOKS = {
+      23 => "postgres", 35 => "redis", 49 => "code", 58 => "web_config",
+      59 => "web", 60 => "yarn", 61 => "bundle_exec", 62 => "plugin_compatibility",
+      65 => "db_migrate", 66 => "clear_stuck_web_upgrades",
+      67 => "assets_precompile_build", 68 => "assets_precompile",
+    }.freeze
+    EXPECTED_EXEC_COUNTS = {
+      18 => 1, 19 => 1, 23 => 3, 29 => 1, 35 => 1, 36 => 1, 37 => 1, 38 => 1,
+      39 => 1, 40 => 3, 41 => 1, 49 => 17, 51 => 1, 52 => 1, 53 => 16,
+      57 => 2, 58 => 1, 59 => 1, 60 => 1, 61 => 4, 62 => 1, 63 => 1,
+      64 => 1, 65 => 1, 66 => 1, 67 => 1, 68 => 1, 92 => 9,
+    }.freeze
+
+    class TraceStateError < StandardError
+    end
+
+    class << self
+      def configure(path)
+        @state_path = path.freeze
+        @layout_exact = false
+        @item_count = 0
+        @current_item = 0
+        @completed_items = 0
+        @current_subcommand = 0
+        @current_subcommand_count = 0
+      end
+
+      def structural_plan_exact?(run)
+        return false unless defined?(Pups::VERSION) && Pups::VERSION == "1.4.0"
+        return false unless run.is_a?(Array) && run.length == EXPECTED_KINDS.length
+
+        kinds = []
+        hooks = {}
+        exec_counts = {}
+        run.each_with_index do |item, index|
+          return false unless item.is_a?(Hash) && item.length == 1
+
+          kind, value = item.first
+          return false unless kind.is_a?(String) && ALLOWED_KINDS.include?(kind)
+
+          ordinal = index + 1
+          kinds << kind
+          if value.is_a?(Hash) && value.key?("hook")
+            hook = value["hook"]
+            return false unless hook.is_a?(String) && ALLOWED_HOOKS.include?(hook)
+            hooks[ordinal] = hook
+          end
+          next unless kind == "exec"
+
+          count =
+            if value.is_a?(String)
+              1
+            elsif value.is_a?(Hash)
+              command = value["cmd"]
+              if command.is_a?(Array)
+                return false unless command.all? { |entry| entry.is_a?(String) }
+                command.length
+              elsif command.is_a?(String)
+                1
+              else
+                0
+              end
+            else
+              -1
+            end
+          return false unless count.between?(1, 64)
+          exec_counts[ordinal] = count
+        end
+        kinds == EXPECTED_KINDS && hooks == EXPECTED_HOOKS && exec_counts == EXPECTED_EXEC_COUNTS
+      end
+
+      def stage_for(ordinal)
+        case ordinal
+        when 1..23 then "postgres"
+        when 24..38 then "redis"
+        when 39..48 then "web-pre-code"
+        when 49 then "code"
+        when 50 then "redis-after-code"
+        when 51..52 then "mochirii-after-code"
+        when 53..58 then "web-config"
+        when 59 then "web"
+        when 60 then "yarn"
+        when 61 then "bundle-exec"
+        when 62 then "plugin-compatibility"
+        when 63..64 then "pre-db-migrate"
+        when 65 then "db-migrate"
+        when 66 then "clear-stuck-web-upgrades"
+        when 67 then "assets-precompile-build"
+        when 68 then "assets-precompile"
+        when 69..81 then "web-finalize"
+        when 82..83 then "rate-limit"
+        when 84..91 then "mochirii-files"
+        when 92 then "mochirii-final"
+        else "plan-drift"
+        end
+      end
+
+      def bind_plan(run)
+        @layout_exact = structural_plan_exact?(run)
+        @item_count = run.is_a?(Array) ? [run.length, MAX_ITEMS].min : 0
+        @current_item = 0
+        @completed_items = 0
+        @current_subcommand = 0
+        @current_subcommand_count = 0
+      end
+
+      def begin_item(kind)
+        @current_item += 1
+        @layout_exact = false unless EXPECTED_KINDS[@current_item - 1] == kind
+
+        @current_subcommand = 0
+        @current_subcommand_count = EXPECTED_EXEC_COUNTS.fetch(@current_item, 0)
+      end
+
+      def complete_item
+        @completed_items = @current_item
+      end
+
+      def begin_subcommand
+        @current_subcommand += 1
+        @layout_exact = false unless @current_subcommand_count.positive? &&
+          @current_subcommand <= @current_subcommand_count
+      end
+
+      def terminal_failure(error)
+        code =
+          if error.respond_to?(:exit_code) && error.exit_code.is_a?(Integer) && error.exit_code.between?(0, 255)
+            error.exit_code
+          else
+            1
+          end
+        write_record(
+          layout_exact: @layout_exact,
+          stage: @layout_exact ? stage_for(@current_item) : "plan-drift",
+          phase: "terminal-failure",
+          item_ordinal: @current_item,
+          item_count: @item_count,
+          completed_item_count: @completed_items,
+          subcommand_ordinal: @current_subcommand,
+          subcommand_count: @current_subcommand_count,
+          exit_code: code,
+        )
+      end
+
+      def write_record(
+        layout_exact:, stage:, phase:, item_ordinal:, item_count:,
+        completed_item_count:, subcommand_ordinal:, subcommand_count:, exit_code:
+      )
+        record = {
+          "schemaVersion" => 1,
+          "planVersion" => PLAN_VERSION,
+          "layoutExact" => layout_exact,
+          "stage" => stage,
+          "phase" => phase,
+          "itemOrdinal" => item_ordinal,
+          "itemCount" => item_count,
+          "completedItemCount" => completed_item_count,
+          "execSubcommandOrdinal" => subcommand_ordinal,
+          "execSubcommandCount" => subcommand_count,
+          "exitCode" => exit_code,
+        }
+        payload = JSON.generate(record) + "\n"
+        raise TraceStateError, "trace-state-write-failed" unless payload.bytesize.between?(1, MAX_BYTES)
+
+        directory = File.dirname(@state_path)
+        directory_metadata = File.lstat(directory)
+        unless directory_metadata.directory? && directory_metadata.uid.zero? && directory_metadata.gid.zero? &&
+            (directory_metadata.mode & 0o7777) == 0o700
+          raise TraceStateError, "trace-state-write-failed"
+        end
+
+        begin
+          target_metadata = File.lstat(@state_path)
+          unless target_metadata.file? && target_metadata.uid.zero? && target_metadata.gid.zero? &&
+              target_metadata.nlink == 1 && (target_metadata.mode & 0o7777) == 0o600 &&
+              target_metadata.size.between?(1, MAX_BYTES)
+            raise TraceStateError, "trace-state-write-failed"
+          end
+        rescue Errno::ENOENT
+          nil
+        end
+
+        temporary = File.join(directory, ".trace.#{Process.pid}.partial")
+        begin
+          File.unlink(temporary)
+        rescue Errno::ENOENT
+          nil
+        end
+        flags = File::WRONLY | File::CREAT | File::EXCL
+        flags |= File::NOFOLLOW if defined?(File::NOFOLLOW)
+        File.open(temporary, flags, 0o600) do |output|
+          output.chmod(0o600)
+          output.write(payload)
+          output.flush
+          output.fsync
+        end
+        File.rename(temporary, @state_path)
+        File.open(directory, File::RDONLY) { |handle| handle.fsync }
+      rescue TraceStateError
+        raise
+      rescue StandardError
+        raise TraceStateError, "trace-state-write-failed", []
+      ensure
+        if defined?(temporary) && temporary
+          begin
+            File.unlink(temporary)
+          rescue Errno::ENOENT
+            nil
+          end
+        end
+      end
+
+      def command_wrapper(kind)
+        Module.new do
+          define_method(:run) do |command, params|
+            MochiriiPupsTrace.begin_item(kind)
+            result = super(command, params)
+            MochiriiPupsTrace.complete_item
+            result
+          end
+        end
+      end
+    end
+
+    module ConfigWrapper
+      def run_commands
+        MochiriiPupsTrace.bind_plan(@config["run"])
+        begin
+          result = super
+        rescue Exception => error # rubocop:disable Lint/RescueException
+          begin
+            MochiriiPupsTrace.terminal_failure(error)
+          rescue TraceStateError
+            nil
+          end
+          raise
+        end
+        result
+      end
+    end
+
+    module ExecSpawnWrapper
+      def spawn(command)
+        MochiriiPupsTrace.begin_subcommand
+        super(command)
+      end
+    end
+  end
+
+  MochiriiPupsTrace.configure(trace_state)
+  tracer = TracePoint.new(:end) do
+    if defined?(Pups::VERSION) && defined?(Pups::Config) && defined?(Pups::Command) &&
+        defined?(Pups::ExecCommand) && defined?(Pups::FileCommand) &&
+        defined?(Pups::MergeCommand) && defined?(Pups::ReplaceCommand)
+      Pups::Config.prepend(MochiriiPupsTrace::ConfigWrapper)
+      {
+        "exec" => Pups::ExecCommand,
+        "file" => Pups::FileCommand,
+        "merge" => Pups::MergeCommand,
+        "replace" => Pups::ReplaceCommand,
+      }.each do |kind, command_class|
+        command_class.singleton_class.prepend(MochiriiPupsTrace.command_wrapper(kind))
+      end
+      Pups::ExecCommand.prepend(MochiriiPupsTrace::ExecSpawnWrapper)
+      tracer.disable
+    end
+  end
+  tracer.enable
+end
+'''
 
 
 class GuardError(RuntimeError):
@@ -79,6 +400,198 @@ def sha256_file(path: Path, maximum: int = MAX_JOURNAL_BYTES) -> str:
                 fail(f"Protected file exceeds its byte boundary: {path}")
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_protected_file(path: Path, payload: bytes, mode: int) -> None:
+    if path.exists() or path.is_symlink():
+        fail("Disposable Pups trace asset already exists.")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb", closefd=True) as output:
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        fsync_directory(path.parent)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+
+
+def pups_trace_stage(ordinal: int) -> str:
+    if 1 <= ordinal <= 23:
+        return "postgres"
+    if 24 <= ordinal <= 38:
+        return "redis"
+    if 39 <= ordinal <= 48:
+        return "web-pre-code"
+    if ordinal == 49:
+        return "code"
+    if ordinal == 50:
+        return "redis-after-code"
+    if 51 <= ordinal <= 52:
+        return "mochirii-after-code"
+    if 53 <= ordinal <= 58:
+        return "web-config"
+    if ordinal == 59:
+        return "web"
+    if ordinal == 60:
+        return "yarn"
+    if ordinal == 61:
+        return "bundle-exec"
+    if ordinal == 62:
+        return "plugin-compatibility"
+    if 63 <= ordinal <= 64:
+        return "pre-db-migrate"
+    if ordinal == 65:
+        return "db-migrate"
+    if ordinal == 66:
+        return "clear-stuck-web-upgrades"
+    if ordinal == 67:
+        return "assets-precompile-build"
+    if ordinal == 68:
+        return "assets-precompile"
+    if 69 <= ordinal <= 81:
+        return "web-finalize"
+    if 82 <= ordinal <= 83:
+        return "rate-limit"
+    if 84 <= ordinal <= 91:
+        return "mochirii-files"
+    if ordinal == 92:
+        return "mochirii-final"
+    return "plan-drift"
+
+
+def unavailable_pups_trace() -> dict[str, object]:
+    return {
+        "valid": False,
+        "layoutExact": False,
+        "stage": "unavailable",
+        "phase": "unavailable",
+        "itemOrdinal": -1,
+        "itemCount": -1,
+        "completedItemCount": -1,
+        "execSubcommandOrdinal": -1,
+        "execSubcommandCount": -1,
+        "exitCode": -1,
+    }
+
+
+def read_pups_trace(path: Path) -> dict[str, object]:
+    unavailable = unavailable_pups_trace()
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return unavailable
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or metadata.st_size < 1
+        or metadata.st_size > MAX_PUPS_TRACE_BYTES
+    ):
+        return unavailable
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return unavailable
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_dev != metadata.st_dev
+            or opened.st_ino != metadata.st_ino
+            or opened.st_size != metadata.st_size
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+            or opened.st_size < 1
+            or opened.st_size > MAX_PUPS_TRACE_BYTES
+        ):
+            return unavailable
+        payload = bytearray()
+        while len(payload) <= MAX_PUPS_TRACE_BYTES:
+            chunk = os.read(descriptor, min(4096, MAX_PUPS_TRACE_BYTES + 1 - len(payload)))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        if len(payload) > MAX_PUPS_TRACE_BYTES or os.read(descriptor, 1):
+            return unavailable
+    finally:
+        os.close(descriptor)
+    try:
+        document = json.loads(bytes(payload))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return unavailable
+    expected = {
+        "schemaVersion", "planVersion", "layoutExact", "stage", "phase",
+        "itemOrdinal", "itemCount", "completedItemCount",
+        "execSubcommandOrdinal", "execSubcommandCount", "exitCode",
+    }
+    if not isinstance(document, dict) or set(document) != expected:
+        return unavailable
+    numeric_keys = (
+        "itemOrdinal", "itemCount", "completedItemCount",
+        "execSubcommandOrdinal", "execSubcommandCount", "exitCode",
+    )
+    if (
+        document.get("schemaVersion") != 1
+        or document.get("planVersion") != PUPS_TRACE_PLAN
+        or not isinstance(document.get("layoutExact"), bool)
+        or document.get("stage") not in PUPS_TRACE_STAGES
+        or document.get("phase") not in PUPS_TRACE_PHASES
+        or any(not isinstance(document.get(key), int) or isinstance(document.get(key), bool) for key in numeric_keys)
+    ):
+        return unavailable
+    item_ordinal = int(document["itemOrdinal"])
+    item_count = int(document["itemCount"])
+    completed = int(document["completedItemCount"])
+    subcommand = int(document["execSubcommandOrdinal"])
+    subcommand_count = int(document["execSubcommandCount"])
+    exit_code = int(document["exitCode"])
+    phase = str(document["phase"])
+    stage = str(document["stage"])
+    layout_exact = bool(document["layoutExact"])
+    expected_subcommands = PUPS_TRACE_EXEC_COUNTS.get(item_ordinal, 0)
+    valid_relation = (
+        phase == "terminal-failure"
+        and 0 <= exit_code <= 255
+        and 0 <= item_count <= 256
+        and 0 <= item_ordinal <= item_count
+        and 0 <= completed <= item_ordinal
+        and 0 <= subcommand <= subcommand_count <= 64
+    )
+    if valid_relation and layout_exact:
+        valid_relation = (
+            item_count == 92
+            and 1 <= item_ordinal <= 92
+            and stage == pups_trace_stage(item_ordinal)
+            and completed < item_ordinal
+            and subcommand_count == expected_subcommands
+        )
+    elif valid_relation:
+        valid_relation = stage == "plan-drift"
+    if not valid_relation:
+        return unavailable
+    return {
+        "valid": True,
+        "layoutExact": layout_exact,
+        "stage": stage,
+        "phase": phase,
+        "itemOrdinal": item_ordinal,
+        "itemCount": item_count,
+        "completedItemCount": completed,
+        "execSubcommandOrdinal": subcommand,
+        "execSubcommandCount": subcommand_count,
+        "exitCode": exit_code,
+    }
 
 
 def write_journal(path: Path, document: dict[str, object]) -> None:
@@ -161,9 +674,132 @@ class Runtime:
         self.root = root
         self.adapter = adapter
         self.discourse = root / "var/discourse"
+        self.shared = self.discourse / "shared/standalone"
+        self.trace_namespace = self.shared / ".mochirii-ci-pups-trace"
         self.cid = self.discourse / "cids/app_bootstrap.cid"
         self.journal = self.discourse / ".mochirii-disposable-launcher.transaction.json"
         self.launcher = self.discourse / "launcher"
+
+    def trace_paths(self, token: str) -> dict[str, Path]:
+        if OPERATION_ID_PATTERN.fullmatch(token) is None:
+            fail("Disposable Pups trace operation identity differs.")
+        operation = self.trace_namespace / token
+        return {
+            "operation": operation,
+            "wrapper": operation / "pups-wrapper",
+            "observer": operation / "observer.rb",
+            "state": operation / "state",
+            "record": operation / "state/trace.json",
+        }
+
+    @staticmethod
+    def _require_root_directory(path: Path) -> None:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            fail("Disposable Pups trace directory is unsafe.")
+
+    def prove_trace_namespace_absent(self) -> None:
+        if self.trace_namespace.exists() or self.trace_namespace.is_symlink():
+            fail("Unowned disposable Pups trace namespace exists before prearm.")
+
+    def prepare_pups_trace(self, token: str) -> tuple[str, Path]:
+        paths = self.trace_paths(token)
+        self.shared.mkdir(mode=0o755, parents=True, exist_ok=True)
+        for parent in (self.discourse, self.discourse / "shared", self.shared):
+            metadata = parent.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                fail("Disposable shared path is unsafe for Pups trace state.")
+        self.trace_namespace.mkdir(mode=0o700)
+        self._require_root_directory(self.trace_namespace)
+        paths["operation"].mkdir(mode=0o700)
+        self._require_root_directory(paths["operation"])
+        paths["state"].mkdir(mode=0o700)
+        self._require_root_directory(paths["state"])
+
+        guest_root = f"/shared/.mochirii-ci-pups-trace/{token}"
+        wrapper = (
+            "#!/bin/sh\n"
+            "unset RUBYOPT MOCHIRII_PUPS_TRACE_MODE MOCHIRII_PUPS_TRACE_STATE\n"
+            f"export MOCHIRII_PUPS_TRACE_MODE='{PUPS_TRACE_MODE}'\n"
+            f"export MOCHIRII_PUPS_TRACE_STATE='{guest_root}/state/trace.json'\n"
+            f"export RUBYOPT='-r{guest_root}/observer.rb'\n"
+            "exec /usr/local/bin/ruby "
+            "/usr/local/lib/ruby/gems/3.4.0/gems/pups-1.4.0/bin/pups \"$@\"\n"
+        ).encode("utf-8")
+        write_protected_file(paths["observer"], PUPS_TRACE_OBSERVER.encode("utf-8"), 0o600)
+        write_protected_file(paths["wrapper"], wrapper, 0o700)
+        for path in paths.values():
+            if any(character.isspace() for character in str(path)):
+                fail("Disposable Pups trace path is not shell-safe.")
+        docker_arguments = " ".join(
+            (
+                f"--volume={paths['wrapper']}:/usr/local/bin/pups:ro",
+                f"--volume={paths['observer']}:{guest_root}/observer.rb:ro",
+                f"--volume={paths['state']}:{guest_root}/state:rw",
+            )
+        )
+        return docker_arguments, paths["record"]
+
+    def cleanup_pups_trace(self, token: str) -> None:
+        paths = self.trace_paths(token)
+        namespace = self.trace_namespace
+        if not namespace.exists() and not namespace.is_symlink():
+            return
+        self._require_root_directory(namespace)
+        operation = paths["operation"]
+        if not operation.exists() and not operation.is_symlink():
+            if any(namespace.iterdir()):
+                fail("Disposable Pups trace namespace retained another operation.")
+            namespace.rmdir()
+            fsync_directory(self.shared)
+            return
+        self._require_root_directory(operation)
+        allowed_operation = {"pups-wrapper", "observer.rb", "state"}
+        operation_entries = list(operation.iterdir())
+        if any(
+            entry.name not in allowed_operation
+            and not entry.name.startswith(".pups-wrapper.")
+            and not entry.name.startswith(".observer.rb.")
+            for entry in operation_entries
+        ):
+            fail("Disposable Pups trace operation retained an unexpected entry.")
+        state_path = paths["state"]
+        if state_path.exists() or state_path.is_symlink():
+            self._require_root_directory(state_path)
+            state_entries = list(state_path.iterdir())
+            if any(
+                entry.name != "trace.json"
+                and re.fullmatch(r"[.]trace[.][0-9]+[.]partial", entry.name) is None
+                for entry in state_entries
+            ):
+                fail("Disposable Pups trace state retained an unexpected entry.")
+            for entry in state_entries:
+                metadata = entry.lstat()
+                if stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+                    fail("Disposable Pups trace state retained a directory.")
+                entry.unlink()
+            fsync_directory(state_path)
+            state_path.rmdir()
+        for entry in list(operation.iterdir()):
+            metadata = entry.lstat()
+            if stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+                fail("Disposable Pups trace operation retained a directory.")
+            entry.unlink()
+        fsync_directory(operation)
+        operation.rmdir()
+        fsync_directory(namespace)
+        if any(namespace.iterdir()):
+            fail("Disposable Pups trace namespace retained another operation.")
+        namespace.rmdir()
+        fsync_directory(self.shared)
+        if operation.exists() or operation.is_symlink() or namespace.exists() or namespace.is_symlink():
+            fail("Disposable Pups trace residue survived reconciliation.")
 
     def run(self, arguments: list[str], *, timeout: int = COMMAND_TIMEOUT, check: bool = True) -> subprocess.CompletedProcess[str]:
         command = ([sys.executable, "-B", str(self.adapter)] if self.adapter else []) + arguments
@@ -504,6 +1140,7 @@ class LifecycleRecorder:
         elapsed_seconds: int,
         resources_before: dict[str, int],
         resources_after: dict[str, int],
+        pups_trace: dict[str, object] | None = None,
     ) -> str:
         valid = not (self.malformed or self.overflow or self.recorder_failed or self.cid_malformed)
         bootstrap = self.containers.get(self.bootstrap_identity) if self.bootstrap_identity is not None else None
@@ -524,7 +1161,7 @@ class LifecycleRecorder:
             failure_class = "non-oom-container-exit"
         bootstrap_code = exact_die_code if operation == "bootstrap" else -1
         bootstrap_event_count = bootstrap.event_count if bootstrap is not None else 0
-        fields = (
+        fields: tuple[str, ...] = (
             f"failure_class={failure_class}",
             f"launcher_rc={launcher_status}",
             f"elapsed_seconds={elapsed_seconds}",
@@ -551,6 +1188,27 @@ class LifecycleRecorder:
             f"swap_total_pre_bytes={resources_before['swapTotalBytes']}",
             f"swap_total_post_bytes={resources_after['swapTotalBytes']}",
         )
+        if operation == "bootstrap":
+            trace = pups_trace if pups_trace is not None else unavailable_pups_trace()
+            if (
+                not valid
+                or exact_die_code < 0
+                or not trace["valid"]
+                or trace["exitCode"] != exact_die_code
+            ):
+                trace = unavailable_pups_trace()
+            fields += (
+                f"pups_trace_valid={'true' if trace['valid'] else 'false'}",
+                f"pups_layout_exact={'true' if trace['layoutExact'] else 'false'}",
+                f"pups_stage={trace['stage']}",
+                f"pups_phase={trace['phase']}",
+                f"pups_item_ordinal={trace['itemOrdinal']}",
+                f"pups_item_count={trace['itemCount']}",
+                f"pups_completed_item_count={trace['completedItemCount']}",
+                f"pups_exec_subcommand_ordinal={trace['execSubcommandOrdinal']}",
+                f"pups_exec_subcommand_count={trace['execSubcommandCount']}",
+                f"pups_exit_code={trace['exitCode']}",
+            )
         return (
             "Disposable launcher operation failed; operation-created residue was contained. "
             + " ".join(fields)
@@ -694,6 +1352,8 @@ def reconcile(runtime: Runtime, document: dict[str, object], success: bool) -> N
 
     if runtime.cid.exists() or runtime.cid.is_symlink():
         fail("Disposable launcher CID survived reconciliation.")
+    if document["operation"] == "bootstrap":
+        runtime.cleanup_pups_trace(token)
     document["phase"] = "terminal-proved"
     document["cleanupProved"] = True
     document["launcherPid"] = 0
@@ -747,6 +1407,8 @@ def main() -> int:
     reconcile_prior(runtime, operation, gate, gate_sha)
     if runtime.cid.exists() or runtime.cid.is_symlink():
         fail("Unowned disposable launcher CID exists before prearm.")
+    if operation == "bootstrap":
+        runtime.prove_trace_namespace_absent()
 
     token = os.urandom(16).hex()
     pre_containers = runtime.container_ids()
@@ -768,6 +1430,7 @@ def main() -> int:
         "cleanupProved": False,
     }
     write_journal(runtime.journal, document)
+    trace_record: Path | None = None
     environment = {
         **os.environ,
         "MOCHIRII_DISPOSABLE_OPERATION_TOKEN": token,
@@ -776,6 +1439,9 @@ def main() -> int:
         f"--label={LABEL_KEY}={token} --cpuset-cpus=0 "
         "--memory=2g --memory-swap=4g"
     )
+    if operation == "bootstrap":
+        trace_arguments, trace_record = runtime.prepare_pups_trace(token)
+        docker_arguments = f"{docker_arguments} {trace_arguments}"
     command = [
         str(runtime.launcher), operation, "app", "--skip-prereqs", "--docker-args", docker_arguments,
     ]
@@ -827,6 +1493,7 @@ def main() -> int:
         elapsed_seconds = min(LAUNCHER_TIMEOUT + 60, max(0, int(time.monotonic() - launcher_started)))
     finally:
         recorder.stop()
+    pups_trace = read_pups_trace(trace_record) if trace_record is not None else None
     resources_after = resource_snapshot(runtime)
     refresh_created(runtime, document)
     write_journal(runtime.journal, document)
@@ -845,7 +1512,11 @@ def main() -> int:
     else:
         reconcile(runtime, document, False)
     if status:
-        fail(recorder.failure_message(operation, status, elapsed_seconds, resources_before, resources_after))
+        fail(
+            recorder.failure_message(
+                operation, status, elapsed_seconds, resources_before, resources_after, pups_trace,
+            )
+        )
     return 0
 
 

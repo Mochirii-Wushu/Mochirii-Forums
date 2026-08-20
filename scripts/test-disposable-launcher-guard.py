@@ -29,6 +29,8 @@ ADAPTER = r'''#!/usr/bin/env python3
 import json
 import os
 import pathlib
+import shlex
+import subprocess
 import sys
 import time
 
@@ -46,6 +48,217 @@ def values_after(flag):
         return sys.argv[sys.argv.index(flag) + 1]
     except (ValueError, IndexError):
         return ""
+
+PLAN_KINDS = """
+file file file file file
+replace replace replace replace replace replace replace replace replace replace replace replace
+exec exec file file file exec
+file file file replace replace exec replace replace replace replace replace exec exec exec exec
+exec exec exec file file file file file file replace exec replace exec exec exec replace replace replace
+exec exec exec exec exec exec exec exec exec exec exec exec
+replace
+file file file file file file file file file file file file file file file file file file file file file file
+exec
+""".split()
+PLAN_HOOKS = {
+    23: "postgres", 35: "redis", 49: "code", 58: "web_config", 59: "web",
+    60: "yarn", 61: "bundle_exec", 62: "plugin_compatibility", 65: "db_migrate",
+    66: "clear_stuck_web_upgrades", 67: "assets_precompile_build", 68: "assets_precompile",
+}
+PLAN_EXEC_COUNTS = {
+    18: 1, 19: 1, 23: 3, 29: 1, 35: 1, 36: 1, 37: 1, 38: 1,
+    39: 1, 40: 3, 41: 1, 49: 17, 51: 1, 52: 1, 53: 16,
+    57: 2, 58: 1, 59: 1, 60: 1, 61: 4, 62: 1, 63: 1,
+    64: 1, 65: 1, 66: 1, 67: 1, 68: 1, 92: 9,
+}
+
+def trace_failure(scenario):
+    return {
+        "trace-terminal-code": (49, 7, 42),
+        "trace-terminal-final-first": (92, 1, 37),
+        "trace-terminal-final-last": (92, 9, 37),
+        "trace-file-failure": (84, 0, 1),
+        "trace-plan-88": (49, 7, 42),
+        "trace-marker-malformed": (49, 7, 42),
+        "trace-marker-oversize": (49, 7, 42),
+        "trace-marker-symlink": (49, 7, 42),
+        "trace-marker-mode": (49, 7, 42),
+        "trace-marker-nlink": (49, 7, 42),
+        "trace-marker-stage": (49, 7, 42),
+        "trace-marker-ordinal": (49, 7, 42),
+        "trace-marker-subcount": (49, 7, 42),
+        "trace-marker-exit": (49, 7, 42),
+        "trace-tolerated-62": (62, 1, 23),
+        "trace-tolerated-66": (66, 1, 23),
+        "trace-tolerated-then-terminal": (62, 1, 23),
+    }.get(scenario)
+
+def trace_plan(scenario):
+    failure = trace_failure(scenario)
+    terminal_after_tolerated = scenario == "trace-tolerated-then-terminal"
+    run = []
+    for ordinal, kind in enumerate(PLAN_KINDS, 1):
+        hook = PLAN_HOOKS.get(ordinal)
+        if kind == "exec":
+            count = PLAN_EXEC_COUNTS[ordinal]
+            commands = ["true"] * count
+            if ordinal == 18:
+                commands[0] = (
+                    "test -z \"${RUBYOPT+x}\" && "
+                    "test -z \"${MOCHIRII_PUPS_TRACE_MODE+x}\" && "
+                    "test -z \"${MOCHIRII_PUPS_TRACE_STATE+x}\""
+                )
+            if failure is not None and failure[0] == ordinal and failure[1] > 0:
+                commands[failure[1] - 1] = (
+                    "printf '%s\\n' 'sentinel-launcher-secret-never-emit-7d3f1a' && "
+                    "printf '%s\\n' 'https://secret.invalid/private docker run secret-value' >&2 && "
+                    f"exit {failure[2]}"
+                )
+            if terminal_after_tolerated and ordinal == 65:
+                commands[0] = "exit 41"
+            value = {"cmd": commands}
+            if hook is not None:
+                value["hook"] = hook
+            if ordinal in {62, 66}:
+                value["raise_on_fail"] = False
+            if ordinal in {19, 37, 63}:
+                value["background"] = True
+            run.append({"exec": value})
+        elif kind == "file":
+            path = root / "pups-files" / str(ordinal)
+            if failure is not None and failure[0] == ordinal and failure[1] == 0:
+                path = pathlib.Path("/proc/mochirii-pups-trace-forbidden")
+            run.append({"file": {"path": str(path), "contents": "fixture-only\\n"}})
+        elif kind == "replace":
+            path = root / "pups-replacements" / str(ordinal)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("alpha\\n")
+            run.append({"replace": {"filename": str(path), "from": "alpha", "to": "alpha"}})
+        else:
+            raise SystemExit(18)
+    if scenario == "trace-plan-88":
+        run = run[:88]
+    return {"run": run}
+
+def trace_mounts(docker_args, token):
+    fields = shlex.split(docker_args)
+    if any(field.startswith("--env") or field.startswith("--entrypoint") for field in fields):
+        raise SystemExit(19)
+    volumes = {}
+    for field in fields:
+        if not field.startswith("--volume="):
+            continue
+        source, destination, mode = field[len("--volume="):].rsplit(":", 2)
+        volumes[destination] = (pathlib.Path(source), mode)
+    guest_root = f"/shared/.mochirii-ci-pups-trace/{token}"
+    required = {
+        "/usr/local/bin/pups": "ro",
+        f"{guest_root}/observer.rb": "ro",
+        f"{guest_root}/state": "rw",
+    }
+    if set(volumes) != set(required) or any(volumes[key][1] != mode for key, mode in required.items()):
+        raise SystemExit(20)
+    wrapper = volumes["/usr/local/bin/pups"][0]
+    observer = volumes[f"{guest_root}/observer.rb"][0]
+    state_directory = volumes[f"{guest_root}/state"][0]
+    if subprocess.run(["sh", "-n", str(wrapper)], check=False).returncode:
+        raise SystemExit(21)
+    if wrapper.parent != observer.parent or state_directory.parent != observer.parent:
+        raise SystemExit(22)
+    expected_wrapper = (
+        "#!/bin/sh\n"
+        "unset RUBYOPT MOCHIRII_PUPS_TRACE_MODE MOCHIRII_PUPS_TRACE_STATE\n"
+        "export MOCHIRII_PUPS_TRACE_MODE='stage4-fixture-pups-1.4.0-v1'\n"
+        f"export MOCHIRII_PUPS_TRACE_STATE='{guest_root}/state/trace.json'\n"
+        f"export RUBYOPT='-r{guest_root}/observer.rb'\n"
+        "exec /usr/local/bin/ruby "
+        "/usr/local/lib/ruby/gems/3.4.0/gems/pups-1.4.0/bin/pups \"$@\"\n"
+    )
+    if wrapper.read_text() != expected_wrapper:
+        raise SystemExit(25)
+    return observer, state_directory
+
+def run_trace_scenario(scenario, docker_args, token):
+    observer, state_directory = trace_mounts(docker_args, token)
+    cid = root / "var/discourse/cids/app_bootstrap.cid"
+    cid.parent.mkdir(parents=True, exist_ok=True)
+    cid.write_text("d" * 64 + "\n")
+    # Keep the exact identity observable while the guard performs its first
+    # bounded inventory refresh through separate fixture adapter processes.
+    time.sleep(0.8)
+    environment = {
+        **os.environ,
+        "RUBYOPT": f"-r{observer}",
+        "MOCHIRII_PUPS_TRACE_MODE": "stage4-fixture-pups-1.4.0-v1",
+        "MOCHIRII_PUPS_TRACE_STATE": str(state_directory / "trace.json"),
+        "MOCHIRII_FORBIDDEN_SENTINEL": "sentinel-launcher-secret-never-emit-7d3f1a",
+    }
+    result = subprocess.run(
+        [
+            "/usr/local/bin/ruby",
+            "/usr/local/lib/ruby/gems/3.4.0/gems/pups-1.4.0/bin/pups",
+            "--stdin",
+        ],
+        input=json.dumps(trace_plan(scenario)),
+        text=True,
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    time.sleep(0.15)
+    if cid.exists():
+        cid.unlink()
+    record = state_directory / "trace.json"
+    if result.returncode == 0 and (record.exists() or record.is_symlink()):
+        return 99
+    if result.returncode != 0:
+        metadata = record.lstat()
+        if (
+            metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or metadata.st_nlink != 1
+            or metadata.st_size < 1
+            or metadata.st_size > 1024
+            or (metadata.st_mode & 0o7777) != 0o600
+        ):
+            return 98
+    if scenario == "trace-marker-malformed":
+        record.write_text("sentinel-launcher-secret-never-emit-7d3f1a malformed")
+        record.chmod(0o600)
+    elif scenario == "trace-marker-oversize":
+        record.write_bytes(b"x" * 1025)
+        record.chmod(0o600)
+    elif scenario == "trace-marker-symlink":
+        victim = root / "trace-marker-victim"
+        victim.write_text("victim-must-survive")
+        record.unlink()
+        record.symlink_to(victim)
+    elif scenario == "trace-marker-mode":
+        record.chmod(0o644)
+    elif scenario == "trace-marker-nlink":
+        os.link(record, root / "trace-marker-hardlink")
+    elif scenario == "trace-marker-stage":
+        document = json.loads(record.read_text())
+        document["stage"] = "postgres"
+        record.write_text(json.dumps(document, sort_keys=True) + "\n")
+        record.chmod(0o600)
+    elif scenario == "trace-marker-ordinal":
+        document = json.loads(record.read_text())
+        document["itemOrdinal"] = 93
+        record.write_text(json.dumps(document, sort_keys=True) + "\n")
+        record.chmod(0o600)
+    elif scenario == "trace-marker-subcount":
+        document = json.loads(record.read_text())
+        document["execSubcommandCount"] = 16
+        record.write_text(json.dumps(document, sort_keys=True) + "\n")
+        record.chmod(0o600)
+    elif scenario == "trace-marker-exit":
+        document = json.loads(record.read_text())
+        document["exitCode"] = 41
+        record.write_text(json.dumps(document, sort_keys=True) + "\n")
+        record.chmod(0o600)
+    return result.returncode
 
 args = sys.argv[1:]
 if args and args[0] == "events":
@@ -88,6 +301,33 @@ if args and args[0] == "events":
         "classifier-missing-cid": helper_normal + bootstrap_42,
         "classifier-malformed-cid": helper_normal + bootstrap_42,
         "classifier-unknown": helper_normal + ((bootstrap, "create", None),),
+        "trace-terminal-code": helper_normal + bootstrap_42,
+        "trace-terminal-final-first": helper_normal + (
+            (bootstrap, "create", None), (bootstrap, "start", None),
+            (bootstrap, "die", "37"), (bootstrap, "destroy", None),
+        ),
+        "trace-terminal-final-last": helper_normal + (
+            (bootstrap, "create", None), (bootstrap, "start", None),
+            (bootstrap, "die", "37"), (bootstrap, "destroy", None),
+        ),
+        "trace-file-failure": helper_normal + (
+            (bootstrap, "create", None), (bootstrap, "start", None),
+            (bootstrap, "die", "1"), (bootstrap, "destroy", None),
+        ),
+        "trace-plan-88": helper_normal + bootstrap_42,
+        "trace-marker-malformed": helper_normal + bootstrap_42,
+        "trace-marker-oversize": helper_normal + bootstrap_42,
+        "trace-marker-symlink": helper_normal + bootstrap_42,
+        "trace-marker-mode": helper_normal + bootstrap_42,
+        "trace-marker-nlink": helper_normal + bootstrap_42,
+        "trace-marker-stage": helper_normal + bootstrap_42,
+        "trace-marker-ordinal": helper_normal + bootstrap_42,
+        "trace-marker-subcount": helper_normal + bootstrap_42,
+        "trace-marker-exit": helper_normal + bootstrap_42,
+        "trace-tolerated-then-terminal": helper_normal + (
+            (bootstrap, "create", None), (bootstrap, "start", None),
+            (bootstrap, "die", "41"), (bootstrap, "destroy", None),
+        ),
     }
     default = bootstrap_0
     events = profiles.get(scenario, () if scenario.startswith("classifier-") else default)
@@ -120,6 +360,27 @@ if args and args[0] == "launcher":
     if len(token) != 32:
         raise SystemExit(9)
     scenario = state["scenario"]
+    if scenario == "trace-start-check":
+        if ".mochirii-ci-pups-trace" in docker_args or "RUBYOPT" in docker_args:
+            raise SystemExit(23)
+        image = state["tags"].get("local_discourse/app")
+        if image is None:
+            raise SystemExit(24)
+        state["containers"]["b" * 64] = {
+            "name": "app", "running": True, "image": image,
+            "labels": {"mochirii.forums.disposable-operation": token},
+        }
+        save()
+        raise SystemExit(0)
+    if scenario.startswith("trace-") and args[1:3] == ["bootstrap", "app"]:
+        trace_status = run_trace_scenario(scenario, docker_args, token)
+        if trace_status == 0:
+            state["images"].append("sha256:" + "a" * 64)
+            state["images"] = sorted(set(state["images"]))
+            state["tags"]["local_discourse/app"] = "sha256:" + "a" * 64
+            save()
+            raise SystemExit(0)
+        raise SystemExit(1)
     if scenario.startswith("classifier-"):
         messages = {
             "classifier-bootstrap-exit": "bootstrap failed with exit code 42",
@@ -310,6 +571,9 @@ def assert_no_transaction(root: Path) -> None:
     journal = root / "var/discourse/.mochirii-disposable-launcher.transaction.json"
     if journal.exists() or journal.is_symlink():
         raise RuntimeError("Disposable launcher transaction survived terminal proof.")
+    trace_namespace = root / "var/discourse/shared/standalone/.mochirii-ci-pups-trace"
+    if trace_namespace.exists() or trace_namespace.is_symlink():
+        raise RuntimeError("Disposable Pups trace residue survived terminal proof.")
     marker_prefix = b"MOCHIRII_DISPOSABLE_OPERATION_TOKEN="
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -360,6 +624,19 @@ def post_cid_crash_retry_fixture() -> None:
         journal = root / "var/discourse/.mochirii-disposable-launcher.transaction.json"
         if not journal.is_file():
             raise RuntimeError("Post-CID crash did not retain durable ownership.")
+        trace_namespace = root / "var/discourse/shared/standalone/.mochirii-ci-pups-trace"
+        trace_operations = list(trace_namespace.iterdir()) if trace_namespace.is_dir() else []
+        if len(trace_operations) != 1 or not trace_operations[0].is_dir():
+            raise RuntimeError("Post-CID crash did not retain journal-owned trace state.")
+        trace_operation = trace_operations[0]
+        required_trace_assets = {
+            "observer.rb", "pups-wrapper", "state",
+        }
+        if {entry.name for entry in trace_operation.iterdir()} != required_trace_assets:
+            raise RuntimeError("Post-CID crash retained different trace assets.")
+        (trace_operation / ".observer.rb.123.partial").write_text("partial\n", encoding="utf-8")
+        (trace_operation / ".pups-wrapper.123.partial").write_text("partial\n", encoding="utf-8")
+        (trace_operation / "state/.trace.123.partial").write_text("partial\n", encoding="utf-8")
 
         crashed["scenario"] = "clean-bootstrap"
         write_file(root / "state.json", json.dumps(crashed, sort_keys=True) + "\n", 0o600)
@@ -414,7 +691,19 @@ def rebuild_terminal_image_fixture() -> None:
 
 
 def failure_classifier_fixture() -> None:
-    scenarios = {
+    unavailable_trace = (
+        "pups_trace_valid=false",
+        "pups_layout_exact=false",
+        "pups_stage=unavailable",
+        "pups_phase=unavailable",
+        "pups_item_ordinal=-1",
+        "pups_item_count=-1",
+        "pups_completed_item_count=-1",
+        "pups_exec_subcommand_ordinal=-1",
+        "pups_exec_subcommand_count=-1",
+        "pups_exit_code=-1",
+    )
+    classifier_scenarios = {
         "classifier-bootstrap-exit": (
             "failure_class=non-oom-container-exit",
             "event_count=8",
@@ -499,6 +788,86 @@ def failure_classifier_fixture() -> None:
             "bootstrap_exit_code=-1",
         ),
     }
+    scenarios = {
+        scenario: required + unavailable_trace
+        for scenario, required in classifier_scenarios.items()
+    }
+    scenarios.update({
+        "trace-terminal-code": (
+            "failure_class=non-oom-container-exit",
+            "bootstrap_exit_code=42",
+            "pups_trace_valid=true",
+            "pups_layout_exact=true",
+            "pups_stage=code",
+            "pups_phase=terminal-failure",
+            "pups_item_ordinal=49",
+            "pups_item_count=92",
+            "pups_completed_item_count=48",
+            "pups_exec_subcommand_ordinal=7",
+            "pups_exec_subcommand_count=17",
+            "pups_exit_code=42",
+        ),
+        "trace-terminal-final-first": (
+            "pups_trace_valid=true",
+            "pups_layout_exact=true",
+            "pups_stage=mochirii-final",
+            "pups_item_ordinal=92",
+            "pups_completed_item_count=91",
+            "pups_exec_subcommand_ordinal=1",
+            "pups_exec_subcommand_count=9",
+            "pups_exit_code=37",
+        ),
+        "trace-terminal-final-last": (
+            "pups_trace_valid=true",
+            "pups_layout_exact=true",
+            "pups_stage=mochirii-final",
+            "pups_item_ordinal=92",
+            "pups_completed_item_count=91",
+            "pups_exec_subcommand_ordinal=9",
+            "pups_exec_subcommand_count=9",
+            "pups_exit_code=37",
+        ),
+        "trace-file-failure": (
+            "pups_trace_valid=true",
+            "pups_layout_exact=true",
+            "pups_stage=mochirii-files",
+            "pups_item_ordinal=84",
+            "pups_completed_item_count=83",
+            "pups_exec_subcommand_ordinal=0",
+            "pups_exec_subcommand_count=0",
+            "pups_exit_code=1",
+        ),
+        "trace-plan-88": (
+            "pups_trace_valid=true",
+            "pups_layout_exact=false",
+            "pups_stage=plan-drift",
+            "pups_phase=terminal-failure",
+            "pups_item_ordinal=49",
+            "pups_item_count=88",
+            "pups_completed_item_count=48",
+            "pups_exec_subcommand_ordinal=7",
+            "pups_exec_subcommand_count=17",
+            "pups_exit_code=42",
+        ),
+        "trace-tolerated-then-terminal": (
+            "pups_trace_valid=true",
+            "pups_layout_exact=true",
+            "pups_stage=db-migrate",
+            "pups_item_ordinal=65",
+            "pups_completed_item_count=64",
+            "pups_exec_subcommand_ordinal=1",
+            "pups_exec_subcommand_count=1",
+            "pups_exit_code=41",
+        ),
+        **{
+            scenario: unavailable_trace
+            for scenario in (
+                "trace-marker-malformed", "trace-marker-oversize", "trace-marker-symlink",
+                "trace-marker-mode", "trace-marker-nlink", "trace-marker-stage",
+                "trace-marker-ordinal", "trace-marker-subcount", "trace-marker-exit",
+            )
+        },
+    })
     safe_output = re.compile(
         r"\ADisposable launcher operation failed; operation-created residue was contained[.] "
         r"failure_class=(?:pre-container|bootstrap-unobserved|post-bootstrap-launcher-failure|non-oom-container-exit|oom-container-exit|incomplete-unknown) "
@@ -512,7 +881,13 @@ def failure_classifier_fixture() -> None:
         r"docker_free_pre_bytes=-?[0-9]+ docker_free_post_bytes=-?[0-9]+ "
         r"mem_available_pre_bytes=-?[0-9]+ mem_available_post_bytes=-?[0-9]+ "
         r"swap_free_pre_bytes=-?[0-9]+ swap_free_post_bytes=-?[0-9]+ "
-        r"swap_total_pre_bytes=-?[0-9]+ swap_total_post_bytes=-?[0-9]+\Z"
+        r"swap_total_pre_bytes=-?[0-9]+ swap_total_post_bytes=-?[0-9]+ "
+        r"pups_trace_valid=(?:true|false) pups_layout_exact=(?:true|false) "
+        r"pups_stage=(?:unavailable|postgres|redis|web-pre-code|code|redis-after-code|mochirii-after-code|web-config|web|yarn|bundle-exec|plugin-compatibility|pre-db-migrate|db-migrate|clear-stuck-web-upgrades|assets-precompile-build|assets-precompile|web-finalize|rate-limit|mochirii-files|mochirii-final|plan-drift) "
+        r"pups_phase=(?:unavailable|terminal-failure) pups_item_ordinal=-?[0-9]+ "
+        r"pups_item_count=-?[0-9]+ pups_completed_item_count=-?[0-9]+ "
+        r"pups_exec_subcommand_ordinal=-?[0-9]+ pups_exec_subcommand_count=-?[0-9]+ "
+        r"pups_exit_code=-?[0-9]+\Z"
     )
     forbidden = (
         FORBIDDEN_SENTINEL,
@@ -550,10 +925,51 @@ def failure_classifier_fixture() -> None:
                 raise RuntimeError(f"Disposable launcher classifier output escaped its fixed safe schema: {scenario}")
             if any(value not in message for value in required):
                 raise RuntimeError(f"Disposable launcher classifier returned different bounded evidence: {scenario}")
+            if scenario == "trace-marker-symlink":
+                victim = root / "trace-marker-victim"
+                if victim.read_text(encoding="utf-8") != "victim-must-survive":
+                    raise RuntimeError("Disposable trace reader followed a hostile marker symlink.")
+            if scenario == "trace-marker-nlink":
+                hardlink = root / "trace-marker-hardlink"
+                if not hardlink.is_file() or hardlink.stat().st_nlink != 1:
+                    raise RuntimeError("Disposable trace cleanup altered a hostile external hardlink.")
             current = state(root)
             if current["containers"] or current["images"] != [PREEXISTING_IMAGE] or current["tags"]:
                 raise RuntimeError("Disposable launcher classifier changed terminal reconciliation.")
             assert_no_transaction(root)
+
+
+def pups_trace_success_fixture() -> None:
+    for scenario in ("trace-tolerated-62", "trace-tolerated-66"):
+        with tempfile.TemporaryDirectory(prefix=f"mochirii-disposable-{scenario}-") as temporary:
+            root = Path(temporary).resolve()
+            environment = setup(root, scenario)
+            result = invoke(root, environment, passed=True)
+            if result.stdout or result.stderr:
+                raise RuntimeError("Successful disposable Pups trace fixture emitted output.")
+            current = state(root)
+            if (
+                current["containers"]
+                or set(current["images"]) != {PREEXISTING_IMAGE, CREATED_IMAGE}
+                or current["tags"] != {"local_discourse/app": CREATED_IMAGE}
+            ):
+                raise RuntimeError("Tolerated Pups command changed bootstrap reconciliation.")
+            assert_no_transaction(root)
+
+            if scenario == "trace-tolerated-62":
+                current["scenario"] = "trace-start-check"
+                write_file(root / "state.json", json.dumps(current, sort_keys=True) + "\n", 0o600)
+                start_result = invoke(root, environment, operation="start", passed=True)
+                if start_result.stdout or start_result.stderr:
+                    raise RuntimeError("Non-bootstrap disposable operation emitted trace output.")
+                started = state(root)
+                if (
+                    set(started["containers"]) != {CREATED_CONTAINER}
+                    or set(started["images"]) != {PREEXISTING_IMAGE, CREATED_IMAGE}
+                    or started["tags"] != {"local_discourse/app": CREATED_IMAGE}
+                ):
+                    raise RuntimeError("Non-bootstrap operation changed under bootstrap-only tracing.")
+                assert_no_transaction(root)
 
 
 def run_linux() -> None:
@@ -565,6 +981,7 @@ def run_linux() -> None:
     post_cid_crash_retry_fixture()
     rebuild_terminal_image_fixture()
     failure_classifier_fixture()
+    pups_trace_success_fixture()
     print("Disposable launcher immutable-ID hostile fixture passed.")
 
 
