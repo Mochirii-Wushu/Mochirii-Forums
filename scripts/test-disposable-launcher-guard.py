@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -21,6 +22,7 @@ BASE_IMAGE = "discourse/base@sha256:3b1846055ca723d13ef7dc3466da61627f32e8b21228
 PREEXISTING_IMAGE = "sha256:" + "f" * 64
 CREATED_IMAGE = "sha256:" + "a" * 64
 CREATED_CONTAINER = "b" * 64
+FORBIDDEN_SENTINEL = "sentinel-launcher-secret-never-emit-7d3f1a"
 
 
 ADAPTER = r'''#!/usr/bin/env python3
@@ -28,6 +30,7 @@ import json
 import os
 import pathlib
 import sys
+import time
 
 root = pathlib.Path(os.environ["MOCHIRII_DISPOSABLE_LAUNCHER_FIXTURE_ROOT"])
 state_path = root / "state.json"
@@ -45,6 +48,68 @@ def values_after(flag):
         return ""
 
 args = sys.argv[1:]
+if args and args[0] == "events":
+    token = os.environ.get("MOCHIRII_DISPOSABLE_OPERATION_TOKEN", "")
+    if len(token) != 32:
+        raise SystemExit(10)
+    scenario = state["scenario"]
+    if scenario == "classifier-event-overflow":
+        print("sentinel-launcher-secret-never-emit-7d3f1a" * 2048, flush=True)
+        while True:
+            time.sleep(1)
+    helper = "c" * 64
+    bootstrap = "d" * 64
+    helper_normal = (
+        (helper, "create", None), (helper, "start", None),
+        (helper, "die", "0"), (helper, "destroy", None),
+    )
+    helper_oom = (
+        (helper, "create", None), (helper, "start", None), (helper, "oom", None),
+        (helper, "die", "137"), (helper, "destroy", None),
+    )
+    bootstrap_42 = (
+        (bootstrap, "create", None), (bootstrap, "start", None),
+        (bootstrap, "die", "42"), (bootstrap, "destroy", None),
+    )
+    bootstrap_0 = (
+        (bootstrap, "create", None), (bootstrap, "start", None),
+        (bootstrap, "die", "0"), (bootstrap, "destroy", None),
+    )
+    profiles = {
+        "classifier-bootstrap-exit": helper_normal + bootstrap_42,
+        "classifier-transient-empty-cid": helper_normal + bootstrap_42,
+        "classifier-post-bootstrap-failure": helper_normal + bootstrap_0,
+        "classifier-oom": helper_normal + (
+            (bootstrap, "create", None), (bootstrap, "start", None), (bootstrap, "oom", None),
+            (bootstrap, "die", "137"), (bootstrap, "destroy", None),
+        ),
+        "classifier-helper-oom-bootstrap-exit": helper_oom + bootstrap_42,
+        "classifier-helpers-before-cid": helper_normal,
+        "classifier-missing-cid": helper_normal + bootstrap_42,
+        "classifier-malformed-cid": helper_normal + bootstrap_42,
+        "classifier-unknown": helper_normal + ((bootstrap, "create", None),),
+    }
+    default = bootstrap_0
+    events = profiles.get(scenario, () if scenario.startswith("classifier-") else default)
+    for identity, action, exit_code in events:
+        attributes = {
+            "mochirii.forums.disposable-operation": token,
+            "sentinel": "sentinel-launcher-secret-never-emit-7d3f1a",
+            "url": "https://secret.invalid/private",
+            "path": "/var/discourse/private",
+            "command": "docker run secret-value",
+            "name": "secret-container-name",
+        }
+        if exit_code is not None:
+            attributes["exitCode"] = exit_code
+        print(json.dumps({
+            "Type": "container", "Action": action,
+            "id": identity,
+            "Actor": {"ID": identity, "Attributes": attributes},
+        }), flush=True)
+    while True:
+        time.sleep(1)
+
 if args and args[0] == "launcher":
     docker_args = values_after("--docker-args")
     token = ""
@@ -55,6 +120,41 @@ if args and args[0] == "launcher":
     if len(token) != 32:
         raise SystemExit(9)
     scenario = state["scenario"]
+    if scenario.startswith("classifier-"):
+        messages = {
+            "classifier-bootstrap-exit": "bootstrap failed with exit code 42",
+            "classifier-transient-empty-cid": "bootstrap cid populated after create",
+            "classifier-post-bootstrap-failure": "commit failed after successful bootstrap",
+            "classifier-oom": "Out of memory while compiling assets",
+            "classifier-network-text": "Temporary failure in name resolution",
+            "classifier-no-space-text": "No space left on device",
+            "classifier-unknown": "unclassified launcher transcript text",
+            "classifier-event-overflow": "oversized hostile event stream",
+            "classifier-helper-oom-bootstrap-exit": "helper oom before bootstrap exit",
+            "classifier-helpers-before-cid": "helper lifecycle before bootstrap cid",
+            "classifier-missing-cid": "bootstrap cid was never observable",
+            "classifier-malformed-cid": "bootstrap cid was malformed",
+        }
+        message = messages[scenario]
+        cid = root / "var/discourse/cids/app_bootstrap.cid"
+        cid.parent.mkdir(parents=True, exist_ok=True)
+        if scenario == "classifier-transient-empty-cid":
+            cid.write_bytes(b"")
+            time.sleep(0.25)
+            cid.write_text("d" * 64 + "\n")
+        elif scenario in {
+            "classifier-bootstrap-exit", "classifier-post-bootstrap-failure", "classifier-oom",
+            "classifier-helper-oom-bootstrap-exit", "classifier-unknown",
+        }:
+            cid.write_text("d" * 64 + "\n")
+        elif scenario == "classifier-malformed-cid":
+            cid.write_text("not-a-valid-cid\n")
+        time.sleep(0.35)
+        if cid.exists():
+            cid.unlink()
+        print(f"sentinel-launcher-secret-never-emit-7d3f1a {message} https://secret.invalid/private")
+        print(f"docker run secret-value /var/discourse/private {'e' * 64}", file=sys.stderr)
+        raise SystemExit(1)
     if scenario == "unclean-exit-zero":
         cid = root / "var/discourse/cids/app_bootstrap.cid"
         cid.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +214,9 @@ if args and args[0] == "launcher":
 if not args or args[0] != "docker":
     raise SystemExit(7)
 args = args[1:]
-if args[:2] == ["container", "ls"]:
+if args[:2] == ["info", "--format"]:
+    print(root)
+elif args[:2] == ["container", "ls"]:
     selected = state["containers"]
     label = values_after("--filter")
     if label.startswith("label="):
@@ -196,10 +298,7 @@ def invoke(
         timeout=30,
     )
     if (result.returncode == 0) != passed:
-        raise RuntimeError(
-            f"Disposable launcher fixture returned {result.returncode}; "
-            f"stdout={result.stdout!r} stderr={result.stderr!r}"
-        )
+        raise RuntimeError("Disposable launcher fixture returned an unexpected status.")
     return result
 
 
@@ -211,6 +310,16 @@ def assert_no_transaction(root: Path) -> None:
     journal = root / "var/discourse/.mochirii-disposable-launcher.transaction.json"
     if journal.exists() or journal.is_symlink():
         raise RuntimeError("Disposable launcher transaction survived terminal proof.")
+    marker_prefix = b"MOCHIRII_DISPOSABLE_OPERATION_TOKEN="
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "environ").read_bytes().split(b"\0")
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if any(field.startswith(marker_prefix) for field in fields):
+            raise RuntimeError("Disposable launcher marked process survived terminal proof.")
 
 
 def exit_zero_residue_fixture() -> None:
@@ -304,6 +413,149 @@ def rebuild_terminal_image_fixture() -> None:
         assert_no_transaction(root)
 
 
+def failure_classifier_fixture() -> None:
+    scenarios = {
+        "classifier-bootstrap-exit": (
+            "failure_class=non-oom-container-exit",
+            "event_count=8",
+            "bootstrap_event_count=4",
+            "helper_event_count=4",
+            "oom_observed=false",
+            "die_exit_code=42",
+            "bootstrap_exit_code=42",
+        ),
+        "classifier-transient-empty-cid": (
+            "failure_class=non-oom-container-exit",
+            "lifecycle_valid=true",
+            "bootstrap_identity_observed=true",
+            "bootstrap_exit_code=42",
+        ),
+        "classifier-post-bootstrap-failure": (
+            "failure_class=post-bootstrap-launcher-failure",
+            "event_count=8",
+            "bootstrap_event_count=4",
+            "helper_event_count=4",
+            "oom_observed=false",
+            "die_exit_code=0",
+            "bootstrap_exit_code=0",
+        ),
+        "classifier-oom": (
+            "failure_class=oom-container-exit",
+            "event_count=9",
+            "bootstrap_event_count=5",
+            "helper_event_count=4",
+            "oom_observed=true",
+            "die_exit_code=137",
+            "bootstrap_exit_code=137",
+        ),
+        "classifier-helper-oom-bootstrap-exit": (
+            "failure_class=non-oom-container-exit",
+            "event_count=9",
+            "bootstrap_event_count=4",
+            "helper_event_count=5",
+            "oom_observed=false",
+            "bootstrap_exit_code=42",
+        ),
+        "classifier-helpers-before-cid": (
+            "failure_class=bootstrap-unobserved",
+            "bootstrap_identity_observed=false",
+            "event_count=4",
+            "bootstrap_event_count=0",
+            "bootstrap_exit_code=-1",
+        ),
+        "classifier-missing-cid": (
+            "failure_class=bootstrap-unobserved",
+            "bootstrap_identity_observed=false",
+            "event_count=8",
+            "bootstrap_event_count=0",
+            "bootstrap_exit_code=-1",
+        ),
+        "classifier-malformed-cid": (
+            "failure_class=incomplete-unknown",
+            "lifecycle_valid=false",
+            "bootstrap_identity_observed=false",
+            "bootstrap_exit_code=-1",
+        ),
+        "classifier-network-text": (
+            "failure_class=pre-container",
+            "event_count=0",
+            "bootstrap_exit_code=-1",
+        ),
+        "classifier-no-space-text": (
+            "failure_class=pre-container",
+            "event_count=0",
+            "bootstrap_exit_code=-1",
+        ),
+        "classifier-unknown": (
+            "failure_class=incomplete-unknown",
+            "bootstrap_identity_observed=true",
+            "event_count=5",
+            "bootstrap_event_count=1",
+            "bootstrap_exit_code=-1",
+        ),
+        "classifier-event-overflow": (
+            "failure_class=incomplete-unknown",
+            "lifecycle_valid=false",
+            "bootstrap_exit_code=-1",
+        ),
+    }
+    safe_output = re.compile(
+        r"\ADisposable launcher operation failed; operation-created residue was contained[.] "
+        r"failure_class=(?:pre-container|bootstrap-unobserved|post-bootstrap-launcher-failure|non-oom-container-exit|oom-container-exit|incomplete-unknown) "
+        r"launcher_rc=-?[0-9]+ elapsed_seconds=[0-9]+ lifecycle_valid=(?:true|false) "
+        r"bootstrap_identity_observed=(?:true|false) event_count=[0-9]+ "
+        r"bootstrap_event_count=[0-9]+ helper_event_count=[0-9]+ "
+        r"container_create_count=[0-9]+ container_start_count=[0-9]+ "
+        r"container_die_count=[0-9]+ container_destroy_count=[0-9]+ oom_observed=(?:true|false) "
+        r"die_exit_code_observed=(?:true|false) die_exit_code=-?[0-9]+ "
+        r"bootstrap_exit_code_observed=(?:true|false) bootstrap_exit_code=-?[0-9]+ "
+        r"docker_free_pre_bytes=-?[0-9]+ docker_free_post_bytes=-?[0-9]+ "
+        r"mem_available_pre_bytes=-?[0-9]+ mem_available_post_bytes=-?[0-9]+ "
+        r"swap_free_pre_bytes=-?[0-9]+ swap_free_post_bytes=-?[0-9]+ "
+        r"swap_total_pre_bytes=-?[0-9]+ swap_total_post_bytes=-?[0-9]+\Z"
+    )
+    forbidden = (
+        FORBIDDEN_SENTINEL,
+        "bootstrap failed with exit code",
+        "bootstrap cid populated after create",
+        "commit failed after successful bootstrap",
+        "Out of memory",
+        "Temporary failure in name resolution",
+        "No space left on device",
+        "unclassified launcher transcript text",
+        "oversized hostile event stream",
+        "helper oom before bootstrap exit",
+        "helper lifecycle before bootstrap cid",
+        "bootstrap cid was never observable",
+        "bootstrap cid was malformed",
+        "https://",
+        "docker run",
+        "/var/discourse",
+        "secret-container-name",
+        "e" * 64,
+        "c" * 64,
+        "d" * 64,
+    )
+    for scenario, required in scenarios.items():
+        with tempfile.TemporaryDirectory(prefix="mochirii-disposable-classifier-") as temporary:
+            root = Path(temporary).resolve()
+            environment = setup(root, scenario)
+            result = invoke(root, environment, passed=False)
+            if result.stdout:
+                raise RuntimeError("Disposable launcher classifier emitted unexpected standard output.")
+            message = result.stderr.strip()
+            if any(value in message for value in forbidden):
+                raise RuntimeError("Disposable launcher classifier disclosed forbidden launcher evidence.")
+            if safe_output.fullmatch(message) is None:
+                raise RuntimeError(f"Disposable launcher classifier output escaped its fixed safe schema: {scenario}")
+            if any(value not in message for value in required):
+                raise RuntimeError(f"Disposable launcher classifier returned different bounded evidence: {scenario}")
+            current = state(root)
+            if current["containers"] or current["images"] != [PREEXISTING_IMAGE] or current["tags"]:
+                raise RuntimeError("Disposable launcher classifier changed terminal reconciliation.")
+            assert_no_transaction(root)
+
+
 def run_linux() -> None:
     if os.geteuid() != 0:
         raise SystemExit("Disposable launcher fixture requires an isolated root Linux context.")
@@ -312,6 +564,7 @@ def run_linux() -> None:
     exit_zero_residue_fixture()
     post_cid_crash_retry_fixture()
     rebuild_terminal_image_fixture()
+    failure_classifier_fixture()
     print("Disposable launcher immutable-ID hostile fixture passed.")
 
 
@@ -326,9 +579,7 @@ def run_in_container() -> None:
     ]
     result = subprocess.run(command, check=False, capture_output=True, text=True)
     if result.returncode:
-        raise RuntimeError(
-            f"Pinned disposable launcher fixture failed\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
-        )
+        raise RuntimeError("Pinned disposable launcher fixture failed without exposing captured output.")
     print(result.stdout.strip())
 
 

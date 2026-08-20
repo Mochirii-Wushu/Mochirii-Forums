@@ -30,6 +30,16 @@ LABEL_KEY = "mochirii.forums.disposable-operation"
 MAX_JOURNAL_BYTES = 65536
 COMMAND_TIMEOUT = 45
 LAUNCHER_TIMEOUT = 7200
+MAX_EVENT_BYTES = 1024 * 1024
+MAX_EVENT_LINE_BYTES = 65536
+MAX_EVENT_COUNT = 512
+MAX_CONTAINER_IDENTITIES = 64
+MAX_CID_BYTES = 65
+MAX_EVENT_DRAIN_BYTES = 256 * 1024
+EVENT_SETTLE_TIMEOUT = 0.25
+EVENT_STOP_TIMEOUT = 5
+MAX_MEMINFO_BYTES = 65536
+RESOURCE_COMMAND_TIMEOUT = 5
 
 
 class GuardError(RuntimeError):
@@ -223,6 +233,373 @@ class Runtime:
     def remove_image(self, identity: str) -> None:
         self.docker("image", "rm", "--force", identity, check=False)
 
+    def event_command(self, token: str) -> list[str]:
+        if self.adapter:
+            return [sys.executable, "-B", str(self.adapter), "events"]
+        return [
+            "docker", "events", "--since", str(max(0, int(time.time()) - 1)),
+            "--filter", f"label={LABEL_KEY}={token}", "--format", "{{json .}}",
+        ]
+
+
+class ContainerLifecycle:
+    def __init__(self) -> None:
+        self.event_count = 0
+        self.create_count = 0
+        self.start_count = 0
+        self.die_count = 0
+        self.destroy_count = 0
+        self.oom_count = 0
+        self.die_exit_codes: list[int] = []
+
+
+class LifecycleRecorder:
+    """Retain only bounded, non-secret facts from exact-label Docker events."""
+
+    def __init__(self, runtime: Runtime, token: str, environment: dict[str, str]) -> None:
+        self.runtime = runtime
+        self.token = token
+        self.environment = environment
+        self.process: subprocess.Popen[bytes] | None = None
+        self.stream: object | None = None
+        self.buffer = bytearray()
+        self.bytes_read = 0
+        self.event_count = 0
+        self.create_count = 0
+        self.start_count = 0
+        self.die_count = 0
+        self.destroy_count = 0
+        self.oom_count = 0
+        self.containers: dict[str, ContainerLifecycle] = {}
+        self.bootstrap_identity: str | None = None
+        self.cid_incomplete_seen = False
+        self.cid_malformed = False
+        self.malformed = False
+        self.overflow = False
+        self.recorder_failed = False
+
+    def start(self) -> None:
+        try:
+            self.process = subprocess.Popen(
+                self.runtime.event_command(self.token),
+                cwd=self.runtime.discourse,
+                env=self.environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                bufsize=0,
+            )
+        except OSError:
+            self.recorder_failed = True
+            return
+        if self.process.stdout is None:
+            self.recorder_failed = True
+            return
+        self.stream = self.process.stdout
+        try:
+            os.set_blocking(self.process.stdout.fileno(), False)
+        except OSError:
+            self.recorder_failed = True
+            self._close_stream()
+
+    def _close_stream(self) -> None:
+        if self.stream is not None:
+            try:
+                self.stream.close()  # type: ignore[union-attr]
+            except OSError:
+                pass
+            self.stream = None
+
+    def _invalidate_stream(self, *, overflow: bool = False) -> None:
+        self.overflow = self.overflow or overflow
+        self.malformed = self.malformed or not overflow
+        self.buffer.clear()
+        self._close_stream()
+
+    def _parse_event(self, payload: bytes) -> None:
+        if not payload or len(payload) > MAX_EVENT_LINE_BYTES or self.event_count >= MAX_EVENT_COUNT:
+            self._invalidate_stream(overflow=self.event_count >= MAX_EVENT_COUNT)
+            return
+        try:
+            document = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._invalidate_stream()
+            return
+        if not isinstance(document, dict):
+            self._invalidate_stream()
+            return
+        actor = document.get("Actor")
+        attributes = actor.get("Attributes") if isinstance(actor, dict) else None
+        identity = actor.get("ID") if isinstance(actor, dict) else None
+        event_type = document.get("Type")
+        action = document.get("Action", document.get("status"))
+        if (
+            not isinstance(attributes, dict)
+            or attributes.get(LABEL_KEY) != self.token
+            or not isinstance(identity, str)
+            or CONTAINER_ID.fullmatch(identity) is None
+            or event_type != "container"
+            or not isinstance(action, str)
+        ):
+            self._invalidate_stream()
+            return
+        lifecycle = self.containers.get(identity)
+        if lifecycle is None:
+            if len(self.containers) >= MAX_CONTAINER_IDENTITIES:
+                self._invalidate_stream(overflow=True)
+                return
+            lifecycle = ContainerLifecycle()
+            self.containers[identity] = lifecycle
+        self.event_count += 1
+        lifecycle.event_count += 1
+        if action == "create":
+            self.create_count += 1
+            lifecycle.create_count += 1
+        elif action == "start":
+            self.start_count += 1
+            lifecycle.start_count += 1
+        elif action == "die":
+            value = attributes.get("exitCode")
+            if not isinstance(value, str) or re.fullmatch(r"[0-9]{1,3}", value) is None or int(value) > 255:
+                self._invalidate_stream()
+                return
+            self.die_count += 1
+            lifecycle.die_count += 1
+            lifecycle.die_exit_codes.append(int(value))
+        elif action == "destroy":
+            self.destroy_count += 1
+            lifecycle.destroy_count += 1
+        elif action == "oom":
+            self.oom_count += 1
+            lifecycle.oom_count += 1
+
+    def observe_bootstrap_cid(self, path: Path, *, final: bool = False) -> None:
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+        except FileNotFoundError:
+            if final and self.cid_incomplete_seen:
+                self.cid_malformed = True
+            return
+        except OSError:
+            self.cid_malformed = True
+            return
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                self.cid_malformed = True
+                return
+            # Docker creates/truncates --cidfile before ContainerCreate and
+            # writes the identity only after creation succeeds.  A poll may
+            # therefore see a legitimate short in-progress file.  Only the
+            # final observation treats a still-short file as malformed.
+            if metadata.st_size < 64:
+                self.cid_incomplete_seen = True
+                self.cid_malformed = self.cid_malformed or final
+                return
+            if metadata.st_size not in {64, MAX_CID_BYTES}:
+                self.cid_malformed = True
+                return
+            chunks: list[bytes] = []
+            remaining = metadata.st_size
+            while remaining:
+                chunk = os.read(descriptor, remaining)
+                if not chunk:
+                    self.cid_malformed = True
+                    return
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            if os.read(descriptor, 1):
+                self.cid_malformed = True
+                return
+            value = payload.strip()
+            if re.fullmatch(rb"[0-9a-f]{64}", value) is None:
+                self.cid_malformed = True
+                return
+            identity = value.decode("ascii")
+            if self.bootstrap_identity is not None and self.bootstrap_identity != identity:
+                self.cid_malformed = True
+                return
+            self.bootstrap_identity = identity
+            self.cid_incomplete_seen = False
+        finally:
+            os.close(descriptor)
+
+    def drain(self) -> None:
+        if self.stream is None:
+            return
+        drained = 0
+        descriptor = self.stream.fileno()  # type: ignore[union-attr]
+        while drained < MAX_EVENT_DRAIN_BYTES and self.stream is not None:
+            try:
+                chunk = os.read(descriptor, min(65536, MAX_EVENT_DRAIN_BYTES - drained))
+            except BlockingIOError:
+                break
+            except OSError:
+                self.recorder_failed = True
+                self._close_stream()
+                break
+            if not chunk:
+                self._close_stream()
+                break
+            drained += len(chunk)
+            self.bytes_read += len(chunk)
+            if self.bytes_read > MAX_EVENT_BYTES:
+                self._invalidate_stream(overflow=True)
+                break
+            self.buffer.extend(chunk)
+            while self.stream is not None and b"\n" in self.buffer:
+                payload, _, remainder = self.buffer.partition(b"\n")
+                self.buffer = bytearray(remainder)
+                self._parse_event(payload)
+            if len(self.buffer) > MAX_EVENT_LINE_BYTES:
+                self._invalidate_stream(overflow=True)
+
+    def stop(self) -> None:
+        process = self.process
+        if process is None:
+            self._close_stream()
+            return
+        self.drain()
+        if process.poll() is not None:
+            self.recorder_failed = True
+        else:
+            settle_deadline = time.monotonic() + EVENT_SETTLE_TIMEOUT
+            while self.stream is not None and time.monotonic() < settle_deadline:
+                self.drain()
+                time.sleep(0.01)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            deadline = time.monotonic() + EVENT_STOP_TIMEOUT
+            while process.poll() is None and time.monotonic() < deadline:
+                self.drain()
+                time.sleep(0.02)
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=EVENT_STOP_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    self.recorder_failed = True
+            else:
+                process.wait()
+        self.drain()
+        if self.buffer:
+            self.malformed = True
+            self.buffer.clear()
+        self._close_stream()
+        self.process = None
+
+    def failure_message(
+        self,
+        operation: str,
+        launcher_status: int,
+        elapsed_seconds: int,
+        resources_before: dict[str, int],
+        resources_after: dict[str, int],
+    ) -> str:
+        valid = not (self.malformed or self.overflow or self.recorder_failed or self.cid_malformed)
+        bootstrap = self.containers.get(self.bootstrap_identity) if self.bootstrap_identity is not None else None
+        exact_die_code = bootstrap.die_exit_codes[0] if bootstrap is not None and len(bootstrap.die_exit_codes) == 1 else -1
+        if not valid:
+            failure_class = "incomplete-unknown"
+        elif self.bootstrap_identity is None:
+            failure_class = "pre-container" if self.event_count == 0 else "bootstrap-unobserved"
+        elif bootstrap is None or bootstrap.die_count != 1:
+            failure_class = "incomplete-unknown"
+        elif exact_die_code == 0 and bootstrap.oom_count == 0:
+            failure_class = "post-bootstrap-launcher-failure"
+        elif exact_die_code == 0:
+            failure_class = "incomplete-unknown"
+        elif bootstrap.oom_count:
+            failure_class = "oom-container-exit"
+        else:
+            failure_class = "non-oom-container-exit"
+        bootstrap_code = exact_die_code if operation == "bootstrap" else -1
+        bootstrap_event_count = bootstrap.event_count if bootstrap is not None else 0
+        fields = (
+            f"failure_class={failure_class}",
+            f"launcher_rc={launcher_status}",
+            f"elapsed_seconds={elapsed_seconds}",
+            f"lifecycle_valid={'true' if valid else 'false'}",
+            f"bootstrap_identity_observed={'true' if self.bootstrap_identity is not None else 'false'}",
+            f"event_count={self.event_count}",
+            f"bootstrap_event_count={bootstrap_event_count}",
+            f"helper_event_count={self.event_count - bootstrap_event_count}",
+            f"container_create_count={self.create_count}",
+            f"container_start_count={self.start_count}",
+            f"container_die_count={self.die_count}",
+            f"container_destroy_count={self.destroy_count}",
+            f"oom_observed={'true' if bootstrap is not None and bootstrap.oom_count > 0 else 'false'}",
+            f"die_exit_code_observed={'true' if exact_die_code >= 0 else 'false'}",
+            f"die_exit_code={exact_die_code}",
+            f"bootstrap_exit_code_observed={'true' if bootstrap_code >= 0 else 'false'}",
+            f"bootstrap_exit_code={bootstrap_code}",
+            f"docker_free_pre_bytes={resources_before['dockerFreeBytes']}",
+            f"docker_free_post_bytes={resources_after['dockerFreeBytes']}",
+            f"mem_available_pre_bytes={resources_before['memAvailableBytes']}",
+            f"mem_available_post_bytes={resources_after['memAvailableBytes']}",
+            f"swap_free_pre_bytes={resources_before['swapFreeBytes']}",
+            f"swap_free_post_bytes={resources_after['swapFreeBytes']}",
+            f"swap_total_pre_bytes={resources_before['swapTotalBytes']}",
+            f"swap_total_post_bytes={resources_after['swapTotalBytes']}",
+        )
+        return (
+            "Disposable launcher operation failed; operation-created residue was contained. "
+            + " ".join(fields)
+        )
+
+
+def resource_snapshot(runtime: Runtime) -> dict[str, int]:
+    values = {
+        "dockerFreeBytes": -1,
+        "memAvailableBytes": -1,
+        "swapFreeBytes": -1,
+        "swapTotalBytes": -1,
+    }
+    try:
+        result = runtime.run(
+            ["docker", "info", "--format", "{{.DockerRootDir}}"],
+            timeout=RESOURCE_COMMAND_TIMEOUT,
+            check=False,
+        )
+        lines = result.stdout.splitlines()
+        if result.returncode == 0 and len(lines) == 1 and 0 < len(lines[0]) <= 4096:
+            docker_root = Path(lines[0])
+            if docker_root.is_absolute():
+                filesystem = os.statvfs(docker_root)
+                free_bytes = filesystem.f_bavail * filesystem.f_frsize
+                if 0 <= free_bytes <= (2**63 - 1):
+                    values["dockerFreeBytes"] = free_bytes
+    except (GuardError, OSError, UnicodeError, ValueError):
+        pass
+    try:
+        with Path("/proc/meminfo").open("rb") as source:
+            payload = source.read(MAX_MEMINFO_BYTES + 1)
+        if len(payload) <= MAX_MEMINFO_BYTES:
+            fields: dict[bytes, int] = {}
+            for line in payload.splitlines():
+                parts = line.split()
+                if len(parts) == 3 and parts[0] in {b"MemAvailable:", b"SwapFree:", b"SwapTotal:"} and parts[2] == b"kB":
+                    if re.fullmatch(rb"[0-9]{1,20}", parts[1]) is not None:
+                        amount = int(parts[1]) * 1024
+                        if 0 <= amount <= (2**63 - 1):
+                            fields[parts[0]] = amount
+            if set(fields) == {b"MemAvailable:", b"SwapFree:", b"SwapTotal:"}:
+                values["memAvailableBytes"] = fields[b"MemAvailable:"]
+                values["swapFreeBytes"] = fields[b"SwapFree:"]
+                values["swapTotalBytes"] = fields[b"SwapTotal:"]
+    except (OSError, ValueError):
+        pass
+    return values
+
 
 def marked_processes(token: str) -> list[int]:
     marker = f"MOCHIRII_DISPOSABLE_OPERATION_TOKEN={token}".encode()
@@ -404,36 +781,53 @@ def main() -> int:
     ]
     if adapter:
         command = [sys.executable, "-B", str(adapter), "launcher", *command[1:]]
-    process = subprocess.Popen(
-        command,
-        cwd=runtime.discourse,
-        env=environment,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    document["phase"] = "launcher-active"
-    document["launcherPid"] = process.pid
-    write_journal(runtime.journal, document)
-    deadline = time.monotonic() + LAUNCHER_TIMEOUT
-    while process.poll() is None and time.monotonic() < deadline:
-        refresh_created(runtime, document)
+    resources_before = resource_snapshot(runtime)
+    recorder = LifecycleRecorder(runtime, token, environment)
+    recorder.start()
+    launcher_started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=runtime.discourse,
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as error:
+        recorder.stop()
+        reconcile(runtime, document, False)
+        raise GuardError("Disposable launcher process could not start; operation-created residue was contained.") from error
+    try:
+        document["phase"] = "launcher-active"
+        document["launcherPid"] = process.pid
         write_journal(runtime.journal, document)
-        time.sleep(0.1)
-    if process.poll() is None:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=30)
-        except subprocess.TimeoutExpired:
+        deadline = time.monotonic() + LAUNCHER_TIMEOUT
+        while process.poll() is None and time.monotonic() < deadline:
+            recorder.observe_bootstrap_cid(runtime.cid)
+            recorder.drain()
+            refresh_created(runtime, document)
+            write_journal(runtime.journal, document)
+            time.sleep(0.1)
+        if process.poll() is None:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
-            process.wait(timeout=5)
-    status = process.returncode if process.returncode is not None else 124
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=5)
+        recorder.observe_bootstrap_cid(runtime.cid, final=True)
+        status = process.returncode if process.returncode is not None else 124
+        elapsed_seconds = min(LAUNCHER_TIMEOUT + 60, max(0, int(time.monotonic() - launcher_started)))
+    finally:
+        recorder.stop()
+    resources_after = resource_snapshot(runtime)
     refresh_created(runtime, document)
     write_journal(runtime.journal, document)
     if os.environ.get("MOCHIRII_DISPOSABLE_LAUNCHER_FIXTURE_FAIL_AFTER") == "launcher-returned":
@@ -451,7 +845,7 @@ def main() -> int:
     else:
         reconcile(runtime, document, False)
     if status:
-        fail("Disposable launcher operation failed; operation-created residue was contained.")
+        fail(recorder.failure_message(operation, status, elapsed_seconds, resources_before, resources_after))
     return 0
 
 
