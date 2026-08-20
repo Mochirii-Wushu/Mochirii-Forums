@@ -1,0 +1,360 @@
+## Sanitized Mochirii Forums standalone configuration.
+##
+## This is not a runtime app.yml and contains no credential. Materialize it
+## only with scripts/render-app-config.py. The production result belongs at
+## /var/discourse/containers/app.yml with root-only permissions.
+
+base_image: "discourse/base@sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
+
+templates:
+  - "templates/postgres.template.yml"
+  - "templates/redis.template.yml"
+  - "templates/web.template.yml"
+  - "templates/web.ratelimited.template.yml"
+__MOCHIRII_TLS_TEMPLATES__
+
+expose:
+__MOCHIRII_EXPOSE__
+
+params:
+  db_default_text_search_config: "pg_catalog.english"
+  db_shared_buffers: "256MB"
+  version: "cbf996f65aae3da1843224aa624bcd9a225931ac"
+
+env:
+  LC_ALL: "C.UTF-8"
+  LANG: "C.UTF-8"
+  LANGUAGE: "C.UTF-8"
+__MOCHIRII_TLS_ENV__
+  UNICORN_WORKERS: "2"
+  MOCHIRII_STAGE4_FIXTURE: __MOCHIRII_STAGE4_FIXTURE__
+  MOCHIRII_STAGE4_CONNECT_FIXTURE: __MOCHIRII_STAGE4_CONNECT_FIXTURE__
+  MOCHIRII_REPOSITORY_COMMIT: __MOCHIRII_REPOSITORY_COMMIT__
+  MOCHIRII_RELEASE_ASSET_ROOT: __MOCHIRII_RELEASE_ASSET_ROOT__
+  MOCHIRII_EXPECTED_NOTIFICATION_EMAIL: __MOCHIRII_EXPECTED_NOTIFICATION_EMAIL__
+
+  DISCOURSE_HOSTNAME: "forums.mochirii.com"
+  DISCOURSE_DEVELOPER_EMAILS: __MOCHIRII_DEVELOPER_EMAILS__
+  DISCOURSE_DEFAULT_LOCALE: "en"
+  DISCOURSE_ALLOW_USER_LOCALE: "false"
+  DISCOURSE_SET_LOCALE_FROM_ACCEPT_LANGUAGE_HEADER: "false"
+  DISCOURSE_SET_LOCALE_FROM_COOKIE: "false"
+  DISCOURSE_SET_LOCALE_FROM_PARAM: "false"
+
+  DISCOURSE_SMTP_ADDRESS: __MOCHIRII_SMTP_ADDRESS__
+  DISCOURSE_SMTP_PORT: __MOCHIRII_SMTP_PORT__
+  DISCOURSE_SMTP_USER_NAME: __MOCHIRII_SMTP_USER_NAME__
+  DISCOURSE_SMTP_PASSWORD: __MOCHIRII_SMTP_PASSWORD__
+  DISCOURSE_SMTP_FORCE_TLS: "true"
+  DISCOURSE_SMTP_ENABLE_START_TLS: "false"
+  DISCOURSE_SMTP_DOMAIN: "forums.mochirii.com"
+  DISCOURSE_SMTP_OPENSSL_VERIFY_MODE: "peer"
+  DISCOURSE_SMTP_AUTHENTICATION: __MOCHIRII_SMTP_AUTHENTICATION__
+  DISCOURSE_NOTIFICATION_EMAIL: __MOCHIRII_NOTIFICATION_EMAIL__
+  DISCOURSE_DISABLE_EMAILS: __MOCHIRII_DISABLE_EMAILS__
+
+  DISCOURSE_TITLE: "Mochirii Forums"
+  DISCOURSE_SHORT_TITLE: "Mochirii"
+  DISCOURSE_SITE_DESCRIPTION: "The private community forums for Mochirii members."
+  DISCOURSE_SHORT_SITE_DESCRIPTION: "Mochirii member forums"
+  DISCOURSE_COMPANY_NAME: "Mochirii"
+  DISCOURSE_CONTACT_EMAIL: __MOCHIRII_CONTACT_EMAIL__
+  DISCOURSE_EMAIL_PREFIX: "Mochirii Forums"
+  DISCOURSE_EMAIL_SITE_TITLE: "Mochirii Forums"
+  DISCOURSE_SIMPLE_EMAIL_SUBJECT: "false"
+  DISCOURSE_APPLY_CUSTOM_STYLES_TO_DIGEST: "true"
+  DISCOURSE_ENABLE_POWERED_BY_DISCOURSE: "false"
+  DISCOURSE_VERSION_CHECKS: "false"
+  DISCOURSE_NEW_VERSION_EMAILS: "false"
+  DISCOURSE_SEND_WELCOME_MESSAGE: "false"
+  DISCOURSE_SEND_TL1_WELCOME_MESSAGE: "false"
+  DISCOURSE_SEND_TL2_PROMOTION_MESSAGE: "false"
+  DISCOURSE_SEND_OLD_CREDENTIAL_REMINDER_DAYS: "0"
+  DISCOURSE_ALLOW_EMAIL_INVITES: "false"
+  DISCOURSE_DISCOURSE_NARRATIVE_BOT_ENABLED: "false"
+
+  DISCOURSE_LOGIN_REQUIRED: "true"
+  DISCOURSE_ALLOW_NEW_REGISTRATIONS: "false"
+  DISCOURSE_ENABLE_SIGNUP_CTA: "false"
+  DISCOURSE_INVITE_ONLY: "false"
+  DISCOURSE_ENABLE_LOCAL_LOGINS: "false"
+  DISCOURSE_ENABLE_LOCAL_LOGINS_VIA_EMAIL: "false"
+  DISCOURSE_ENABLE_LOCAL_LOGINS_VIA_CODE: "false"
+  DISCOURSE_ENABLE_PASSKEYS: "false"
+  DISCOURSE_ENABLE_DISCOURSE_ID: "false"
+  DISCOURSE_ENABLE_GOOGLE_OAUTH2_LOGINS: "false"
+  DISCOURSE_ENABLE_TWITTER_LOGINS: "false"
+  DISCOURSE_ENABLE_FACEBOOK_LOGINS: "false"
+  DISCOURSE_ENABLE_GITHUB_LOGINS: "false"
+  DISCOURSE_ENABLE_DISCORD_LOGINS: "false"
+  DISCOURSE_ENABLE_LINKEDIN_OIDC_LOGINS: "false"
+  DISCOURSE_SIGN_IN_WITH_APPLE_ENABLED: "false"
+  DISCOURSE_ENABLE_LOGIN_WITH_AMAZON: "false"
+  DISCOURSE_MICROSOFT_AUTH_ENABLED: "false"
+  DISCOURSE_OAUTH2_ENABLED: "false"
+  DISCOURSE_OPENID_CONNECT_ENABLED: "false"
+
+  DISCOURSE_ENABLE_DISCOURSE_CONNECT: __MOCHIRII_ENABLE_DISCOURSE_CONNECT__
+  DISCOURSE_DISCOURSE_CONNECT_URL: "https://mochirii.com/forums/connect"
+  DISCOURSE_DISCOURSE_CONNECT_SECRET: __MOCHIRII_DISCOURSE_CONNECT_SECRET__
+  DISCOURSE_DISCOURSE_CONNECT_CSRF_PROTECTION: "true"
+  DISCOURSE_VERBOSE_DISCOURSE_CONNECT_LOGGING: "false"
+  DISCOURSE_ENABLE_DISCOURSE_CONNECT_PROVIDER: "false"
+  DISCOURSE_DISCOURSE_CONNECT_OVERRIDES_GROUPS: "false"
+  DISCOURSE_AUTH_OVERRIDES_EMAIL: "true"
+  DISCOURSE_AUTH_OVERRIDES_USERNAME: "true"
+  DISCOURSE_AUTH_OVERRIDES_NAME: "true"
+  DISCOURSE_AUTH_OVERRIDES_AVATAR: "false"
+
+  DISCOURSE_AUTHORIZED_EXTENSIONS: "jpg|jpeg|png|gif|webp"
+  DISCOURSE_AUTHORIZED_EXTENSIONS_FOR_STAFF: ""
+  DISCOURSE_ALLOW_STAFF_TO_UPLOAD_ANY_FILE_IN_PM: "false"
+  DISCOURSE_ALLOW_ALL_ATTACHMENTS_FOR_GROUP_MESSAGES: "false"
+  DISCOURSE_SECURE_UPLOADS: "false"
+  DISCOURSE_ENABLE_DIRECT_S3_UPLOADS: "false"
+  DISCOURSE_ENABLE_S3_UPLOADS: __MOCHIRII_ENABLE_S3_UPLOADS__
+  DISCOURSE_S3_REGION: "whatever"
+  DISCOURSE_S3_ENDPOINT: "https://sgp1.digitaloceanspaces.com"
+  DISCOURSE_S3_ACCESS_KEY_ID: __MOCHIRII_S3_ACCESS_KEY_ID__
+  DISCOURSE_S3_SECRET_ACCESS_KEY: __MOCHIRII_S3_SECRET_ACCESS_KEY__
+  DISCOURSE_S3_UPLOAD_BUCKET: "mochirii-forums"
+  DISCOURSE_S3_BACKUP_BUCKET: "mochirii-forums/backups"
+  DISCOURSE_S3_CDN_URL: "https://media-forums.mochirii.com"
+  DISCOURSE_S3_USE_CDN_URL_FOR_ALL_UPLOADS: "true"
+  DISCOURSE_S3_USE_ACLS: "true"
+  DISCOURSE_S3_INSTALL_CORS_RULE: "false"
+  DISCOURSE_S3_CONFIGURE_TOMBSTONE_POLICY: "false"
+  DISCOURSE_S3_ENABLE_ACCESS_CONTROL_TAGS: "false"
+  DISCOURSE_BACKUP_LOCATION: __MOCHIRII_BACKUP_LOCATION__
+  DISCOURSE_ENABLE_BACKUPS: "true"
+  DISCOURSE_BACKUP_WITH_UPLOADS: "true"
+  DISCOURSE_INCLUDE_S3_UPLOADS_IN_BACKUPS: "true"
+  DISCOURSE_BACKUP_FREQUENCY: "7"
+  DISCOURSE_MAXIMUM_BACKUPS: "5"
+
+volumes:
+  - volume:
+      host: /var/discourse/shared/standalone
+      guest: /shared
+  - volume:
+      host: /var/discourse/shared/standalone/log/var-log
+      guest: /var/log
+  - volume:
+      host: __MOCHIRII_RELEASE_ASSET_HOST__
+      guest: /opt/mochirii-release:ro
+
+## Docker Manager is part of the official standalone template. It is the only
+## component cloned here and is pinned to the revision resolved with the
+## selected deployment source.
+hooks:
+  after_code:
+    - exec:
+        cd: $home/plugins
+        cmd:
+          - >-
+            rm -rf -- mochirii_email_metadata &&
+            install -d -m 0755 mochirii_email_metadata &&
+            install -m 0644
+            "$MOCHIRII_RELEASE_ASSET_ROOT/mochirii-email-metadata-plugin.rb"
+            mochirii_email_metadata/plugin.rb &&
+            cmp -- "$MOCHIRII_RELEASE_ASSET_ROOT/mochirii-email-metadata-plugin.rb"
+            mochirii_email_metadata/plugin.rb
+    - exec:
+        cd: $home/plugins
+        cmd:
+          - >-
+            git clone --no-tags https://github.com/discourse/docker_manager.git docker_manager &&
+            cd docker_manager &&
+            git checkout --detach c008c3ca7fcc44775215843992e88190adb7b3bf &&
+            test "$(git rev-parse HEAD)" = "c008c3ca7fcc44775215843992e88190adb7b3bf"
+__MOCHIRII_TLS_HOOKS__
+
+run:
+__MOCHIRII_TLS_RUN__
+  - file:
+      path: /var/www/discourse/config/initializers/mochirii_sensitive_parameter_filter.rb
+      contents: |
+        # frozen_string_literal: true
+
+        # The DiscourseConnect callback carries the signed payload and signature
+        # in its query. Administrator recovery carries its token in one pinned
+        # route segment. Preserve PATH_INFO/routing while redacting only that
+        # canonical segment from Rails::Rack::Logger's filtered_path.
+        module MochiriiSensitiveRequestPathFilter
+          EMAIL_LOGIN_PATH = %r{\A/session/email-login/[A-Za-z0-9_-]{20,256}\z}.freeze
+          FILTERED_EMAIL_LOGIN_PATH = "/session/email-login/[FILTERED]".freeze
+
+          def filtered_path
+            return FILTERED_EMAIL_LOGIN_PATH if path.match?(EMAIL_LOGIN_PATH)
+
+            super
+          end
+        end
+
+        ActionDispatch::Request.prepend(MochiriiSensitiveRequestPathFilter) unless
+          ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter)
+        Rails.application.config.filter_parameters |= %i[sso sig token]
+  - file:
+      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf
+      contents: |
+        # These replacements bind to the exact selected core revision. A core
+        # change must update and revalidate them before release.
+        proxy_hide_header X-Discourse-Route;
+        proxy_hide_header X-Discourse-Username;
+        proxy_hide_header X-Discourse-Crawler-View;
+        proxy_hide_header Discourse-No-Onebox;
+        proxy_hide_header Discourse-Rate-Limit-Error-Code;
+        proxy_hide_header Discourse-Xhr-Redirect;
+        proxy_hide_header Discourse-Actions-Remaining;
+        proxy_hide_header Discourse-Actions-Max;
+        proxy_hide_header Discourse-Logged-Out;
+        proxy_hide_header X-Discourse-TrackView;
+        proxy_hide_header X-Discourse-BrowserPageView;
+        proxy_hide_header X-Discourse-Cached;
+        sub_filter_once off;
+        sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
+        sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
+        sub_filter_types application/opensearchdescription+xml;
+  - file:
+      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf
+      contents: |
+        # Pinned core feed templates expose upstream identity in member-facing
+        # XML. Feeds are outside the Mochirii Forums product contract.
+        # The callback query contains member identity plus its signature. This
+        # exact normalized route preserves the pinned proxy/outlet behavior but
+        # writes neither its request line nor query to nginx logs. Rails applies
+        # the exact sso/sig parameter filters installed above.
+        location ~* ^/session/sso_login(?:\.[A-Za-z0-9]+)?/?$ {
+          access_log off;
+          log_not_found off;
+          error_log /dev/null emerg;
+          add_header Cache-Control "private, no-store, max-age=0" always;
+          add_header Pragma "no-cache" always;
+          add_header Expires "0" always;
+          add_header Referrer-Policy "no-referrer" always;
+          include conf.d/outlets/discourse/*.conf;
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Request-Start "t=${msec}";
+          proxy_set_header X-Forwarded-For $remote_addr;
+          proxy_set_header X-Forwarded-Proto $thescheme;
+          proxy_set_header X-Sendfile-Type "";
+          proxy_set_header X-Accel-Mapping "";
+          proxy_set_header Client-Ip "";
+          proxy_pass http://discourse;
+        }
+        location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$ {
+          access_log off;
+          log_not_found off;
+          error_log /dev/null emerg;
+          add_header Cache-Control "private, no-store, max-age=0" always;
+          add_header Pragma "no-cache" always;
+          add_header Expires "0" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          include conf.d/outlets/discourse/*.conf;
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Request-Start "t=${msec}";
+          proxy_set_header X-Forwarded-For $remote_addr;
+          proxy_set_header X-Forwarded-Proto $thescheme;
+          proxy_set_header X-Sendfile-Type "";
+          proxy_set_header X-Accel-Mapping "";
+          proxy_set_header Client-Ip "";
+          proxy_pass http://discourse;
+        }
+        location ~* ^/session/email-login/ {
+          access_log off;
+          log_not_found off;
+          error_log /dev/null emerg;
+          return 420;
+        }
+        error_page 418 = @mochirii_feed_denied;
+        error_page 419 = @mochirii_admin_recovery_denied;
+        error_page 420 = @mochirii_email_login_denied;
+        if ($arg_format ~* "^(?:rss|atom|r(?:s|%73)(?:s|%73)|a(?:t|%74)(?:o|%6f)(?:m|%6d))$") { return 418; }
+        location ~* \.(?:rss|atom)$ { return 418; }
+        # Administrator recovery is initiated only by the root/operator host
+        # wrapper. The ordinary public GET/PUT form is never exposed.
+        location ~ ^/(?:u|users)/admin-login(?:\.[A-Za-z0-9]+)?/?$ { return 419; }
+        location @mochirii_feed_denied {
+          default_type text/html;
+          add_header Cache-Control "private, no-store" always;
+          add_header Pragma "no-cache" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          return 404 '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Feed unavailable · Mochirii Forums</title></head><body><main><h1>Feed unavailable</h1><p>Feeds are not available in Mochirii Forums.</p></main></body></html>';
+        }
+        location @mochirii_admin_recovery_denied {
+          default_type text/html;
+          add_header Cache-Control "private, no-store" always;
+          add_header Pragma "no-cache" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          return 404 '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Page unavailable · Mochirii Forums</title></head><body><main><h1>Page unavailable</h1><p>This page is not available in Mochirii Forums.</p></main></body></html>';
+        }
+        location @mochirii_email_login_denied {
+          default_type text/html;
+          add_header Cache-Control "private, no-store, max-age=0" always;
+          add_header Pragma "no-cache" always;
+          add_header Expires "0" always;
+          add_header Referrer-Policy "no-referrer" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          return 404 '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Page unavailable · Mochirii Forums</title></head><body><main><h1>Page unavailable</h1><p>This page is not available in Mochirii Forums.</p></main></body></html>';
+        }
+  - file:
+      path: /var/www/discourse/public/403.html
+      contents: |
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Access unavailable · Mochirii Forums</title><style>body{margin:0;background:#fffaf5;color:#241f31;font:18px/1.6 system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}main{max-width:36rem;padding:2rem;text-align:center}a{color:#7656d6}</style></head><body><main><h1>Access unavailable</h1><p>This page is not available to you.</p><p><a href="https://forums.mochirii.com">Return to Mochirii Forums</a></p></main></body></html>
+  - file:
+      path: /var/www/discourse/public/422.html
+      contents: |
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Request unavailable · Mochirii Forums</title><style>body{margin:0;background:#fffaf5;color:#241f31;font:18px/1.6 system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}main{max-width:36rem;padding:2rem;text-align:center}a{color:#7656d6}</style></head><body><main><h1>Request unavailable</h1><p>We could not process that request.</p><p><a href="https://forums.mochirii.com">Return to Mochirii Forums</a></p></main></body></html>
+  - file:
+      path: /var/www/discourse/public/500.html
+      contents: |
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Mochirii Forums</title><style>body{margin:0;background:#fffaf5;color:#241f31;font:18px/1.6 system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}main{max-width:36rem;padding:2rem;text-align:center}a{color:#7656d6}</style></head><body><main><h1>Mochirii Forums</h1><p>We could not complete that request. Please try again shortly.</p><p><a href="https://mochirii.com">Return to Mochirii</a></p></main></body></html>
+  - file:
+      path: /var/www/discourse/public/503.html
+      contents: |
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Temporarily unavailable · Mochirii Forums</title><style>body{margin:0;background:#fffaf5;color:#241f31;font:18px/1.6 system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}main{max-width:36rem;padding:2rem;text-align:center}a{color:#7656d6}</style></head><body><main><h1>Temporarily unavailable</h1><p>Mochirii Forums will be available again shortly.</p><p><a href="https://mochirii.com">Return to Mochirii</a></p></main></body></html>
+  - file:
+      path: /var/www/discourse/public/404.html
+      contents: |
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Page not found · Mochirii Forums</title><style>body{margin:0;background:#fffaf5;color:#241f31;font:18px/1.6 system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}main{max-width:36rem;padding:2rem;text-align:center}a{color:#7656d6}</style></head><body><main><h1>Page not found</h1><p>The page is not available in Mochirii Forums.</p><p><a href="https://forums.mochirii.com">Return to Mochirii Forums</a></p></main></body></html>
+  - exec:
+      cd: $home
+      cmd:
+        - >-
+          test "$(find public -maxdepth 1 -type f
+          \( -name '403*.html' -o -name '422*.html' -o -name '500*.html' -o -name '503*.html' \)
+          | wc -l)" -eq 196
+        - >-
+          for status in 403 422 500 503; do
+            find public -maxdepth 1 -type f -name "${status}*.html"
+            ! -name "${status}.html" -exec
+            cp -- "public/${status}.html" {} \;;
+          done
+        - >-
+          test "$(find public -maxdepth 1 -type f
+          \( -name '403*.html' -o -name '422*.html' -o -name '500*.html' -o -name '503*.html' \)
+          | wc -l)" -eq 196
+        - >-
+          forbidden="$(find public -maxdepth 1 -type f
+          \( -name '403*.html' -o -name '422*.html' -o -name '500*.html' -o -name '503*.html' \)
+          -exec grep -Eil 'powered by discourse|discourse[.](org|com)|digitaloceanspaces[.]com|amazonaws[.]com' {} + || true)";
+          test -z "$forbidden"
+        - >-
+          su discourse -c 'THEME_ARCHIVE="$MOCHIRII_RELEASE_ASSET_ROOT/mochirii-theme.zip"
+          bundle exec rake themes:install:archive'
+        - >-
+          su discourse -c 'bundle exec rails runner
+          "$MOCHIRII_RELEASE_ASSET_ROOT/configure-site.rb"'
+        - >-
+          grep -Fq 'include conf.d/outlets/discourse/*.conf;'
+          /etc/nginx/conf.d/discourse.conf
+        - >-
+          grep -R -Fq 'include conf.d/outlets/server/*.conf;'
+          /etc/nginx
+        - "nginx -t"

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-14",
+  "stage4": {
+    "providerResourcesCreated": false,
+    "providerConfigurationChanged": false,
+    "runtimeSecretsConfigured": false,
+    "productionRendered": false,
+    "publicDnsEnabled": false,
+    "smtpActivated": false,
+    "discourseConnectEnabled": false,
+    "deploymentEnabled": false,
+    "paidCostCreated": false
+  },
+  "requiredBeforeStage5PaidCreation": {
+    "socialTerminalGatePassed": true,
+    "repositoryCiPassed": false,
+    "disposableOneCoreBootstrapPassed": false,
+    "smtpAuthorityAlreadyAuthorized": false,
+    "smtpSenderDnsVerified": false,
+    "providerPriceGatePassed": false
+  }
+}

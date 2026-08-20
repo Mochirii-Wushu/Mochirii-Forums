@@ -11,7 +11,10 @@ Thumbs.db
 .cache/
 coverage/
 tmp/
+__pycache__/
+*.py[cod]
 *.log
+*.zip
 
 # Local configuration and credentials
 .env
@@ -31,3 +34,6 @@ storage/
 *.db
 *.sqlite*
 *.dump
+
+# Root-owned rendered runtime configuration is never repository source
+config/app.yml

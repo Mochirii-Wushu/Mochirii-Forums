@@ -1,0 +1,26 @@
+{
+  "name": "Mochirii Forums",
+  "about_url": "https://mochirii.com",
+  "authors": "Mochirii",
+  "theme_version": "1.0.0",
+  "minimum_discourse_version": "2026.7.1",
+  "assets": {
+    "mochirii_emblem": "assets/mochirii-emblem.webp",
+    "mochirii_icon": "assets/mochirii-icon.png",
+    "mochirii_social_card": "assets/mochirii-social-card.png"
+  },
+  "color_schemes": {
+    "Mochirii": {
+      "primary": "241f31",
+      "secondary": "fffaf5",
+      "tertiary": "7656d6",
+      "quaternary": "e8b5c9",
+      "header_background": "fffaf5",
+      "header_primary": "241f31",
+      "highlight": "f3dfac",
+      "danger": "a23a4a",
+      "success": "28765c",
+      "love": "c44c79"
+    }
+  }
+}

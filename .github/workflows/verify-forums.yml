@@ -1,0 +1,77 @@
+name: verify-forums
+
+'on':
+  workflow_dispatch:
+    inputs:
+      release_commit:
+        description: Exact deployed Forums commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forums-production
+  cancel-in-progress: false
+
+jobs:
+  hosted-verification:
+    name: protected-hosted-verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: forums-production
+    steps:
+      - name: Enforce exact dispatch authority
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Check out exact verification source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.release_commit }}
+
+      - name: Bind exact release to current main
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin refs/heads/main:refs/remotes/origin/main
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_COMMIT" ]]
+          [[ "$(git rev-parse refs/remotes/origin/main)" == "$RELEASE_COMMIT" ]]
+
+      - name: Verify public HTTPS and Mochirii presentation
+        shell: bash
+        run: python3 scripts/verify-public-branding.py --base-url https://forums.mochirii.com --host-header forums.mochirii.com
+
+      - name: Verify protected host runtime
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          DEPLOY_HOST: ${{ secrets.FORUMS_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.FORUMS_DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.FORUMS_DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOST: ${{ secrets.FORUMS_DEPLOY_KNOWN_HOST }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          transport_dir="$(mktemp -d)"
+          cleanup() {
+            rm -rf -- "$transport_dir"
+          }
+          trap cleanup EXIT
+          key="$transport_dir/key"
+          known_hosts="$transport_dir/known_hosts"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOST" > "$known_hosts"
+          chmod 0600 "$key" "$known_hosts"
+          ssh -T -i "$key" -o BatchMode=yes -o ClearAllForwardings=yes -o IdentitiesOnly=yes -o RequestTTY=no -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" -- \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" "verify ${RELEASE_COMMIT}"

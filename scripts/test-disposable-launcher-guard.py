@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""Hostile executable fixture for disposable launcher residue reconciliation."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+GUARD = ROOT / "scripts" / "disposable-launcher-guard.py"
+BASE_IMAGE = "discourse/base@sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
+PREEXISTING_IMAGE = "sha256:" + "f" * 64
+CREATED_IMAGE = "sha256:" + "a" * 64
+CREATED_CONTAINER = "b" * 64
+
+
+ADAPTER = r'''#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+root = pathlib.Path(os.environ["MOCHIRII_DISPOSABLE_LAUNCHER_FIXTURE_ROOT"])
+state_path = root / "state.json"
+state = json.loads(state_path.read_text())
+
+def save():
+    temporary = state_path.with_suffix(".partial")
+    temporary.write_text(json.dumps(state, sort_keys=True) + "\n")
+    temporary.replace(state_path)
+
+def values_after(flag):
+    try:
+        return sys.argv[sys.argv.index(flag) + 1]
+    except (ValueError, IndexError):
+        return ""
+
+args = sys.argv[1:]
+if args and args[0] == "launcher":
+    docker_args = values_after("--docker-args")
+    token = ""
+    for field in docker_args.split():
+        prefix = "--label=mochirii.forums.disposable-operation="
+        if field.startswith(prefix):
+            token = field[len(prefix):]
+    if len(token) != 32:
+        raise SystemExit(9)
+    scenario = state["scenario"]
+    if scenario == "unclean-exit-zero":
+        cid = root / "var/discourse/cids/app_bootstrap.cid"
+        cid.parent.mkdir(parents=True, exist_ok=True)
+        cid.write_text("b" * 64 + "\n")
+        cid.unlink()
+        state["cidUnlinked"] = True
+        state["finalRmFailed"] = True
+        state["containers"]["b" * 64] = {
+            "name": "anonymous-bootstrap", "running": False,
+            "image": "sha256:" + "a" * 64,
+            "labels": {"mochirii.forums.disposable-operation": token},
+        }
+        state["images"].append("sha256:" + "a" * 64)
+        state["images"] = sorted(set(state["images"]))
+        save()
+        raise SystemExit(0)
+    if scenario == "clean-bootstrap":
+        state["images"].append("sha256:" + "a" * 64)
+        state["images"] = sorted(set(state["images"]))
+        state["tags"]["local_discourse/app"] = "sha256:" + "a" * 64
+        save()
+        raise SystemExit(0)
+    if scenario == "clean-rebuild":
+        state["containers"]["b" * 64] = {
+            "name": "app", "running": True,
+            "image": "sha256:" + "a" * 64,
+            "labels": {"mochirii.forums.disposable-operation": token},
+        }
+        state["images"].append("sha256:" + "a" * 64)
+        state["images"] = sorted(set(state["images"]))
+        state["tags"]["local_discourse/app"] = "sha256:" + "a" * 64
+        save()
+        raise SystemExit(0)
+    if scenario == "rebuild-mismatched-created-images":
+        state["containers"]["b" * 64] = {
+            "name": "app", "running": True,
+            "image": "sha256:" + "c" * 64,
+            "labels": {"mochirii.forums.disposable-operation": token},
+        }
+        state["images"].extend(["sha256:" + "a" * 64, "sha256:" + "c" * 64])
+        state["images"] = sorted(set(state["images"]))
+        state["tags"]["local_discourse/app"] = "sha256:" + "a" * 64
+        save()
+        raise SystemExit(0)
+    if scenario == "rebuild-mismatched-preexisting-tag":
+        state["containers"]["b" * 64] = {
+            "name": "app", "running": True,
+            "image": "sha256:" + "c" * 64,
+            "labels": {"mochirii.forums.disposable-operation": token},
+        }
+        state["images"].append("sha256:" + "c" * 64)
+        state["images"] = sorted(set(state["images"]))
+        save()
+        raise SystemExit(0)
+    raise SystemExit(8)
+
+if not args or args[0] != "docker":
+    raise SystemExit(7)
+args = args[1:]
+if args[:2] == ["container", "ls"]:
+    selected = state["containers"]
+    label = values_after("--filter")
+    if label.startswith("label="):
+        key, value = label[6:].split("=", 1)
+        selected = {identity: item for identity, item in selected.items() if item["labels"].get(key) == value}
+    print("\n".join(sorted(selected)))
+elif args[:2] == ["image", "ls"]:
+    print("\n".join(sorted(state["images"])))
+elif args[:2] == ["container", "inspect"]:
+    name = args[-1]
+    matched = [(identity, item) for identity, item in state["containers"].items() if item["name"] == name]
+    if not matched:
+        raise SystemExit(1)
+    identity, item = matched[0]
+    print(f"{identity} {'true' if item['running'] else 'false'} {item['image']}")
+elif args[:2] == ["image", "inspect"]:
+    value = state["tags"].get(args[-1])
+    if value is None:
+        raise SystemExit(1)
+    print(value)
+elif args[:3] == ["container", "rm", "--force"]:
+    state["containers"].pop(args[-1], None)
+    save()
+elif args[:3] == ["image", "rm", "--force"]:
+    identity = args[-1]
+    state["images"] = [value for value in state["images"] if value != identity]
+    state["tags"] = {key: value for key, value in state["tags"].items() if value != identity}
+    save()
+else:
+    raise SystemExit(6)
+'''
+
+
+def write_file(path: Path, payload: str, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload, encoding="utf-8", newline="\n")
+    path.chmod(mode)
+
+
+def setup(root: Path, scenario: str) -> dict[str, str]:
+    adapter = root / "adapter.py"
+    write_file(adapter, ADAPTER, 0o600)
+    write_file(root / "var/discourse/launcher", "#!/bin/sh\nexit 99\n", 0o700)
+    gate = root / "checkout-gate.sh"
+    write_file(gate, "#!/bin/sh\nexit 0\n", 0o700)
+    state = {
+        "scenario": scenario,
+        "containers": {},
+        "images": [PREEXISTING_IMAGE],
+        "tags": (
+            {"local_discourse/app": PREEXISTING_IMAGE}
+            if scenario == "rebuild-mismatched-preexisting-tag"
+            else {}
+        ),
+        "cidUnlinked": False,
+        "finalRmFailed": False,
+    }
+    write_file(root / "state.json", json.dumps(state, sort_keys=True) + "\n", 0o600)
+    return {
+        **os.environ,
+        "MOCHIRII_DISPOSABLE_LAUNCHER_FIXTURE_ROOT": str(root),
+        "MOCHIRII_DISPOSABLE_LAUNCHER_MODE": "source-only-hostile-fixture",
+    }
+
+
+def invoke(
+    root: Path,
+    environment: dict[str, str],
+    *,
+    passed: bool,
+    operation: str = "bootstrap",
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        [sys.executable, "-B", str(GUARD), operation, str(root / "checkout-gate.sh")],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if (result.returncode == 0) != passed:
+        raise RuntimeError(
+            f"Disposable launcher fixture returned {result.returncode}; "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+    return result
+
+
+def state(root: Path) -> dict[str, object]:
+    return json.loads((root / "state.json").read_text(encoding="utf-8"))
+
+
+def assert_no_transaction(root: Path) -> None:
+    journal = root / "var/discourse/.mochirii-disposable-launcher.transaction.json"
+    if journal.exists() or journal.is_symlink():
+        raise RuntimeError("Disposable launcher transaction survived terminal proof.")
+
+
+def exit_zero_residue_fixture() -> None:
+    with tempfile.TemporaryDirectory(prefix="mochirii-disposable-exit-zero-") as temporary:
+        root = Path(temporary).resolve()
+        environment = setup(root, "unclean-exit-zero")
+        result = invoke(root, environment, passed=False)
+        current = state(root)
+        if current["containers"] or current["images"] != [PREEXISTING_IMAGE]:
+            raise RuntimeError("Exit-zero anonymous launcher residue survived containment.")
+        if current["tags"] or current["cidUnlinked"] is not True or current["finalRmFailed"] is not True:
+            raise RuntimeError("Hostile launcher did not exercise CID-unlink/final-rm/exit-zero window.")
+        if "did not produce the exact application image" not in result.stderr:
+            raise RuntimeError("Exit-zero residue failed for the wrong reason.")
+        assert_no_transaction(root)
+
+
+def post_cid_crash_retry_fixture() -> None:
+    with tempfile.TemporaryDirectory(prefix="mochirii-disposable-post-cid-") as temporary:
+        root = Path(temporary).resolve()
+        environment = setup(root, "unclean-exit-zero")
+        crashed_environment = {
+            **environment,
+            "MOCHIRII_DISPOSABLE_LAUNCHER_FIXTURE_FAIL_AFTER": "launcher-returned",
+        }
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(GUARD), "bootstrap", str(root / "checkout-gate.sh")],
+            env=crashed_environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        process.wait(timeout=30)
+        if process.returncode not in {-signal.SIGKILL, 128 + signal.SIGKILL}:
+            raise RuntimeError(f"Post-CID crash fixture did not SIGKILL: {process.returncode}")
+        crashed = state(root)
+        if not crashed["containers"] or CREATED_IMAGE not in crashed["images"]:
+            raise RuntimeError("Post-CID crash did not retain the hostile identities.")
+        journal = root / "var/discourse/.mochirii-disposable-launcher.transaction.json"
+        if not journal.is_file():
+            raise RuntimeError("Post-CID crash did not retain durable ownership.")
+
+        crashed["scenario"] = "clean-bootstrap"
+        write_file(root / "state.json", json.dumps(crashed, sort_keys=True) + "\n", 0o600)
+        invoke(root, environment, passed=True)
+        terminal = state(root)
+        if terminal["containers"] or set(terminal["images"]) != {PREEXISTING_IMAGE, CREATED_IMAGE}:
+            raise RuntimeError("Exact retry did not remove prior residue and adopt only the intended image.")
+        if terminal["tags"] != {"local_discourse/app": CREATED_IMAGE}:
+            raise RuntimeError("Exact retry did not bind the intended terminal image.")
+        assert_no_transaction(root)
+
+
+def rebuild_terminal_image_fixture() -> None:
+    scenarios = (
+        (
+            "rebuild-mismatched-created-images",
+            [PREEXISTING_IMAGE],
+            {},
+        ),
+        (
+            "rebuild-mismatched-preexisting-tag",
+            [PREEXISTING_IMAGE],
+            {"local_discourse/app": PREEXISTING_IMAGE},
+        ),
+    )
+    for scenario, expected_images, expected_tags in scenarios:
+        with tempfile.TemporaryDirectory(prefix=f"mochirii-disposable-{scenario}-") as temporary:
+            root = Path(temporary).resolve()
+            environment = setup(root, scenario)
+            result = invoke(root, environment, operation="rebuild", passed=False)
+            current = state(root)
+            if current["containers"]:
+                raise RuntimeError(f"Mismatched rebuild container survived containment: {scenario}")
+            if current["images"] != expected_images or current["tags"] != expected_tags:
+                raise RuntimeError(f"Mismatched rebuild image residue survived containment: {scenario}")
+            if "named application image differs from the exact tagged application image" not in result.stderr:
+                raise RuntimeError(f"Mismatched rebuild failed for the wrong reason: {scenario}")
+            assert_no_transaction(root)
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-disposable-clean-rebuild-") as temporary:
+        root = Path(temporary).resolve()
+        environment = setup(root, "clean-rebuild")
+        invoke(root, environment, operation="rebuild", passed=True)
+        current = state(root)
+        if (
+            set(current["containers"]) != {CREATED_CONTAINER}
+            or current["images"] != [CREATED_IMAGE, PREEXISTING_IMAGE]
+            or current["tags"] != {"local_discourse/app": CREATED_IMAGE}
+        ):
+            raise RuntimeError("Matching rebuild did not adopt exactly one terminal app image.")
+        assert_no_transaction(root)
+
+
+def run_linux() -> None:
+    if os.geteuid() != 0:
+        raise SystemExit("Disposable launcher fixture requires an isolated root Linux context.")
+    if '["bash", str(gate)]' not in GUARD.read_text(encoding="utf-8"):
+        raise RuntimeError("Disposable checkout gate is not readable from the pinned noexec fixture mount.")
+    exit_zero_residue_fixture()
+    post_cid_crash_retry_fixture()
+    rebuild_terminal_image_fixture()
+    print("Disposable launcher immutable-ID hostile fixture passed.")
+
+
+def run_in_container() -> None:
+    command = [
+        "docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16m", "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges", "--pids-limit", "64",
+        "--memory", "256m", "--memory-swap", "256m", "-v", f"{ROOT}:/repo:ro",
+        "--entrypoint", "python3", BASE_IMAGE, "-B",
+        "/repo/scripts/test-disposable-launcher-guard.py", "--inside-linux",
+    ]
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(
+            f"Pinned disposable launcher fixture failed\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
+        )
+    print(result.stdout.strip())
+
+
+if __name__ == "__main__":
+    if os.name == "nt" and "--inside-linux" not in sys.argv:
+        run_in_container()
+    else:
+        run_linux()

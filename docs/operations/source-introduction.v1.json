@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 1,
-  "status": "source-only-proposal",
+  "schemaVersion": 2,
+  "status": "authorized-stage4-configuration-overlay",
   "repository": "Mochirii-Wushu/Mochirii-Forums",
   "upstream": {
     "repository": "https://github.com/discourse/discourse_docker.git",
-    "revision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
+    "revision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
     "manifest": "docs/operations/upstream-provenance.v1.json",
     "remoteFetchPolicy": "pull-only-main-drift-observation",
     "evidencePinPolicy": "exact-revision",
@@ -13,7 +13,6 @@
   },
   "historyPreservation": {
     "selectedMethod": "external-upstream-reference-no-import",
-    "reviewRequired": false,
     "repositoryOwnershipModel": "configuration-and-isolated-overlays-only",
     "upstreamCoreModificationAllowed": false,
     "vendoredCoreAllowed": false,
@@ -21,44 +20,37 @@
   },
   "customizationBoundary": {
     "manifest": "docs/operations/customizations.v1.json",
-    "plugins": [],
-    "themes": [],
-    "integrations": []
+    "optionalPlugins": [],
+    "requiredFirstPartyComponents": [
+      "plugins/mochirii_email_metadata/plugin.rb"
+    ],
+    "themes": [
+      "theme/mochirii"
+    ],
+    "integrations": [
+      "built-in-discourse-connect-consumer",
+      "built-in-s3-compatible-storage"
+    ]
   },
   "thirdPartyBoundary": {
     "manifest": "docs/operations/third-party-components.v1.json",
-    "coreRevisionSelected": false,
-    "licensesReviewed": false,
-    "trademarkReviewComplete": false,
-    "dependencyInventoryComplete": false
-  },
-  "identityBoundary": {
-    "contract": "docs/operations/forum-central-identity.consumer.v1.json",
-    "producerRepository": "Mochirii-Wushu/Mochirii-Website",
-    "consumerRepository": "Mochirii-Wushu/Mochirii-Forums",
-    "producerContractVersion": null,
-    "consumerProposalVersion": "1.0.0-proposal",
-    "customCorePluginAllowed": false,
-    "activationReady": false
+    "coreRevisionSelected": true,
+    "licensesPreserved": true,
+    "publicUpstreamMarksEnabled": false
   },
   "releaseRequirements": {
-    "exactSourceCommit": true,
-    "exactSourceTree": true,
+    "exactRepositoryCommit": true,
+    "exactRepositoryTree": true,
     "exactCoreRevision": true,
-    "supportedRelease": true,
-    "installerChecksum": true,
-    "transitiveInstallerInputs": true,
-    "immutableImageDigest": true,
-    "sbom": true,
-    "thirdPartyNoticeArtifact": true,
-    "licenseReview": true,
-    "trademarkReview": true,
-    "provenance": true,
+    "exactDeploymentRevision": true,
+    "exactDockerManagerRevision": true,
+    "baseImageDigest": true,
     "configurationDigest": true,
+    "themeDigest": true,
+    "mailMetadataPluginDigest": true,
     "minimumResources": true,
     "persistentSharedStorage": true,
     "smtp": true,
-    "soleIanaTimeAuthority": true,
     "health": true,
     "workstationIndependence": true,
     "isolatedRestore": true,

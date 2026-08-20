@@ -1,0 +1,163 @@
+# MOCHIRII TLS ENV BEGIN
+  DISCOURSE_FORCE_HTTPS: "true"
+# MOCHIRII TLS ENV END
+# MOCHIRII TLS HOOKS BEGIN
+  after_ssl:
+    - replace:
+        filename: /etc/runit/1.d/install-ssl
+        from: "# after ssl"
+        to: |
+          if [ -z "$DISABLE_LETSENCRYPT" ] || [ -n "$ENABLE_LETSENCRYPT" ]; then
+            /usr/local/bin/configure-ssl
+            exec /usr/local/bin/configure-letsencrypt
+          fi
+          # after ssl
+# MOCHIRII TLS HOOKS END
+# MOCHIRII TLS RUN BEGIN
+  - exec:
+      cmd:
+        - >-
+          test "$(base64 --decode
+          "$MOCHIRII_RELEASE_ASSET_ROOT/acme-sh-3.0.6.gz.b64"
+          | sha256sum | awk '{print $1}')" =
+          "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
+        - >-
+          base64 --decode
+          "$MOCHIRII_RELEASE_ASSET_ROOT/acme-sh-3.0.6.gz.b64"
+          | gzip --decompress --stdout > /opt/acme.sh
+        - >-
+          test "$(sha256sum /opt/acme.sh | awk '{print $1}')" =
+          "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        - chmod 0755 /opt/acme.sh
+  - file:
+      path: /usr/local/bin/mochirii-acme-cron
+      chmod: "+x"
+      contents: |
+        #!/bin/bash
+        set -euo pipefail
+        readonly letsencrypt_dir="/shared/letsencrypt"
+        readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
+        grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"
+        exec env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \
+          "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"
+  - file:
+      path: /usr/local/bin/configure-letsencrypt
+      chmod: "+x"
+      contents: |
+        #!/bin/bash
+        set -euo pipefail
+        readonly letsencrypt_dir="/shared/letsencrypt"
+        readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        test "$(sha256sum /opt/acme.sh | awk '{print $1}')" = "${acme_sha256}"
+        install -d -m 0755 -g root -o root "${letsencrypt_dir}"
+        cd /opt
+        AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \
+          --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0
+        test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
+        grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"
+        LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+          --set-default-ca --server letsencrypt
+        install -m 0600 -o root -g root /dev/null /var/spool/cron/crontabs/root
+        printf '%s\n' '17 0 * * * /usr/local/bin/mochirii-acme-cron >/dev/null 2>&1' \
+          > /var/spool/cron/crontabs/root
+
+        cat <<'EOF' > /etc/nginx/letsencrypt.conf
+        user www-data;
+        worker_processes auto;
+        daemon on;
+
+        events {
+          worker_connections 768;
+        }
+
+        http {
+          sendfile on;
+          tcp_nopush on;
+          tcp_nodelay on;
+          keepalive_timeout 65;
+          types_hash_max_size 2048;
+
+          access_log /var/log/nginx/access.letsencrypt.log;
+          error_log /var/log/nginx/error.letsencrypt.log;
+
+          server {
+            listen 80;
+            listen [::]:80;
+
+            location ~ /.well-known {
+              root /var/www/discourse/public;
+              allow all;
+            }
+          }
+        }
+        EOF
+
+        sed -Ei "s/ssl_certificate .+/ssl_certificate \/shared\/ssl\/${DISCOURSE_HOSTNAME}.cer;\
+          ssl_certificate \/shared\/ssl\/${DISCOURSE_HOSTNAME}_ecc.cer;/" \
+          /etc/nginx/conf.d/outlets/server/20-https.conf
+        sed -Ei "s/ssl_certificate_key .+/ssl_certificate_key \/shared\/ssl\/${DISCOURSE_HOSTNAME}.key; \
+          ssl_certificate_key \/shared\/ssl\/${DISCOURSE_HOSTNAME}_ecc.key;/" \
+          /etc/nginx/conf.d/outlets/server/20-https.conf
+
+        exec /usr/local/bin/letsencrypt
+  - file:
+      path: /usr/local/bin/letsencrypt
+      chmod: "+x"
+      contents: |
+        #!/bin/bash
+        set -euo pipefail
+        readonly letsencrypt_dir="/shared/letsencrypt"
+        readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
+        grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"
+        /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf
+
+        extra_domains() {
+          if [ -n "${DISCOURSE_HOSTNAME_ALIASES:-}" ]; then
+            domains=$(echo "${DISCOURSE_HOSTNAME_ALIASES}" | sed "s/,/ -d /g")
+            echo "-d ${domains}"
+          fi
+        }
+
+        issue_cert() {
+          local force=()
+          if [ -n "$2" ]; then
+            force=("$2")
+          fi
+          LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+            --issue "${force[@]}" -d "${DISCOURSE_HOSTNAME}" $(extra_domains) \
+            --keylength "$1" -w /var/www/discourse/public
+        }
+
+        cert_exists() {
+          [[ "$(cd "${letsencrypt_dir}/${DISCOURSE_HOSTNAME}$1" && \
+            openssl verify -CAfile <(openssl x509 -in ca.cer) fullchain.cer | grep "OK")" ]]
+        }
+
+        issue_cert "4096" ""
+        if ! cert_exists ""; then
+          issue_cert "4096" "--force"
+        fi
+        LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+          --installcert -d "${DISCOURSE_HOSTNAME}" \
+          --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}.cer" \
+          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key" \
+          --reloadcmd "sv reload nginx"
+
+        issue_cert "ec-256" ""
+        if ! cert_exists "_ecc"; then
+          issue_cert "ec-256" "--force"
+        fi
+        LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+          --installcert --ecc -d "${DISCOURSE_HOSTNAME}" \
+          --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.cer" \
+          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key" \
+          --reloadcmd "sv reload nginx"
+
+        if cert_exists "" || cert_exists "_ecc"; then
+          grep -q 'force_https' /var/www/discourse/config/discourse.conf || \
+            echo "force_https = 'true'" >> /var/www/discourse/config/discourse.conf
+        fi
+        /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s stop
+# MOCHIRII TLS RUN END

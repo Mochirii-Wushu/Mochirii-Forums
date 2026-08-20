@@ -1,0 +1,6 @@
+email = operator@example.invalid
+agree-tos = true
+non-interactive = true
+authenticator = dns-cloudflare
+dns-cloudflare-credentials = /etc/letsencrypt/mochirii-cloudflare.ini
+dns-cloudflare-propagation-seconds = 30

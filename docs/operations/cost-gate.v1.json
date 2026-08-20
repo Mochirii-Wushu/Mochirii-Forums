@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-14",
+  "status": "stage4-contract-live-readback-absent",
+  "authorized": {
+    "region": "sgp1",
+    "dropletPlan": "s-1vcpu-2gb",
+    "operatingSystem": "Ubuntu 24.04 LTS",
+    "dropletMonthlyUsd": "12.00",
+    "weeklyBackupPercent": "20.00",
+    "weeklyBackupMonthlyUsd": "2.40",
+    "additionalBucketFixedMonthlyUsd": "0.00",
+    "maximumIncrementalFixedMonthlyUsd": "14.40",
+    "maximumPaidDroplets": 1,
+    "maximumNewBuckets": 1,
+    "secondSpacesSubscriptionAllowed": false,
+    "additionalPaidResourceAllowed": false
+  },
+  "requiredLiveEvidence": {
+    "observedAt": null,
+    "sizeApiPlanAvailableInRegion": false,
+    "sizeApiMonthlyPriceConfirmed": false,
+    "weeklyBackupPriceConfirmed": false,
+    "existingSpacesSubscriptionActive": false,
+    "additionalBucketWithinIncludedQuota": false,
+    "aggregateUsageReviewed": false,
+    "aggregateFixedMonthlyUsd": null,
+    "secondSubscriptionRequired": null,
+    "additionalPaidResourceRequired": null
+  },
+  "providerMutationAuthorized": false,
+  "paidResourceCreated": false
+}

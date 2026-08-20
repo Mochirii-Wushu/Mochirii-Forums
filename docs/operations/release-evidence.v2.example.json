@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 2,
+  "repository": "Mochirii-Wushu/Mochirii-Forums",
+  "source": {
+    "baseCommit": null,
+    "reviewedHeadCommit": null,
+    "reviewedTree": null,
+    "releaseArchiveSha256": null,
+    "releaseArchiveBytes": null
+  },
+  "upstream": {
+    "discourseDockerRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
+    "discourseRevision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+    "dockerManagerRevision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
+    "baseImageDigest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
+    "onlinePinVerificationReference": null
+  },
+  "artifacts": {
+    "productionConfigurationSha256": null,
+    "containedActivationConfigurationSha256": null,
+    "restoreConfigurationSha256": null,
+    "themeArchiveSha256": null,
+    "mailMetadataPluginSha256": null,
+    "customizationManifestSha256": null,
+    "provenanceReference": null
+  },
+  "sourceVerification": {
+    "requiredChecks": [],
+    "securityChecks": [],
+    "disposableOneCoreBootstrapReference": null,
+    "passed": false
+  },
+  "preCreation": {
+    "socialTerminalGateReference": null,
+    "existingSmtpAuthorityReference": null,
+    "liveCostEvidenceReference": null,
+    "aggregateIncrementalFixedMonthlyUsd": null,
+    "passedBeforePaidCreation": false
+  },
+  "provider": {
+    "dropletClass": null,
+    "dropletRegion": null,
+    "weeklyBackupsEnabled": false,
+    "standardBucketClass": null,
+    "limitedBucketKeyVerified": false,
+    "includedCdnVerified": false,
+    "webHostname": "forums.mochirii.com",
+    "mediaHostname": "media-forums.mochirii.com",
+    "additionalPaidResources": [],
+    "readbackReference": null
+  },
+  "hostedVerification": {
+    "httpsPassed": false,
+    "runtimePassed": false,
+    "storagePassed": false,
+    "backupEvidenceReference": null,
+    "restoreEvidenceReference": null,
+    "restartPassed": false,
+    "rebuildPassed": false,
+    "brandingPassed": false,
+    "smtpDeliveryPassed": false,
+    "authenticationPassed": false
+  },
+  "memberRollout": {
+    "restoreCompletedWhileDisposable": false,
+    "irreversibleMarkerReference": null,
+    "containedConsumerActivationPassed": false,
+    "consumerPublicProducerPendingReference": null,
+    "discourseConnectActivatedAfterMarker": false,
+    "finalPublicReadbackReference": null
+  },
+  "change": {
+    "approvalReference": null,
+    "operator": null,
+    "startedAt": null,
+    "completedAt": null,
+    "outcome": null,
+    "costIncurredUsd": null
+  },
+  "failureHandling": {
+    "stopConditions": [],
+    "cleanupPerformed": [],
+    "preExistingOrImportedDataDestroyed": false
+  },
+  "remainingRisks": []
+}

@@ -2,123 +2,83 @@
 
 ## Ownership boundary
 
-`Mochirii-Wushu/Mochirii-Forums` is the canonical owner of reviewed Mōchirīī
-forum configuration, isolated overlays, and governance. It is permanently not a
-fork, mirror, or vendor copy of Discourse core or `discourse_docker`. Those
-official repositories remain the owners of their source and licenses.
+`Mochirii-Wushu/Mochirii-Forums` owns only Mochirii configuration, theme,
+validation, and operations material. Official application and deployment
+source remain external; this repository neither vendors nor forks them.
 
-The checked-in [upstream evidence](upstream-provenance.v1.json) pins
-`discourse_docker` revision
-`a3028747c5b7774f49a3b110221d96ca2b3f340d` and hashes only five official
-files: the license, one-line installer, setup wizard, launcher, and standalone
-sample. It must never be treated as a floating dependency or an installation
-approval.
+The immutable selections are recorded in
+`upstream-provenance.v1.json` and `third-party-components.v1.json`:
 
-The reviewed pin remains selected only as source evidence. On 2026-08-11,
-read-only fetch observed `main` at
-`e6d7b508b43f9610950166f53cb1be1bd78435a9`, 11 commits ahead and zero behind
-the pin. GitHub reports verified commit signatures with reason `valid` for both
-the pin and observed main; the online verifier binds those results and both
-commit trees. The manifest records notable compatibility gates, including the
-PostgreSQL 18 base change and its free-space, one-core, and all-database
-companions plus Redis log-directory handling; it does not claim the list is an
-exhaustive changelog. That observation is recorded but not selected or promoted.
+| Component | Exact selection |
+| --- | --- |
+| Application | `cbf996f65aae3da1843224aa624bcd9a225931ac` |
+| Deployment source | `ed9f680b0df1de28f062de1769d89d22b2644d1b` |
+| Docker Manager | `c008c3ca7fcc44775215843992e88190adb7b3bf` |
+| Base image, Linux AMD64 | `sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48` |
+| Vendored acme.sh | `3.0.6`, commit `b7caf7a0165d80dd1556b16057a06bb32025066d`, source SHA-256 `400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da` |
+| Required first-party mail metadata component | exact `plugins/mochirii_email_metadata/plugin.rb` bytes in the Forums commit |
 
-## Approved remote topology
+The selected deployment revision is the first official correction for the
+one-core Bundler path. It is six commits after the rejected candidate and also
+selects reviewed Ruby, base-image, PostgreSQL 18, and disk-calculation changes.
+It is approved only for a new empty installation; it is not evidence that a
+database upgrade or import is safe.
 
-| Remote | Fetch | Push |
-| --- | --- | --- |
-| `origin` | `https://github.com/Mochirii-Wushu/Mochirii-Forums.git` | same URL |
-| `upstream` | `https://github.com/discourse/discourse_docker.git` | `disabled://upstream-push` |
+## Pull-only upstream
 
-No additional remote or URL rewrite is allowed in the reviewed topology. The
-repository does not store Git credentials. Authentication remains the operator
-and GitHub credential manager's responsibility.
-
-Local configuration must also set `remote.pushDefault=origin` and
-`pull.ff=only`. The upstream fetch refspec maps only official `main` to
-`refs/remotes/upstream/main`,
-`remote.upstream.tagOpt=--no-tags` prevents auto-following reachable tags, and
-exactly one upstream push URL is permitted: the inert sentinel shown above.
-
-The push sentinel is a local accident-prevention control, not an authorization
-boundary against a compromised workstation. GitHub access, least-privilege
-roles, review, and protected-branch controls remain authoritative.
-
-## Safe local setup
-
-Only in a disposable or reviewed working clone:
+The only deployment-source remote is
+`https://github.com/discourse/discourse_docker.git`. In a reviewed local clone,
+`upstream` fetches official `main` for drift observation, follows no tags, and
+has the single inert push URL `disabled://upstream-push`. `origin` remains the
+push default and pulls are fast-forward only.
 
 ```powershell
 pwsh -NoLogo -NoProfile -File ./scripts/configure-upstream.ps1 -Apply
-pwsh -NoLogo -NoProfile -File ./scripts/verify-upstream-policy.ps1
-```
-
-`configure-upstream.ps1` refuses to modify an unexpected origin or unexpected
-existing upstream. It changes only the approved upstream and local pull/push
-defaults. If its post-change verification fails, it restores the prior local
-remote state.
-
-To prove read access without updating local refs:
-
-```powershell
 pwsh -NoLogo -NoProfile -File ./scripts/verify-upstream-policy.ps1 -RequireReachable
+pwsh -NoLogo -NoProfile -File ./scripts/verify-upstream-provenance.ps1 -Online -RequireCurrentMain
 ```
 
-## Upstream review procedure
+The sentinel prevents accidents; it does not replace GitHub authorization or
+review. The read-only inspection workflow may report drift but cannot update a
+pin, commit, branch, pull request, release, deployment, or provider resource.
 
-1. Run the monthly/manual `inspect-forums-upstream` workflow or the provenance verifier with
-   `-Online -RequireCurrentMain`.
-2. If upstream `main` moved beyond the recorded drift observation, do not update
-   the observation or pin automatically.
-3. Review the upstream diff, license, release notes, security notices, runtime
-   requirements, installer transitive inputs, mutable setup-wizard image,
-   plugin compatibility, and configuration changes.
-4. Update the evidence manifest in one focused pull request only after its
-   exact revision and bytes are independently verified.
-5. Run repository validation and obtain accountable human review of the exact
-   head.
-6. Keep configuration introduction and any runtime/provider change in later,
-   separately authorized pull requests.
+The repository-owned mail metadata component is not an optional third-party
+plugin or a core fork. It uses the supported delivery-interceptor boundary to
+remove only the exact pinned application identity headers before SMTP. Its
+source and runtime bytes are bound to the exact Forums release commit and
+recorded digest, and it never rewrites member-authored subjects or bodies.
 
-Once an explicitly authorized empty-main bootstrap places the workflow on
-`main`, it has a monthly schedule requesting 22:17 on day 3 with native IANA
-`Asia/Singapore` scheduling (`17 22 3 * *`); the empty origin makes it inert
-today. GitHub may delay or drop scheduled runs under high load, so this is a
-drift-alert cadence rather than an exact-time SLA. Manual dispatch is then
-available.
-The workflow is read-only, uses immutable action
-pins, persists no checkout credentials, and cannot update a pin, create a
-branch/PR, publish an artifact, or promote a runtime. A failed drift check is a
-review signal, not permission for automated promotion.
+The one deliberate vendored utility is the exact reviewed acme.sh client used
+for Forums HTTPS. Its compressed repository payload, decoded source, upstream
+commit/tree/signature, and GPL license are independently bound in the
+third-party manifest and online gate. The local immutable TLS integration
+never downloads executable source during bootstrap, disables acme.sh automatic
+updates, and requires a separate compatibility review to change any byte or
+revision.
 
-## Release-tag evidence
+The 2026-08-20 bounded observation records official `main` at
+`ccb3ea007204c683f7177258f1f509e2fb36f82b`, ten commits ahead of the
+selected revision with no commits behind it. The manifest binds the exact main
+tree, commit signatures, comparison counts, ordered range, and complete changed
+path inventory. That range includes deployment launcher/template, PostgreSQL,
+Redis, Debian base, browser-key, mutable base-image, development-image
+PostgreSQL 15, and web-template ownership-optimization changes across the same
+20 paths. None of those ten commits is selected for this runtime, and
+compatibility review remains a separate incomplete change. The monthly/manual
+inspection fails closed if the official reference or any recorded comparison
+evidence moves; it never advances the selected revision.
 
-The 2026-08-11 release observation deliberately distinguishes Git object types:
+## Pin-change procedure
 
-- unsigned annotated tag object
-  `11c70a765e46c3229d66e108883fa2d33f5d0b81`;
-- peeled unsigned commit
-  `cbf996f65aae3da1843224aa624bcd9a225931ac`;
-- commit tree `0aeceebe79c4d2da8cf0fab213514335c201bfa7`.
-
-`third-party-components.v1.json` also binds exact SHA-256 evidence for the
-release's GPL license, copyright notice, README, security/version files, and
-the pinned local-date/Calendar behavior that prevents this packet from claiming
-universal `Asia/Singapore` display authority. The central-identity contract
-separately binds the pinned DiscourseConnect parser, nonce/session model,
-controller, and site settings. The official release index
-reports `v2026.7.1` as a supported ESR released 2026-07-31 with planned end of
-support 2027-03-30. None of that selects it for runtime.
+Any pin change is a separate compatibility change. Verify exact official
+bytes, commit/tree identity, action and image digests, license/notice effects,
+template semantics, application/plugin compatibility, one-core bootstrap,
+rebuild, backup restore, and public branding before selection. Never promote a
+moving branch or tag because drift exists.
 
 ## Primary references
 
-- [Official Discourse release index](https://releases.discourse.org/)
-- [Official v2026.7.1 changelog](https://releases.discourse.org/changelog/v2026.7.1/)
-- [Pinned v2026.7.1 license](https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/LICENSE.txt)
-- [Official Discourse Docker repository](https://github.com/discourse/discourse_docker)
-- [PostgreSQL 18 dump/restore change](https://github.com/discourse/discourse_docker/commit/09493049db7e4873f3dcff1356249ccf879ca6ec)
-- [GitHub Actions timezone-aware schedule syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)
-- [GitHub Actions schedule delivery behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
-- [Pinned actions/checkout v7.0.1 release](https://github.com/actions/checkout/releases/tag/v7.0.1)
-- [Dependabot schedule timezone option](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#scheduletimezone)
+- [Selected deployment source](https://github.com/discourse/discourse_docker/tree/ed9f680b0df1de28f062de1769d89d22b2644d1b)
+- [Selected application source](https://github.com/discourse/discourse/tree/cbf996f65aae3da1843224aa624bcd9a225931ac)
+- [Official one-core correction](https://github.com/discourse/discourse_docker/commit/ed9f680b0df1de28f062de1769d89d22b2644d1b)
+- [Official release support index](https://releases.discourse.org/)
