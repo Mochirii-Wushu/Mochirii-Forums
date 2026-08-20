@@ -1290,7 +1290,7 @@ if [[ ${transaction_phase} == armed ]]; then
     -e MOCHIRII_DR_FETCH_MODE=clean-target-historical \
     -e "MOCHIRII_DR_BOOTSTRAP_COMMIT=${bootstrap_commit}" \
     "${app_name}" timeout --signal=TERM --kill-after=10s 150 bash -lc \
-    'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/fetch-disaster-recovery-evidence.rb"')
+    '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/fetch-disaster-recovery-evidence.rb"')
   run_capture fetch-evidence 180 128 "${receipt_candidate}" "${fetch_evidence_command[@]}" || fail "Historical recovery evidence fetch failed or exceeded its bound."
   protected_regular "${receipt_candidate}" "Fetched historical recovery receipt" "${max_document_bytes}"
 fi
@@ -1365,7 +1365,7 @@ PY
     -e "MOCHIRII_HISTORICAL_READER_OPERATION_ID=${operation_id}" \
     -e "MOCHIRII_DR_FETCH_RECEIPT_BASE64=${receipt_base64}" \
     "${app_name}" timeout --signal=TERM --kill-after=10s 180 bash -lc \
-    'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/fetch-disaster-recovery-release.rb"')
+    '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/fetch-disaster-recovery-release.rb"')
   run_capture fetch-release 210 131072 "${archive_candidate}" "${fetch_release_command[@]}" || fail "Historical release archive fetch failed or exceeded its bound."
   protected_regular "${archive_candidate}" "Fetched historical release archive" "${max_archive_bytes}"
   [[ "$(stat -c '%s' -- "${archive_candidate}")" == "${fetched_archive_bytes}" ]] || fail "Fetched historical release archive size differs."

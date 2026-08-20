@@ -3279,6 +3279,48 @@ def validate_secrets_and_workflows() -> None:
         wrapper_text = read(wrapper)
         require_text(wrapper_text, ["-B", "__pycache__", ".pyc", ".pyo"], f"Python-residue guard {wrapper}")
 
+
+def validate_runtime_rails_execution_contract() -> None:
+    expected_wrappers = {
+        ".github/workflows/disposable-bootstrap.yml": 14,
+        "scripts/host-restore-validate.sh": 19,
+        "scripts/host-backup.sh": 5,
+        "scripts/verify-discourse-connect.py": 4,
+        "scripts/host-deploy.sh": 3,
+        "scripts/historical-recovery-scratch-reader.sh": 2,
+        "scripts/verify-contained-activation.sh": 2,
+        "scripts/verify-host.sh": 2,
+        "scripts/host-break-glass-admin.sh": 1,
+    }
+    total = 0
+    for relative, expected in expected_wrappers.items():
+        source = read(relative)
+        if (
+            "bundle exec rails runner" in source
+            or source.count("/usr/local/bin/rails runner") != expected
+            or source.count("rails runner") != expected
+        ):
+            fail(f"Runtime Rails execution bypasses the pinned owner-scoped wrapper: {relative}")
+        total += expected
+    if total != 52:
+        fail("Runtime Rails owner-wrapper inventory differs.")
+
+    template = read("config/app.yml.example")
+    owner_scoped_build_runner = """su discourse -c 'bundle exec rails runner
+          \"$MOCHIRII_RELEASE_ASSET_ROOT/configure-site.rb\"'"""
+    if (
+        template.count("bundle exec rails runner") != 1
+        or template.count("rails runner") != 1
+        or template.count(owner_scoped_build_runner) != 1
+    ):
+        fail("Build-time Rails runner is not explicitly owner-scoped.")
+
+    workflow = read(".github/workflows/disposable-bootstrap.yml")
+    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\")'"""
+    if workflow.count(owner_probe) != 1:
+        fail("Disposable bootstrap does not prove Rails UID, Git, and database ownership together.")
+
+
 def main() -> int:
     global ARCHIVE_MODE, ROOT
     parser = argparse.ArgumentParser()
@@ -3298,6 +3340,7 @@ def main() -> int:
     validate_template()
     validate_theme_and_public_source()
     validate_secrets_and_workflows()
+    validate_runtime_rails_execution_contract()
     print("Repository source contract passed.")
     return 0
 

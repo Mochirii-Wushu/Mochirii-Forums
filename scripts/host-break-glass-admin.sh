@@ -167,7 +167,7 @@ operation_armed=true
   exec setsid timeout --signal=TERM --kill-after=10s 70s \
     docker exec -i -e MOCHIRII_BREAK_GLASS_OPERATION_TOKEN="${operation_token}" app \
     timeout --signal=TERM --kill-after=10s 55s bash -lc \
-    'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-break-glass-admin.rb" "$1"' \
+    '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-break-glass-admin.rb" "$1"' \
     bash "${action}"
 ) <<<"${recovery_email}" >/dev/null 2>&1 &
 active_operation_pid=$!

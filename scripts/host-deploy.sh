@@ -809,11 +809,11 @@ run_storage_fixture() {
   if [[ -n ${input} ]]; then
     [[ -f ${input} && ! -L ${input} ]] || return 1
     (ulimit -f 128; exec 200>&- 201>&-; exec timeout --signal=TERM --kill-after=10s "${outer_seconds}" docker exec -i -e MOCHIRII_OPERATION_TOKEN="${operation_token}" app timeout --signal=TERM --kill-after=10s "${inner_seconds}" bash -lc \
-      'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-storage-fixture.rb" "$1" "$2" "$3"' \
+      '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-storage-fixture.rb" "$1" "$2" "$3"' \
       bash "${action}" "${commit}" "${configuration_id}") <"${input}" >"${output}" 2>/dev/null &
   else
     (ulimit -f 128; exec 200>&- 201>&-; exec timeout --signal=TERM --kill-after=10s "${outer_seconds}" docker exec -i -e MOCHIRII_OPERATION_TOKEN="${operation_token}" app timeout --signal=TERM --kill-after=10s "${inner_seconds}" bash -lc \
-      'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-storage-fixture.rb" "$1" "$2" "$3"' \
+      '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-storage-fixture.rb" "$1" "$2" "$3"' \
       bash "${action}" "${commit}" "${configuration_id}") </dev/null >"${output}" 2>/dev/null &
   fi
   active_bounded_pid=$!
@@ -3206,7 +3206,7 @@ if document.get("privateAdminRetrievalUrlPresent") is not True or document.get("
     raise SystemExit("Backup evidence is incomplete")
 PY
   if [[ ${deployment_mutation_resume} == false && ${authentication_retry_state} != contained-after-e2e-failure && ${authentication_retry_state} != activation-deploy-failed && ! ( ${complete_authentication_rebuild} == true && ${current_discourse_connect} == true && "$(timeout --signal=TERM --kill-after=5s 15 docker inspect --type container --format '{{.State.Running}}' app 2>/dev/null)" == false ) ]]; then
-    if ! timeout --signal=TERM --kill-after=10s 120 docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-zero-secure-uploads.rb"' >/dev/null 2>&1; then
+    if ! timeout --signal=TERM --kill-after=10s 120 docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-zero-secure-uploads.rb"' >/dev/null 2>&1; then
       fail "Zero-secure-upload verification failed; raw runtime output was suppressed."
     fi
   fi

@@ -321,14 +321,14 @@ def run_container_runner(
 
 def expire_nonce(nonce: str) -> None:
     run_container_runner(
-        'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/expire-discourse-connect-nonce.rb"',
+        '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/expire-discourse-connect-nonce.rb"',
         input_bytes=(nonce + "\n").encode("ascii"),
     )
 
 
 def verify_fixture_user() -> None:
     run_container_runner(
-        'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-discourse-connect-fixture.rb"',
+        '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-discourse-connect-fixture.rb"',
     )
 
 
@@ -336,7 +336,7 @@ def admin_recovery_fixture(action: str) -> bytes:
     if action not in {"issue", "cleanup"}:
         raise RuntimeError("Admin recovery fixture action is malformed.")
     return run_container_runner(
-        'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-admin-recovery-fixture.rb" "$1"',
+        '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-admin-recovery-fixture.rb" "$1"',
         arguments=(action,),
         capture_stdout=True,
     )
@@ -573,7 +573,7 @@ def assert_callback_logs_redacted() -> None:
     if not markers or len(markers) > 64 or any(len(marker) < 16 or len(marker) > 16_384 for marker in markers):
         raise RuntimeError("Sensitive callback marker inventory is malformed.")
     run_container_runner(
-        'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-sensitive-log-redaction.rb"',
+        '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-sensitive-log-redaction.rb"',
         input_bytes=b"\n".join(markers) + b"\n",
     )
     with tempfile.TemporaryFile() as transcript:

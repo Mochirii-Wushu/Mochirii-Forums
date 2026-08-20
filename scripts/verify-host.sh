@@ -860,8 +860,8 @@ timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc
   test -z "$(git -c core.fsmonitor=false -C /var/www/discourse/plugins/docker_manager status --porcelain=v1 --untracked-files=all)"
   cmp -s /var/www/discourse/plugins/mochirii_email_metadata/plugin.rb /opt/mochirii-release/mochirii-email-metadata-plugin.rb
 ' || fail "Running core, Docker Manager, or mandatory mail component bytes differ."
-timeout --signal=TERM --kill-after=10s 180s docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
-timeout --signal=TERM --kill-after=10s 180s docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
+timeout --signal=TERM --kill-after=10s 180s docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
+timeout --signal=TERM --kill-after=10s 180s docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
 nginx_log="$(mktemp /var/lib/mochirii/forums/logs/${expected_commit}-nginx.XXXXXXXX.log)"
 chmod 0600 "${nginx_log}"
 timeout --signal=TERM --kill-after=5s 60s docker exec app nginx -T >"${nginx_log}" 2>&1

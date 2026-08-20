@@ -40,7 +40,7 @@ docker exec app bash -lc '
   test "$MOCHIRII_STAGE4_FIXTURE" = false
   test "$MOCHIRII_STAGE4_CONNECT_FIXTURE" = false
 ' bash "${commit}" >/dev/null 2>&1 || fail "Contained activation runtime flags differ."
-docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"' >/dev/null 2>&1 || fail "Contained activation site-setting verification failed."
+docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"' >/dev/null 2>&1 || fail "Contained activation site-setting verification failed."
 
 python3 -B - <<'PY' >/dev/null
 import http.client
@@ -81,7 +81,7 @@ completed = subprocess.run(
     [
         "timeout", "45", "docker", "exec", "-i", "app", "timeout",
         "--signal=TERM", "--kill-after=10s", "30s", "bash", "-lc",
-        'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-contained-discourse-connect.rb"',
+        '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-contained-discourse-connect.rb"',
     ],
     input=location.encode("utf-8"),
     stdout=subprocess.DEVNULL,

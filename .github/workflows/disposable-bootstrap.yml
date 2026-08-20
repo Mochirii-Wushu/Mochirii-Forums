@@ -202,8 +202,9 @@ jobs:
             fi
             sleep 2
           done
-          sudo docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
-          sudo docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
+          sudo docker exec app /usr/local/bin/rails runner 'require "etc"; raise unless Process.euid == Etc.getpwnam("discourse").uid; raise unless GitUtils.git_version == "cbf996f65aae3da1843224aa624bcd9a225931ac"; ActiveRecord::Base.connection.execute("SELECT 1")'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
           sudo bash -c 'umask 077; transcript=$(mktemp /tmp/mochirii-nginx.XXXXXXXX); trap '\''rm -f -- "$transcript"'\'' EXIT; docker exec app nginx -T >"$transcript" 2>&1; grep -F '\''include conf.d/outlets/discourse/*.conf;'\'' "$transcript" >/dev/null; grep -F '\''include conf.d/outlets/server/*.conf;'\'' "$transcript" >/dev/null; grep -F '\''<meta name="generator" content="Mochirii Forums">'\'' "$transcript" >/dev/null; grep -F '\''location ~* \.(?:rss|atom)$'\'' "$transcript" >/dev/null; grep -F '\''location ~ ^/(?:u|users)/admin-login(?:\.[A-Za-z0-9]+)?/?$ { return 419; }'\'' "$transcript" >/dev/null; grep -F '\''location ~* ^/session/sso_login(?:\.[A-Za-z0-9]+)?/?$ {'\'' "$transcript" >/dev/null; grep -F '\''error_log /dev/null emerg;'\'' "$transcript" >/dev/null; grep -F '\''add_header Referrer-Policy "no-referrer" always;'\'' "$transcript" >/dev/null; for header in X-Discourse-Route X-Discourse-Username X-Discourse-Crawler-View Discourse-No-Onebox Discourse-Rate-Limit-Error-Code Discourse-Xhr-Redirect Discourse-Actions-Remaining Discourse-Actions-Max Discourse-Logged-Out X-Discourse-TrackView X-Discourse-BrowserPageView X-Discourse-Cached; do grep -F "proxy_hide_header ${header};" "$transcript" >/dev/null; done'
           python3 scripts/verify-public-branding.py --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
           python3 scripts/verify-discourse-connect.py \
@@ -214,16 +215,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo docker exec app bash -lc "cd /var/www/discourse && bundle exec rails runner 'PluginStore.set(\"mochirii-stage4\", \"rebuild\", \"preserved\")'"
+          sudo docker exec app bash -lc "/usr/local/bin/rails runner 'PluginStore.set(\"mochirii-stage4\", \"rebuild\", \"preserved\")'"
           sudo /usr/local/sbin/mochirii-stage4-launcher rebuild "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
           test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
           test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
           test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
           test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
-          test "$(sudo docker exec app bash -lc "cd /var/www/discourse && bundle exec rails runner 'print PluginStore.get(\"mochirii-stage4\", \"rebuild\")'")" = preserved
-          sudo docker exec app bash -lc "cd /var/www/discourse && bundle exec rails runner 'PluginStore.remove(\"mochirii-stage4\", \"rebuild\")'"
-          sudo docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
-          sudo docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
+          test "$(sudo docker exec app bash -lc "/usr/local/bin/rails runner 'print PluginStore.get(\"mochirii-stage4\", \"rebuild\")'")" = preserved
+          sudo docker exec app bash -lc "/usr/local/bin/rails runner 'PluginStore.remove(\"mochirii-stage4\", \"rebuild\")'"
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
           python3 "$GITHUB_WORKSPACE/scripts/verify-public-branding.py" --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
 
       - name: Prove supported backup and destructive disposable restore
@@ -309,32 +310,32 @@ jobs:
             exit 124
           }
           trap handle_fixture_signal HUP INT TERM
-          run_fixture_command 300 'prepare-backup-marker.rb' bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"'
+          run_fixture_command 300 'prepare-backup-marker.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"'
           run_fixture_command 2400 'discourse backup' discourse backup
           mapfile -t backups < <(sudo find /var/discourse/shared/standalone/backups/default -maxdepth 1 -type f -name '*.tar.gz' -printf '%T@ %f\n' | sort -nr)
           [[ ${#backups[@]} -ge 1 ]]
           backup="${backups[0]#* }"
           [[ "$backup" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.tar\.gz$ && "$backup" != *..* ]]
-          run_fixture_command 300 'mochirii-recovery' bash -lc "cd /var/www/discourse && bundle exec rails runner 'PluginStore.set(\"mochirii-recovery\", \"repository_commit\", \"post-backup-mutation\")'"
+          run_fixture_command 300 'mochirii-recovery' bash -lc "/usr/local/bin/rails runner 'PluginStore.set(\"mochirii-recovery\", \"repository_commit\", \"post-backup-mutation\")'"
           run_fixture_command 300 'discourse enable_restore' discourse enable_restore
           restore_enabled=true
           run_fixture_command 5400 'discourse restore --location local' discourse restore --location local "$backup"
           run_fixture_command 300 'discourse disable_restore' discourse disable_restore
           restore_enabled=false
-          run_fixture_command 900 'verify-restored-backup.rb' bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          run_fixture_command 900 'verify-restored-backup.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
           sudo /usr/local/sbin/mochirii-stage4-launcher restart "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
           test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
           test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
           test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
           test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
-          run_fixture_command 900 'verify-restored-backup.rb' bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          run_fixture_command 900 'verify-restored-backup.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
           sudo /usr/local/sbin/mochirii-stage4-launcher rebuild "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
           test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
           test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
           test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
           test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
-          run_fixture_command 900 'verify-restored-backup.rb' bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
-          sudo docker exec app bash -lc 'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
+          run_fixture_command 900 'verify-restored-backup.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
           python3 "$GITHUB_WORKSPACE/scripts/verify-public-branding.py" --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
           echo 'Supported disposable backup, restore, restart, and rebuild passed.'
 

@@ -376,6 +376,10 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
         (
             b"bundle install --jobs $(nproc --ignore=1) --retry 3",
             b"grep -q 'outlets/discourse' /etc/nginx/conf.d/discourse.conf",
+            b"path: /usr/local/bin/rails",
+            b'(cd /var/www/discourse && RAILS_ENV=production sudo -H -E -u discourse bundle exec script/rails "$@")',
+            b"path: /usr/local/bin/discourse",
+            b'(cd /var/www/discourse && RAILS_ENV=production sudo -H -E -u discourse bundle exec script/discourse "$@")',
         ),
     )
     if b"bundle install --jobs $(($(nproc) - 1)) --retry 3" in docker["templates/web.template.yml"]:

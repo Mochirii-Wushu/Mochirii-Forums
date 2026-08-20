@@ -848,7 +848,7 @@ reconcile_backup_upload_journal() {
   result="$(mktemp "${evidence_root}/.backup-upload-cleanup.XXXXXXXX.json")" || return 1
   rm -f -- "${result}"
   if ! run_container_command cleanup-backup-upload 600 "prepare-backup-marker.rb transaction cleanup" "${result}" bash -lc \
-    'export MOCHIRII_RECOVERY_UPLOAD_ACTION=cleanup MOCHIRII_RECOVERY_UPLOAD_TRANSACTION_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' \
+    'export MOCHIRII_RECOVERY_UPLOAD_ACTION=cleanup MOCHIRII_RECOVERY_UPLOAD_TRANSACTION_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' \
     bash "${encoded}"; then
     rm -f -- "${result}"
     return 1
@@ -1074,7 +1074,7 @@ if [[ -z ${marker_file} ]]; then
   backup_upload_journal_base64="$(validate_backup_upload_journal "${backup_upload_journal}")" || fail "Recovery-upload cleanup journal validation failed."
   [[ ${#backup_upload_journal_base64} -le 8192 && ${backup_upload_journal_base64} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || fail "Recovery-upload cleanup journal encoding is malformed."
   recovery_upload_state="$(mktemp "${evidence_root}/.recovery-upload-${commit}-${configuration}.XXXXXXXX.json")"
-  if ! run_container_command prepare-backup 600 "prepare-backup-marker.rb" "${recovery_upload_state}" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=prepare MOCHIRII_RECOVERY_UPLOAD_TRANSACTION_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${backup_upload_journal_base64}"; then
+  if ! run_container_command prepare-backup 600 "prepare-backup-marker.rb" "${recovery_upload_state}" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=prepare MOCHIRII_RECOVERY_UPLOAD_TRANSACTION_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${backup_upload_journal_base64}"; then
     fail "Backup recovery-upload preparation failed; raw runtime output was suppressed."
   fi
   [[ -f ${recovery_upload_state} && ! -L ${recovery_upload_state} && "$(stat -c '%U:%G %a' "${recovery_upload_state}")" == "root:root 600" ]] || fail "Backup recovery-upload state is unsafe."
@@ -1082,7 +1082,7 @@ if [[ -z ${marker_file} ]]; then
   recovery_upload_included=true
 fi
 normal_upload_inventory_before="$(mktemp "${evidence_root}/.normal-upload-inventory-${commit}-${configuration}.XXXXXXXX.json")"
-if ! run_container_command inventory-before 600 "normal-upload-inventory.rb" "${normal_upload_inventory_before}" bash -lc 'export MOCHIRII_BACKUP_INVENTORY_ONLY=true; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"'; then
+if ! run_container_command inventory-before 600 "normal-upload-inventory.rb" "${normal_upload_inventory_before}" bash -lc 'export MOCHIRII_BACKUP_INVENTORY_ONLY=true; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"'; then
   fail "Normal-upload inventory failed before backup; raw runtime output was suppressed."
 fi
 normal_upload_inventory_base64="$(python3 -B - "${normal_upload_inventory_before}" <<'PY'
@@ -1115,7 +1115,7 @@ PY
 if ! run_container_command create-backup 2400 "discourse backup" /dev/null discourse backup; then
   fail "Application backup failed; raw runtime output was suppressed."
 fi
-if ! run_container_command verify-backup 600 "verify-backup.rb" "${candidate}" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' bash "${normal_upload_inventory_base64}"; then
+if ! run_container_command verify-backup 600 "verify-backup.rb" "${candidate}" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' bash "${normal_upload_inventory_base64}"; then
   fail "Backup validation failed; raw runtime output was suppressed."
 fi
 if [[ ${recovery_upload_included} == true ]]; then
@@ -1385,7 +1385,7 @@ PY
 dr_payload_base64="$(base64 --wrap=0 -- "${dr_payload}")"
 [[ ${#dr_payload_base64} -le 65536 && ${dr_payload_base64} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || fail "Disaster-recovery evidence encoding is malformed."
 dr_result="$(mktemp "${evidence_root}/.disaster-recovery-result-${commit}-${configuration}.XXXXXXXX.json")"
-if ! run_container_command publish-recovery-evidence 600 "publish-disaster-recovery-evidence.rb" "${dr_result}" bash -lc 'export MOCHIRII_DR_EVIDENCE_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/publish-disaster-recovery-evidence.rb"' bash "${dr_payload_base64}"; then
+if ! run_container_command publish-recovery-evidence 600 "publish-disaster-recovery-evidence.rb" "${dr_result}" bash -lc 'export MOCHIRII_DR_EVIDENCE_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/publish-disaster-recovery-evidence.rb"' bash "${dr_payload_base64}"; then
   fail "Disaster-recovery evidence publication failed; raw runtime output was suppressed."
 fi
 python3 -B - "${candidate}" "${dr_payload}" "${dr_result}" <<'PY'

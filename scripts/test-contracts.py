@@ -4603,6 +4603,74 @@ def test_host_security_control_plane_contract() -> None:
         raise RuntimeError("Authentication finalizer state-root traversal and sensitive-directory modes conflict.")
 
 
+def test_runtime_rails_execution_contract() -> None:
+    expected_wrappers = {
+        ".github/workflows/disposable-bootstrap.yml": 14,
+        "scripts/host-restore-validate.sh": 19,
+        "scripts/host-backup.sh": 5,
+        "scripts/verify-discourse-connect.py": 4,
+        "scripts/host-deploy.sh": 3,
+        "scripts/historical-recovery-scratch-reader.sh": 2,
+        "scripts/verify-contained-activation.sh": 2,
+        "scripts/verify-host.sh": 2,
+        "scripts/host-break-glass-admin.sh": 1,
+    }
+    sources = {
+        relative: (ROOT / relative).read_text(encoding="utf-8")
+        for relative in expected_wrappers
+    }
+    template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
+    owner_scoped_build_runner = """su discourse -c 'bundle exec rails runner
+          \"$MOCHIRII_RELEASE_ASSET_ROOT/configure-site.rb\"'"""
+    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\")'"""
+
+    def assert_contract(candidate_sources: dict[str, str], candidate_template: str) -> None:
+        for relative, expected in expected_wrappers.items():
+            source = candidate_sources[relative]
+            if (
+                "bundle exec rails runner" in source
+                or source.count("/usr/local/bin/rails runner") != expected
+                or source.count("rails runner") != expected
+            ):
+                raise RuntimeError(f"Runtime Rails owner-wrapper inventory differs: {relative}")
+        if sum(expected_wrappers.values()) != 52:
+            raise RuntimeError("Runtime Rails owner-wrapper total differs.")
+        if (
+            candidate_template.count("bundle exec rails runner") != 1
+            or candidate_template.count("rails runner") != 1
+            or candidate_template.count(owner_scoped_build_runner) != 1
+        ):
+            raise RuntimeError("Build-time Rails runner owner scope differs.")
+        if candidate_sources[".github/workflows/disposable-bootstrap.yml"].count(owner_probe) != 1:
+            raise RuntimeError("Disposable Rails UID/Git/database proof differs.")
+
+    assert_contract(sources, template)
+
+    workflow = sources[".github/workflows/disposable-bootstrap.yml"]
+    raw_runtime = dict(sources)
+    raw_runtime[".github/workflows/disposable-bootstrap.yml"] = workflow.replace(
+        "/usr/local/bin/rails runner", "bundle exec rails runner", 1
+    )
+    missing_wrapper = dict(sources)
+    missing_wrapper[".github/workflows/disposable-bootstrap.yml"] = workflow.replace(
+        owner_probe + "\n", "", 1
+    )
+    extra_wrapper = dict(sources)
+    extra_wrapper[".github/workflows/disposable-bootstrap.yml"] = workflow + "\n/usr/local/bin/rails runner\n"
+    hostile_cases = (
+        (raw_runtime, template),
+        (missing_wrapper, template),
+        (extra_wrapper, template),
+        (sources, template.replace("su discourse -c 'bundle exec rails runner", "bundle exec rails runner", 1)),
+    )
+    for candidate_sources, candidate_template in hostile_cases:
+        try:
+            assert_contract(candidate_sources, candidate_template)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Runtime Rails owner-wrapper hostile mutation was accepted.")
+
+
 def main() -> int:
     test_renderer()
     test_theme_archive()
@@ -4636,6 +4704,7 @@ def main() -> int:
     test_historical_disaster_recovery_entrypoint_contract()
     test_host_operation_lock_contract()
     test_host_security_control_plane_contract()
+    test_runtime_rails_execution_contract()
     print("Configuration and theme hostile fixtures passed.")
     return 0
 

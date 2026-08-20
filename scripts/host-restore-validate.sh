@@ -454,7 +454,7 @@ if [[ ${disaster_restore} == true && -z ${backup_evidence:-} ]]; then
   [[ ${disaster_operation_token} =~ ^[0-9a-f]{32}$ ]] || fail "Clean-target guard token generation failed."
   timeout --signal=TERM --kill-after=10s 360 docker exec -e MOCHIRII_OPERATION_TOKEN="${disaster_operation_token}" app \
     timeout --signal=TERM --kill-after=10s 330 bash -lc \
-      'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-clean-disaster-target.rb"' >/dev/null 2>&1 || {
+      '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-clean-disaster-target.rb"' >/dev/null 2>&1 || {
         timeout --signal=TERM --kill-after=5s 45 docker stop --time 30 app >/dev/null 2>&1 || true
         fail "Clean-target disaster restore guard failed; the application was contained."
       }
@@ -489,7 +489,7 @@ if [[ ${disaster_restore} == true && -z ${backup_evidence:-} ]]; then
       -e MOCHIRII_PRODUCTION_CONFIGURATION_SHA256="${configuration}" \
       "${historical_fetch_environment[@]}" app \
       timeout --signal=TERM --kill-after=10s 330 bash -lc \
-      'cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/fetch-disaster-recovery-evidence.rb"') \
+      '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/fetch-disaster-recovery-evidence.rb"') \
       >"${disaster_candidate}" 2>/dev/null; then
     rm -f -- "${disaster_candidate}"
     timeout --signal=TERM --kill-after=5s 45 docker stop --time 30 app >/dev/null 2>&1 || true
@@ -1551,7 +1551,7 @@ run_container_command() {
 disable_restore_safely() {
   run_container_command disable-restore 300 "discourse disable_restore" discourse disable_restore &&
     run_container_command verify-restore-disabled 300 "SiteSetting.allow_restore" bash -lc \
-      'cd /var/www/discourse && bundle exec rails runner "raise unless SiteSetting.allow_restore == false"'
+      '/usr/local/bin/rails runner "raise unless SiteSetting.allow_restore == false"'
 }
 
 prove_restore_containment() {
@@ -1564,7 +1564,7 @@ prove_restore_containment() {
       'test "$MOCHIRII_REPOSITORY_COMMIT" = "$1" && test "$DISCOURSE_DISABLE_EMAILS" = yes && test "$DISCOURSE_ENABLE_DISCOURSE_CONNECT" = false' \
       bash "${commit}" &&
     run_container_command verify-restore-setting 300 "SiteSetting.allow_restore" bash -lc \
-      'cd /var/www/discourse && bundle exec rails runner "raise unless SiteSetting.allow_restore == false"'; then
+      '/usr/local/bin/rails runner "raise unless SiteSetting.allow_restore == false"'; then
     return 0
   fi
   return 1
@@ -1961,7 +1961,7 @@ if phase_before production-reopening; then
     # Re-read the exact remote object through the application immediately before
     # the destructive restore and bind both origin and CDN denial to protected evidence.
     run_container_command verify-backup-object 1800 "verify-backup.rb" bash -lc \
-      'export MOCHIRII_EXPECTED_BACKUP_FILENAME="$1" MOCHIRII_EXPECTED_BACKUP_SHA256="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$3"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' \
+      'export MOCHIRII_EXPECTED_BACKUP_FILENAME="$1" MOCHIRII_EXPECTED_BACKUP_SHA256="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$3"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' \
       bash "${backup_filename}" "${backup_sha256}" "${normal_upload_inventory_base64}" || fail "The remote backup object or its normal-upload inventory changed before restore."
     run_container_command enable-restore 300 "discourse enable_restore" discourse enable_restore || fail "Restore enablement failed; raw runtime output was suppressed."
     run_container_command restore-backup 5400 "discourse restore --location s3" discourse restore --location s3 "${backup_filename}" || fail "Application restore failed; raw runtime output was suppressed."
@@ -1970,11 +1970,11 @@ if phase_before production-reopening; then
   fi
 
   if phase_before verified-restored; then
-    run_container_command verify-restored-data 900 "verify-restored-backup.rb" bash -lc 'if [[ "$1" != - ]]; then export MOCHIRII_EXPECTED_RECOVERY_UPLOAD_SHA256="$1"; fi; export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$3"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${recovery_upload_state_sha256}" "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Restored data validation failed."
+    run_container_command verify-restored-data 900 "verify-restored-backup.rb" bash -lc 'if [[ "$1" != - ]]; then export MOCHIRII_EXPECTED_RECOVERY_UPLOAD_SHA256="$1"; fi; export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$3"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${recovery_upload_state_sha256}" "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Restored data validation failed."
     run_launcher restored-restart restart app || fail "Restored restart failed."
-    run_container_command verify-restored-restart 900 "verify-restored-backup.rb" bash -lc 'if [[ "$1" != - ]]; then export MOCHIRII_EXPECTED_RECOVERY_UPLOAD_SHA256="$1"; fi; export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$3"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${recovery_upload_state_sha256}" "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Restored restart validation failed."
+    run_container_command verify-restored-restart 900 "verify-restored-backup.rb" bash -lc 'if [[ "$1" != - ]]; then export MOCHIRII_EXPECTED_RECOVERY_UPLOAD_SHA256="$1"; fi; export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$3"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${recovery_upload_state_sha256}" "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Restored restart validation failed."
     run_launcher restored-rebuild rebuild app || fail "Restored rebuild failed."
-    run_container_command verify-restored-rebuild 900 "verify-restored-backup.rb" bash -lc 'if [[ "$1" != - ]]; then export MOCHIRII_EXPECTED_RECOVERY_UPLOAD_SHA256="$1"; fi; export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$3"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${recovery_upload_state_sha256}" "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Restored rebuild validation failed."
+    run_container_command verify-restored-rebuild 900 "verify-restored-backup.rb" bash -lc 'if [[ "$1" != - ]]; then export MOCHIRII_EXPECTED_RECOVERY_UPLOAD_SHA256="$1"; fi; export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$2" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$3"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${recovery_upload_state_sha256}" "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Restored rebuild validation failed."
     disable_restore_safely || fail "Restore disablement failed after rebuild."
     prove_restore_containment || fail "Restore containment changed after the supported rebuild."
     advance_restore_phase verified-restored || fail "Restored runtime verification could not be committed."
@@ -1985,10 +1985,10 @@ if phase_before production-reopening; then
       advance_restore_phase cleaning-fixture || fail "Restored fixture cleanup intent could not be committed."
     fi
     if [[ ${recovery_upload_fixture} == true ]]; then
-      run_container_command cleanup-restored-upload 600 "prepare-backup-marker.rb cleanup" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=cleanup MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Restored recovery-upload cleanup failed."
-      run_container_command verify-clean-upload-contained 600 "prepare-backup-marker.rb verify-clean" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=verify-clean MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Restored recovery-upload absence could not be proved."
+      run_container_command cleanup-restored-upload 600 "prepare-backup-marker.rb cleanup" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=cleanup MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Restored recovery-upload cleanup failed."
+      run_container_command verify-clean-upload-contained 600 "prepare-backup-marker.rb verify-clean" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=verify-clean MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Restored recovery-upload absence could not be proved."
     else
-      run_container_command verify-clean-upload-contained 600 "verify-restored-backup.rb" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$1" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$2"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Fixture-free restored upload identity could not be re-proved."
+      run_container_command verify-clean-upload-contained 600 "verify-restored-backup.rb" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$1" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$2"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Fixture-free restored upload identity could not be re-proved."
     fi
     advance_restore_phase fixture-cleaned || fail "Restored fixture cleanup could not be committed."
   fi
@@ -2004,11 +2004,11 @@ if phase_before clean-backup-committed; then
     advance_restore_phase clean-backup-creating || fail "Final clean backup intent could not be committed."
   fi
   if [[ ${recovery_upload_fixture} == true ]]; then
-    run_container_command verify-clean-upload 600 "prepare-backup-marker.rb verify-clean" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=verify-clean MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Recovery-upload cleanup could not be re-proved before the final clean backup."
+    run_container_command verify-clean-upload 600 "prepare-backup-marker.rb verify-clean" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=verify-clean MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Recovery-upload cleanup could not be re-proved before the final clean backup."
   fi
   clean_inventory_candidate="$(mktemp "${evidence_root}/.clean-upload-inventory-${commit}-${configuration}.XXXXXXXX.json")"
   chmod 0600 "${clean_inventory_candidate}"
-  run_container_command capture-clean-upload-inventory 600 "verify-backup.rb inventory" --output "${clean_inventory_candidate}" bash -lc 'export MOCHIRII_BACKUP_INVENTORY_ONLY=true; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' || fail "Final clean normal-upload inventory could not be captured."
+  run_container_command capture-clean-upload-inventory 600 "verify-backup.rb inventory" --output "${clean_inventory_candidate}" bash -lc 'export MOCHIRII_BACKUP_INVENTORY_ONLY=true; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' || fail "Final clean normal-upload inventory could not be captured."
   clean_inventory_base64="$(python3 -B - "${clean_inventory_candidate}" <<'PY'
 import base64
 import json
@@ -2038,7 +2038,7 @@ PY
   [[ ${#clean_inventory_base64} -le 4096 && ${clean_inventory_base64} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || fail "Final clean normal-upload inventory encoding is malformed."
   clean_backup_candidate="$(mktemp "${evidence_root}/.clean-backup-${commit}-${configuration}.XXXXXXXX.json")"
   chmod 0600 "${clean_backup_candidate}"
-  run_container_command inspect-clean-backup 600 "verify-backup.rb" --output "${clean_backup_candidate}" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' bash "${clean_inventory_base64}" || fail "Latest backup inspection failed before the final clean backup."
+  run_container_command inspect-clean-backup 600 "verify-backup.rb" --output "${clean_backup_candidate}" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' bash "${clean_inventory_base64}" || fail "Latest backup inspection failed before the final clean backup."
   clean_backup_disposition="$(python3 -B - "${clean_backup_candidate}" "${restore_journal}" "${backup_filename}" "${backup_sha256}" "${clean_backup_filename:--}" "${clean_backup_sha256:--}" <<'PY'
 import datetime
 import json
@@ -2082,7 +2082,7 @@ PY
 )" || fail "Final clean backup recovery disposition is ambiguous."
   if [[ ${clean_backup_disposition} == CREATE ]]; then
     run_container_command create-clean-backup 2400 "discourse backup" discourse backup || fail "Final clean application backup failed; raw runtime output was suppressed."
-    run_container_command verify-clean-backup 600 "verify-backup.rb" --output "${clean_backup_candidate}" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' bash "${clean_inventory_base64}" || fail "Final clean backup validation failed; raw runtime output was suppressed."
+    run_container_command verify-clean-backup 600 "verify-backup.rb" --output "${clean_backup_candidate}" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' bash "${clean_inventory_base64}" || fail "Final clean backup validation failed; raw runtime output was suppressed."
     python3 -B - "${clean_backup_candidate}" "${restore_journal}" "${backup_filename}" <<'PY'
 import datetime
 import json
@@ -2109,12 +2109,12 @@ PY
   fi
   clean_inventory_after_candidate="$(mktemp "${evidence_root}/.clean-upload-inventory-after-${commit}-${configuration}.XXXXXXXX.json")"
   chmod 0600 "${clean_inventory_after_candidate}"
-  run_container_command reverify-clean-inventory 600 "verify-backup.rb inventory" --output "${clean_inventory_after_candidate}" bash -lc 'export MOCHIRII_BACKUP_INVENTORY_ONLY=true; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' || fail "Final backup normal-upload inventory could not be re-read."
+  run_container_command reverify-clean-inventory 600 "verify-backup.rb inventory" --output "${clean_inventory_after_candidate}" bash -lc 'export MOCHIRII_BACKUP_INVENTORY_ONLY=true; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-backup.rb"' || fail "Final backup normal-upload inventory could not be re-read."
   cmp --silent -- "${clean_inventory_candidate}" "${clean_inventory_after_candidate}" || fail "Final backup changed the bounded normal-upload inventory."
   if [[ ${recovery_upload_fixture} == true ]]; then
-    run_container_command reverify-clean-upload 600 "prepare-backup-marker.rb verify-clean" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=verify-clean MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Final backup did not preserve recovery-upload cleanup."
+    run_container_command reverify-clean-upload 600 "prepare-backup-marker.rb verify-clean" bash -lc 'export MOCHIRII_RECOVERY_UPLOAD_ACTION=verify-clean MOCHIRII_RECOVERY_UPLOAD_STATE_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"' bash "${recovery_upload_state_base64}" || fail "Final backup did not preserve recovery-upload cleanup."
   else
-    run_container_command reverify-clean-upload 600 "verify-restored-backup.rb" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$1" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$2"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Final backup did not preserve fixture-free restored upload identity."
+    run_container_command reverify-clean-upload 600 "verify-restored-backup.rb" bash -lc 'export MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_COUNT="$1" MOCHIRII_EXPECTED_NORMAL_UPLOAD_INVENTORY_SHA256="$2"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"' bash "${normal_upload_inventory_count}" "${normal_upload_inventory_sha256}" || fail "Final backup did not preserve fixture-free restored upload identity."
   fi
   readarray -t clean_remote_contract < <(python3 -B - "${clean_backup_candidate}" <<'PY'
 import datetime
@@ -2362,7 +2362,7 @@ PY
   [[ ${#clean_dr_payload_base64} -le 65536 && ${clean_dr_payload_base64} =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || fail "Clean disaster-recovery evidence encoding is malformed."
   clean_dr_result="$(mktemp "${evidence_root}/.clean-disaster-recovery-result-${commit}-${configuration}.XXXXXXXX.json")"
   chmod 0600 "${clean_dr_result}"
-  run_container_command publish-clean-recovery 600 "publish-disaster-recovery-evidence.rb" --output "${clean_dr_result}" bash -lc 'export MOCHIRII_DR_EVIDENCE_BASE64="$1"; cd /var/www/discourse && bundle exec rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/publish-disaster-recovery-evidence.rb"' bash "${clean_dr_payload_base64}" || fail "Final clean disaster-recovery evidence publication failed."
+  run_container_command publish-clean-recovery 600 "publish-disaster-recovery-evidence.rb" --output "${clean_dr_result}" bash -lc 'export MOCHIRII_DR_EVIDENCE_BASE64="$1"; /usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/publish-disaster-recovery-evidence.rb"' bash "${clean_dr_payload_base64}" || fail "Final clean disaster-recovery evidence publication failed."
   clean_backup_evidence_sha256="$(python3 -B - "${clean_backup_candidate}" "${clean_dr_payload}" "${clean_dr_result}" "${clean_backup_evidence}" <<'PY'
 import hashlib
 import json
