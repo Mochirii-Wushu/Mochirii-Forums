@@ -892,7 +892,7 @@ for forbidden in ("$request", "$request_uri", "$args", "$query_string", "$http_r
     if forbidden in body:
         raise SystemExit("sensitive callback location can persist request data")
 
-email_marker = r"location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$ {"
+email_marker = 'location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {'
 email_match = re.search(re.escape(email_marker) + r"(?P<body>.*?)\n\s*\}", text, re.S)
 if email_match is None:
     raise SystemExit("administrator recovery privacy location is absent")

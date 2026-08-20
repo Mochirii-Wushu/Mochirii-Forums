@@ -242,7 +242,7 @@ __MOCHIRII_TLS_RUN__
           proxy_set_header Client-Ip "";
           proxy_pass http://discourse;
         }
-        location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$ {
+        location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {
           access_log off;
           log_not_found off;
           error_log /dev/null emerg;

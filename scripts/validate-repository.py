@@ -779,7 +779,7 @@ def validate_template() -> None:
             "module MochiriiSensitiveRequestPathFilter",
             "return FILTERED_EMAIL_LOGIN_PATH if path.match?(EMAIL_LOGIN_PATH)",
             "location ~* ^/session/sso_login(?:\\.[A-Za-z0-9]+)?/?$",
-            "location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$",
+            'location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$"',
             "location ~* ^/session/email-login/ {",
             "error_page 420 = @mochirii_email_login_denied;",
             "access_log off;",
@@ -791,7 +791,7 @@ def validate_template() -> None:
         ],
         "app template",
     )
-    if app.index("location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$") > app.index("location ~* ^/session/email-login/ {"):
+    if app.index('location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$"') > app.index("location ~* ^/session/email-login/ {"):
         fail("Canonical administrator recovery privacy route is shadowed by its denial boundary.")
     localized_error_copy = '''        - |-
           for status in 403 422 500 503; do
@@ -1207,8 +1207,10 @@ def validate_secrets_and_workflows() -> None:
             '"rebuild-mismatched-created-images"',
             '"rebuild-mismatched-preexisting-tag"',
             'Matching rebuild did not adopt exactly one terminal app image.',
+            'def nginx_outlet_syntax_fixture() -> None:',
+            'Pinned Nginx accepted the hostile unquoted bounded recovery regex.',
         ],
-        "disposable launcher terminal image-equality hostile fixture",
+        "disposable launcher terminal image-equality and Nginx syntax hostile fixture",
     )
     for fixture in ("test-storage-response-boundary.rb", "test-backup-url-boundary.rb", "test-normal-upload-inventory.rb", "test-operation-survivor.rb"):
         pattern = re.compile(

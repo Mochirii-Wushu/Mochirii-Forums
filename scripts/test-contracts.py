@@ -2495,7 +2495,7 @@ def test_sensitive_callback_markers() -> None:
         if r"[\x00-\x1f\x7f]" not in scanner or r"[\x00-\x20]" in scanner:
             raise RuntimeError("Sensitive-log marker validation rejects ordinary display-name spaces.")
         app = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
-        exact_route = "location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$ {"
+        exact_route = 'location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {'
         denial_route = "location ~* ^/session/email-login/ {"
         recovery_required = (
             "EMAIL_LOGIN_PATH = %r{\\A/session/email-login/[A-Za-z0-9_-]{20,256}\\z}.freeze",
@@ -2973,9 +2973,11 @@ def test_host_containment_contract() -> None:
         '"rebuild-mismatched-created-images"',
         '"rebuild-mismatched-preexisting-tag"',
         "Matching rebuild did not adopt exactly one terminal app image.",
+        "def nginx_outlet_syntax_fixture() -> None:",
+        "Pinned Nginx accepted the hostile unquoted bounded recovery regex.",
     ):
         if value not in disposable_guard_fixture:
-            raise RuntimeError("Disposable hostile fixture lost terminal image-equality coverage.")
+            raise RuntimeError("Disposable hostile fixture lost terminal image-equality or Nginx syntax coverage.")
     if "timeout --foreground" in disposable:
         raise RuntimeError("Disposable restore uses foreground timeout, which can leave a spawned child alive.")
     for value in ("MOCHIRII_OPERATION_TOKEN", "container_operation_absent", "terminate_active_group"):

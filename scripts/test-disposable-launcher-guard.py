@@ -972,6 +972,140 @@ def pups_trace_success_fixture() -> None:
                 assert_no_transaction(root)
 
 
+def nginx_outlet_syntax_fixture() -> None:
+    nginx = shutil.which("nginx")
+    ruby = shutil.which("ruby")
+    if nginx is None or ruby is None:
+        raise RuntimeError("Pinned Nginx and Ruby are required for the outlet syntax fixture.")
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-nginx-outlet-") as temporary:
+        prefix = Path(temporary).resolve()
+        rendered = prefix / "app.yml"
+        environment = os.environ.copy()
+        environment["FORUMS_FIXTURE_DISCOURSE_CONNECT_SECRET"] = "b" * 64
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(ROOT / "scripts" / "render-app-config.py"),
+                "--mode",
+                "stage4-connect-fixture",
+                "--output",
+                str(rendered),
+            ],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("Pinned Nginx fixture could not render the exact application configuration.")
+
+        discourse_directory = prefix / "conf.d" / "outlets" / "discourse"
+        server_directory = prefix / "conf.d" / "outlets" / "server"
+        discourse_directory.mkdir(parents=True)
+        server_directory.mkdir(parents=True)
+        extractor = r'''
+require "yaml"
+
+document = YAML.safe_load_file(ARGV.fetch(0), aliases: true)
+expected = {
+  "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/discourse/40-mochirii-public-metadata.conf"),
+  "/etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/server/40-mochirii-feed-denial.conf"),
+}
+items = document.fetch("run")
+expected.each do |source, destination|
+  matches = items.select { |item| item["file"].is_a?(Hash) && item["file"]["path"] == source }
+  abort "outlet inventory differs" unless matches.length == 1
+  contents = matches.fetch(0).fetch("file").fetch("contents")
+  abort "outlet contents differ" unless contents.is_a?(String) && !contents.empty?
+  File.binwrite(destination, contents)
+end
+'''
+        extracted = subprocess.run(
+            [ruby, "-e", extractor, str(rendered), str(prefix)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        if extracted.returncode != 0:
+            raise RuntimeError("Pinned Nginx fixture could not extract the exact outlet inventory.")
+
+        configuration = prefix / "nginx.conf"
+        configuration.write_text(
+            "\n".join(
+                (
+                    "user root;",
+                    f"pid {prefix / 'nginx.pid'};",
+                    "error_log stderr notice;",
+                    "events { worker_connections 16; }",
+                    "http {",
+                    "  access_log off;",
+                    f"  client_body_temp_path {prefix / 'client-body'};",
+                    f"  proxy_temp_path {prefix / 'proxy'};",
+                    f"  fastcgi_temp_path {prefix / 'fastcgi'};",
+                    f"  uwsgi_temp_path {prefix / 'uwsgi'};",
+                    f"  scgi_temp_path {prefix / 'scgi'};",
+                    "  map $http_x_forwarded_proto $thescheme { default http; https https; }",
+                    "  upstream discourse { server 127.0.0.1:3000; }",
+                    "  server {",
+                    "    listen 127.0.0.1:18080;",
+                    "    server_name _;",
+                    "    include conf.d/outlets/server/*.conf;",
+                    "    location /__mochirii_outlet_syntax__ {",
+                    "      include conf.d/outlets/discourse/*.conf;",
+                    "      return 204;",
+                    "    }",
+                    "  }",
+                    "}",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        command = [nginx, "-t", "-p", f"{prefix}/", "-c", "nginx.conf", "-e", "stderr"]
+        checked = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        if checked.returncode != 0:
+            raise RuntimeError("Pinned Nginx rejected the exact rendered outlet configuration.")
+
+        server_outlet = server_directory / "40-mochirii-feed-denial.conf"
+        quoted_route = 'location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {'
+        unquoted_route = "location ~ ^/session/email-login/[A-Za-z0-9_-]{20,256}$ {"
+        contents = server_outlet.read_text(encoding="utf-8")
+        if contents.count(quoted_route) != 1 or unquoted_route in contents:
+            raise RuntimeError("Administrator recovery Nginx regex is not uniquely quoted.")
+        server_outlet.write_text(
+            contents.replace(quoted_route, unquoted_route),
+            encoding="utf-8",
+            newline="\n",
+        )
+        hostile = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        if hostile.returncode == 0:
+            raise RuntimeError("Pinned Nginx accepted the hostile unquoted bounded recovery regex.")
+
+
 def run_linux() -> None:
     if os.geteuid() != 0:
         raise SystemExit("Disposable launcher fixture requires an isolated root Linux context.")
@@ -982,6 +1116,7 @@ def run_linux() -> None:
     rebuild_terminal_image_fixture()
     failure_classifier_fixture()
     pups_trace_success_fixture()
+    nginx_outlet_syntax_fixture()
     print("Disposable launcher immutable-ID hostile fixture passed.")
 
 
