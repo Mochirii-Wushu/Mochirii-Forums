@@ -2316,7 +2316,13 @@ def test_deployment_checkout_configuration_boundary() -> None:
             raise RuntimeError("Bash is required for the parser cleanup hostile fixture.")
         harness = cleanup + r'''
 parser_container=mochirii-forums-source-verify-123
-timeout() { shift; "$@"; }
+timeout() {
+  while [[ ${1-} == -* ]]; do shift; done
+  [[ $# -gt 0 ]] || return 1
+  shift
+  [[ $# -gt 0 ]] || return 1
+  "$@"
+}
 docker() {
   if [[ $1 == rm ]]; then
     [[ ${MOCK_RM} == success ]]
