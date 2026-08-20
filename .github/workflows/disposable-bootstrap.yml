@@ -139,7 +139,7 @@ jobs:
             python3 -B /repo/scripts/test-historical-release-disaster-recovery.py >/dev/null
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             python3 -B /repo/scripts/test-historical-recovery-scratch-reader.py --inside-linux >/dev/null
-          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+          docker run "${ruby_fixture_container[@]}" --tmpfs /var/log:rw,nosuid,nodev,size=4m,mode=0755,uid=0,gid=0 --group-add adm -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             python3 -B /repo/scripts/test-disposable-launcher-guard.py --inside-linux >/dev/null
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             python3 -B /repo/scripts/test-host-restore-launcher-journal.py --inside-linux >/dev/null

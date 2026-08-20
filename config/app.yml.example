@@ -363,4 +363,7 @@ __MOCHIRII_TLS_RUN__
         - >-
           grep -R -Fq 'include conf.d/outlets/server/*.conf;'
           /etc/nginx
-        - "nginx -t"
+        - >-
+          test ! -L /var/log/nginx &&
+          install -d -m 0755 -o root -g adm /var/log/nginx &&
+          nginx -t

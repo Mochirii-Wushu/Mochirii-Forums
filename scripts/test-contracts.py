@@ -41,6 +41,10 @@ LOCALIZED_ERROR_COPY_BLOCK = '''        - |-
 LOCALIZED_ERROR_COPY_COMMAND = "\n".join(
     line[10:] for line in LOCALIZED_ERROR_COPY_BLOCK.splitlines()[1:]
 )
+NGINX_LOG_DIRECTORY_BLOCK = '''        - >-
+          test ! -L /var/log/nginx &&
+          install -d -m 0755 -o root -g adm /var/log/nginx &&
+          nginx -t'''
 
 
 def module_from(relative: str, name: str):
@@ -271,6 +275,8 @@ def test_renderer() -> None:
             or rendered.count("for status in 403 422 500 503; do") != 1
         ):
             raise RuntimeError("Rendered localized error-page copy lost its exact literal shell contract.")
+        if rendered.count(NGINX_LOG_DIRECTORY_BLOCK) != 1:
+            raise RuntimeError("Rendered Nginx validation lost its exact persistent log-directory contract.")
 
     if os.name != "nt":
         localized_names = [
@@ -2973,11 +2979,18 @@ def test_host_containment_contract() -> None:
         '"rebuild-mismatched-created-images"',
         '"rebuild-mismatched-preexisting-tag"',
         "Matching rebuild did not adopt exactly one terminal app image.",
+        "def nginx_log_directory_fixture() -> None:",
+        "NGINX_LOG_DIRECTORY_PREFIX = (",
+        "Pinned Nginx log directory symlink guard changed its target.",
         "def nginx_outlet_syntax_fixture() -> None:",
         "Pinned Nginx accepted the hostile unquoted bounded recovery regex.",
     ):
         if value not in disposable_guard_fixture:
             raise RuntimeError("Disposable hostile fixture lost terminal image-equality or Nginx syntax coverage.")
+    if (
+        disposable.count("--tmpfs /var/log:rw,nosuid,nodev,size=4m,mode=0755,uid=0,gid=0 --group-add adm") != 1
+    ):
+        raise RuntimeError("Disposable hostile fixture lost its isolated root:adm Nginx log boundary.")
     if "timeout --foreground" in disposable:
         raise RuntimeError("Disposable restore uses foreground timeout, which can leave a spawned child alive.")
     for value in ("MOCHIRII_OPERATION_TOKEN", "container_operation_absent", "terminate_active_group"):

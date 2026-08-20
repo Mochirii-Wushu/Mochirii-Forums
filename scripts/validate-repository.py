@@ -807,6 +807,12 @@ def validate_template() -> None:
           done'''
     if app.count(localized_error_copy) != 1 or app.count("for status in 403 422 500 503; do") != 1:
         fail("Localized error-page copy is not the exact fail-closed literal command.")
+    nginx_log_directory = '''        - >-
+          test ! -L /var/log/nginx &&
+          install -d -m 0755 -o root -g adm /var/log/nginx &&
+          nginx -t'''
+    if app.count(nginx_log_directory) != 1 or app.count("install -d -m 0755 -o root -g adm /var/log/nginx") != 1:
+        fail("Nginx log directory is not materialized under the exact package contract before validation.")
     tokens = set(re.findall(r"__MOCHIRII_[A-Z0-9_]+__", app))
     if not tokens or any(app.count(token) != 1 for token in tokens):
         fail("Every runtime token must occur exactly once.")
@@ -1207,6 +1213,9 @@ def validate_secrets_and_workflows() -> None:
             '"rebuild-mismatched-created-images"',
             '"rebuild-mismatched-preexisting-tag"',
             'Matching rebuild did not adopt exactly one terminal app image.',
+            'def nginx_log_directory_fixture() -> None:',
+            'NGINX_LOG_DIRECTORY_PREFIX = (',
+            'Pinned Nginx log directory symlink guard changed its target.',
             'def nginx_outlet_syntax_fixture() -> None:',
             'Pinned Nginx accepted the hostile unquoted bounded recovery regex.',
         ],
@@ -1244,14 +1253,16 @@ def validate_secrets_and_workflows() -> None:
     )
     if len(deployment_mutation_fixture.findall(disposable)) != 1:
         fail("Disposable deployment mutation fixture escaped the pinned root container.")
-    for fixture in ("test-disposable-launcher-guard.py", "test-host-restore-launcher-journal.py"):
-        pattern = re.compile(
-            r'docker run "\$\{ruby_fixture_container\[@\]\}" -v "\$GITHUB_WORKSPACE:/repo:ro" "\$image" \\\n\s+python3 -B /repo/scripts/'
-            + re.escape(fixture)
-            + r" --inside-linux >/dev/null"
-        )
-        if len(pattern.findall(disposable)) != 1:
-            fail(f"Disposable launcher hostile fixture escaped the pinned root container: {fixture}")
+    disposable_launcher_fixture = re.compile(
+        r'docker run "\$\{ruby_fixture_container\[@\]\}" --tmpfs /var/log:rw,nosuid,nodev,size=4m,mode=0755,uid=0,gid=0 --group-add adm -v "\$GITHUB_WORKSPACE:/repo:ro" "\$image" \\\n\s+python3 -B /repo/scripts/test-disposable-launcher-guard[.]py --inside-linux >/dev/null'
+    )
+    if len(disposable_launcher_fixture.findall(disposable)) != 1:
+        fail("Disposable launcher hostile fixture lost its isolated root:adm Nginx log boundary.")
+    restore_launcher_fixture = re.compile(
+        r'docker run "\$\{ruby_fixture_container\[@\]\}" -v "\$GITHUB_WORKSPACE:/repo:ro" "\$image" \\\n\s+python3 -B /repo/scripts/test-host-restore-launcher-journal[.]py --inside-linux >/dev/null'
+    )
+    if len(restore_launcher_fixture.findall(disposable)) != 1:
+        fail("Restore launcher hostile fixture escaped the pinned root container.")
     host_lock_fixture = re.compile(
         r'docker run "\$\{ruby_fixture_container\[@\]\}" -v "\$GITHUB_WORKSPACE:/repo:ro" "\$image" \\\n\s+python3 -B /repo/scripts/test-host-operation-lock[.]py >/dev/null'
     )

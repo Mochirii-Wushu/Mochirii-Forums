@@ -23,6 +23,10 @@ PREEXISTING_IMAGE = "sha256:" + "f" * 64
 CREATED_IMAGE = "sha256:" + "a" * 64
 CREATED_CONTAINER = "b" * 64
 FORBIDDEN_SENTINEL = "sentinel-launcher-secret-never-emit-7d3f1a"
+NGINX_LOG_DIRECTORY_PREFIX = (
+    "test ! -L /var/log/nginx && "
+    "install -d -m 0755 -o root -g adm /var/log/nginx"
+)
 
 
 ADAPTER = r'''#!/usr/bin/env python3
@@ -972,6 +976,85 @@ def pups_trace_success_fixture() -> None:
                 assert_no_transaction(root)
 
 
+def nginx_log_directory_fixture() -> None:
+    import grp
+
+    log_root = Path("/var/log")
+    root_identity = log_root.lstat()
+    if (
+        not stat.S_ISDIR(root_identity.st_mode)
+        or stat.S_ISLNK(root_identity.st_mode)
+        or not log_root.is_mount()
+        or root_identity.st_uid != 0
+        or root_identity.st_gid != 0
+        or stat.S_IMODE(root_identity.st_mode) != 0o755
+    ):
+        raise RuntimeError("Pinned Nginx log fixture lacks its isolated root-owned tmpfs.")
+
+    nginx_log_directory = log_root / "nginx"
+    if os.path.lexists(nginx_log_directory):
+        raise RuntimeError("Pinned Nginx log fixture did not begin with an absent target.")
+    adm_gid = grp.getgrnam("adm").gr_gid
+
+    def run_prefix() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/bin/sh", "-c", NGINX_LOG_DIRECTORY_PREFIX],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+            text=True,
+        )
+
+    def assert_exact_directory() -> None:
+        identity = nginx_log_directory.lstat()
+        if (
+            not stat.S_ISDIR(identity.st_mode)
+            or stat.S_ISLNK(identity.st_mode)
+            or identity.st_uid != 0
+            or identity.st_gid != adm_gid
+            or stat.S_IMODE(identity.st_mode) != 0o755
+        ):
+            raise RuntimeError("Pinned Nginx log directory identity differs from root:adm 0755.")
+
+    if run_prefix().returncode != 0:
+        raise RuntimeError("Exact Nginx log directory prefix rejected an absent target.")
+    assert_exact_directory()
+
+    sentinel = nginx_log_directory / "retry-sentinel"
+    sentinel.write_bytes(b"preserve-on-retry\n")
+    os.chown(nginx_log_directory, 0, 0)
+    nginx_log_directory.chmod(0o700)
+    if run_prefix().returncode != 0:
+        raise RuntimeError("Exact Nginx log directory prefix rejected an idempotent retry.")
+    assert_exact_directory()
+    if sentinel.read_bytes() != b"preserve-on-retry\n":
+        raise RuntimeError("Exact Nginx log directory retry changed an existing log entry.")
+    sentinel.unlink()
+    nginx_log_directory.rmdir()
+
+    victim = log_root / "mochirii-nginx-log-victim"
+    victim.mkdir(mode=0o700)
+    victim_sentinel = victim / "sentinel"
+    victim_sentinel.write_bytes(b"unchanged\n")
+    nginx_log_directory.symlink_to(victim, target_is_directory=True)
+    if run_prefix().returncode == 0:
+        raise RuntimeError("Exact Nginx log directory prefix followed a hostile symlink.")
+    if not nginx_log_directory.is_symlink() or victim_sentinel.read_bytes() != b"unchanged\n":
+        raise RuntimeError("Pinned Nginx log directory symlink guard changed its target.")
+    nginx_log_directory.unlink()
+    victim_sentinel.unlink()
+    victim.rmdir()
+
+    nginx_log_directory.write_bytes(b"non-directory\n")
+    if run_prefix().returncode == 0:
+        raise RuntimeError("Exact Nginx log directory prefix replaced a non-directory.")
+    if nginx_log_directory.read_bytes() != b"non-directory\n":
+        raise RuntimeError("Pinned Nginx log directory guard changed a non-directory.")
+    nginx_log_directory.unlink()
+
+
 def nginx_outlet_syntax_fixture() -> None:
     nginx = shutil.which("nginx")
     ruby = shutil.which("ruby")
@@ -1018,6 +1101,9 @@ expected = {
     File.join(ARGV.fetch(1), "conf.d/outlets/server/40-mochirii-feed-denial.conf"),
 }
 items = document.fetch("run")
+final_commands = items.fetch(-1).fetch("exec").fetch("cmd")
+expected_nginx = "test ! -L /var/log/nginx && install -d -m 0755 -o root -g adm /var/log/nginx && nginx -t"
+abort "final Nginx command differs" unless final_commands.length == 9 && final_commands.fetch(-1) == expected_nginx
 expected.each do |source, destination|
   matches = items.select { |item| item["file"].is_a?(Hash) && item["file"]["path"] == source }
   abort "outlet inventory differs" unless matches.length == 1
@@ -1038,15 +1124,18 @@ end
             raise RuntimeError("Pinned Nginx fixture could not extract the exact outlet inventory.")
 
         configuration = prefix / "nginx.conf"
+        log_root = prefix / "log"
+        log_root.mkdir()
+        nginx_log_directory = log_root / "nginx"
         configuration.write_text(
             "\n".join(
                 (
                     "user root;",
                     f"pid {prefix / 'nginx.pid'};",
-                    "error_log stderr notice;",
+                    f"error_log {nginx_log_directory / 'error.log'} notice;",
                     "events { worker_connections 16; }",
                     "http {",
-                    "  access_log off;",
+                    f"  access_log {nginx_log_directory / 'access.log'};",
                     f"  client_body_temp_path {prefix / 'client-body'};",
                     f"  proxy_temp_path {prefix / 'proxy'};",
                     f"  fastcgi_temp_path {prefix / 'fastcgi'};",
@@ -1072,6 +1161,19 @@ end
         )
 
         command = [nginx, "-t", "-p", f"{prefix}/", "-c", "nginx.conf", "-e", "stderr"]
+        missing_log_directory = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        if missing_log_directory.returncode == 0:
+            raise RuntimeError("Pinned Nginx accepted an absent persistent log directory.")
+        nginx_log_directory.mkdir(mode=0o755)
+        if stat.S_IMODE(nginx_log_directory.stat().st_mode) != 0o755:
+            raise RuntimeError("Pinned Nginx log fixture directory mode differs.")
         checked = subprocess.run(
             command,
             stdin=subprocess.DEVNULL,
@@ -1116,6 +1218,7 @@ def run_linux() -> None:
     rebuild_terminal_image_fixture()
     failure_classifier_fixture()
     pups_trace_success_fixture()
+    nginx_log_directory_fixture()
     nginx_outlet_syntax_fixture()
     print("Disposable launcher immutable-ID hostile fixture passed.")
 
@@ -1125,7 +1228,9 @@ def run_in_container() -> None:
         "docker", "run", "--rm", "--pull=never", "--network", "none", "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16m", "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges", "--pids-limit", "64",
-        "--memory", "256m", "--memory-swap", "256m", "-v", f"{ROOT}:/repo:ro",
+        "--memory", "256m", "--memory-swap", "256m",
+        "--tmpfs", "/var/log:rw,nosuid,nodev,size=4m,mode=0755,uid=0,gid=0",
+        "--group-add", "adm", "-v", f"{ROOT}:/repo:ro",
         "--entrypoint", "python3", BASE_IMAGE, "-B",
         "/repo/scripts/test-disposable-launcher-guard.py", "--inside-linux",
     ]
