@@ -2534,7 +2534,16 @@ def test_restore_stop_boundary() -> None:
         function
         + "\n"
         + r'''
-timeout() { return 1; }
+timeout() {
+  while [[ ${1-} == -* ]]; do shift; done
+  [[ $# -gt 0 ]] || return 1
+  shift
+  [[ $# -gt 0 ]] || return 1
+  if [[ $1 == docker && ${2-} == stop ]]; then
+    return 1
+  fi
+  "$@"
+}
 docker() {
   if [[ $1 == inspect ]]; then
     case ${MOCK_INSPECT} in
