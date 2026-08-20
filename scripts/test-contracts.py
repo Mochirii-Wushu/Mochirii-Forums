@@ -2696,6 +2696,7 @@ def test_host_containment_contract() -> None:
     deploy = (ROOT / "scripts/host-deploy.sh").read_text(encoding="utf-8")
     backup = (ROOT / "scripts/host-backup.sh").read_text(encoding="utf-8")
     restore = (ROOT / "scripts/host-restore-validate.sh").read_text(encoding="utf-8")
+    host_verify = (ROOT / "scripts/verify-host.sh").read_text(encoding="utf-8")
     break_glass = (ROOT / "scripts/host-break-glass-admin.sh").read_text(encoding="utf-8")
     disposable = (ROOT / ".github/workflows/disposable-bootstrap.yml").read_text(encoding="utf-8")
     connect_verifier = (ROOT / "scripts/verify-discourse-connect.py").read_text(encoding="utf-8")
@@ -2969,6 +2970,49 @@ def test_host_containment_contract() -> None:
     disposable = (ROOT / ".github/workflows/disposable-bootstrap.yml").read_text(encoding="utf-8")
     disposable_guard = (ROOT / "scripts/disposable-launcher-guard.py").read_text(encoding="utf-8")
     disposable_guard_fixture = (ROOT / "scripts/test-disposable-launcher-guard.py").read_text(encoding="utf-8")
+    docker_manager_readback = (
+        "sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD"
+    )
+    if (
+        disposable.count(docker_manager_readback) != 4
+        or disposable.count("plugins/docker_manager rev-parse HEAD") != 4
+        or "sudo docker exec app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD" in disposable
+        or "safe.directory" in disposable
+    ):
+        raise RuntimeError("Disposable Docker Manager readback does not execute as its repository owner.")
+    backup_identity = re.search(r"(?ms)^prove_running_backup_identity\(\) \{.*?^\}", backup)
+    if backup_identity is None:
+        raise RuntimeError("Backup running-identity proof is absent.")
+    backup_identity_source = backup_identity.group(0)
+    if (
+        backup_identity_source.count("docker exec -u discourse app bash -lc") != 1
+        or backup_identity_source.count("git -C /var/www/discourse rev-parse HEAD") != 1
+        or backup_identity_source.count("git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD") != 1
+        or "docker exec app bash -lc" in backup_identity_source
+        or "safe.directory" in backup
+    ):
+        raise RuntimeError("Backup runtime Git proof is not bound to the repository owner.")
+    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = cbf996f65aae3da1843224aa624bcd9a225931ac'"
+    hosted_manager_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)\" = c008c3ca7fcc44775215843992e88190adb7b3bf'"
+    hosted_source_block = '''timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc '
+  set -e
+  export GIT_OPTIONAL_LOCKS=0
+  git -C /var/www/discourse diff --no-ext-diff --quiet HEAD --
+  git -C /var/www/discourse diff --no-ext-diff --cached --quiet
+  test -z "$(git -c core.fsmonitor=false -C /var/www/discourse status --porcelain=v1 --untracked-files=all)"
+  git -C /var/www/discourse/plugins/docker_manager diff --no-ext-diff --quiet HEAD --
+  git -C /var/www/discourse/plugins/docker_manager diff --no-ext-diff --cached --quiet
+  test -z "$(git -c core.fsmonitor=false -C /var/www/discourse/plugins/docker_manager status --porcelain=v1 --untracked-files=all)"
+  cmp -s /var/www/discourse/plugins/mochirii_email_metadata/plugin.rb /opt/mochirii-release/mochirii-email-metadata-plugin.rb
+' || fail "Running core, Docker Manager, or mandatory mail component bytes differ."'''
+    if (
+        host_verify.count(hosted_core_readback) != 1
+        or host_verify.count(hosted_manager_readback) != 1
+        or host_verify.count(hosted_source_block) != 1
+        or "docker exec app bash -lc 'test \"$(cd /var/www/discourse" in host_verify
+        or "safe.directory" in host_verify
+    ):
+        raise RuntimeError("Hosted Git proof is not exactly owner-scoped and mutation-free.")
     for value in (
         "Disposable named application image differs from the exact tagged application image.",
         "allowed_images.add(tagged)",

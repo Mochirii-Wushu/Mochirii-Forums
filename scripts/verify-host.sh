@@ -847,10 +847,11 @@ local_image_id="$(timeout --signal=TERM --kill-after=5s 30s docker image inspect
 [[ ${container_image_id} == "${local_image_id}" && ${container_image_id} =~ ^sha256:[0-9a-f]{64}$ ]] || fail "Running container differs from the exact local launcher image."
 timeout --signal=TERM --kill-after=5s 30s docker exec app bash -lc 'test "$MOCHIRII_REPOSITORY_COMMIT" = "$1"' bash "${expected_commit}"
 timeout --signal=TERM --kill-after=5s 30s docker exec app bash -lc 'test "$MOCHIRII_RELEASE_ASSET_ROOT" = "/opt/mochirii-release"'
-timeout --signal=TERM --kill-after=5s 30s docker exec app bash -lc 'test "$(cd /var/www/discourse && git rev-parse HEAD)" = cbf996f65aae3da1843224aa624bcd9a225931ac'
-timeout --signal=TERM --kill-after=5s 30s docker exec app bash -lc 'test "$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf'
-timeout --signal=TERM --kill-after=10s 60s docker exec app bash -lc '
+timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test "$(cd /var/www/discourse && git rev-parse HEAD)" = cbf996f65aae3da1843224aa624bcd9a225931ac'
+timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test "$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf'
+timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc '
   set -e
+  export GIT_OPTIONAL_LOCKS=0
   git -C /var/www/discourse diff --no-ext-diff --quiet HEAD --
   git -C /var/www/discourse diff --no-ext-diff --cached --quiet
   test -z "$(git -c core.fsmonitor=false -C /var/www/discourse status --porcelain=v1 --untracked-files=all)"

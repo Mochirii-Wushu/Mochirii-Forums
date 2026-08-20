@@ -1189,6 +1189,16 @@ def validate_secrets_and_workflows() -> None:
     launcher_calls = len(re.findall(r"(?m)^\s*sudo /usr/local/sbin/mochirii-stage4-launcher (?:bootstrap|start|restart|rebuild) ", disposable))
     if launcher_calls != 5 or disposable.count("scripts/disposable-launcher-guard.py /usr/local/sbin/mochirii-stage4-launcher") != 1:
         fail("Disposable launcher calls do not use the exact bounded sealed-checkout helper.")
+    docker_manager_readback = (
+        "sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD"
+    )
+    if (
+        disposable.count(docker_manager_readback) != 4
+        or disposable.count("plugins/docker_manager rev-parse HEAD") != 4
+        or "sudo docker exec app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD" in disposable
+        or "safe.directory" in disposable
+    ):
+        fail("Disposable Docker Manager readback does not execute as the exact repository owner.")
     disposable_guard = read("scripts/disposable-launcher-guard.py")
     require_text(
         disposable_guard,
@@ -1614,6 +1624,9 @@ def validate_secrets_and_workflows() -> None:
             "remaining_mutation_seconds",
             "MOCHIRII_OPERATION_TOKEN",
             "container_operation_absent",
+            "docker exec -u discourse app bash -lc",
+            'git -C /var/www/discourse rev-parse HEAD',
+            'git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD',
             "verify-runtime-assets.sh",
             "prepare-backup-marker.rb",
             "discourse backup",
@@ -1627,6 +1640,18 @@ def validate_secrets_and_workflows() -> None:
         ],
         "protected backup process boundary",
     )
+    backup_identity = re.search(r"(?ms)^prove_running_backup_identity\(\) \{.*?^\}", host_backup)
+    if backup_identity is None:
+        fail("Backup running-identity proof is absent.")
+    backup_identity_source = backup_identity.group(0)
+    if (
+        backup_identity_source.count("docker exec -u discourse app bash -lc") != 1
+        or backup_identity_source.count("git -C /var/www/discourse rev-parse HEAD") != 1
+        or backup_identity_source.count("git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD") != 1
+        or "docker exec app bash -lc" in backup_identity_source
+        or "safe.directory" in host_backup
+    ):
+        fail("Backup running-identity Git proof is not bound to the exact repository owner.")
     backup_marker = read("scripts/prepare-backup-marker.rb")
     restored_verifier = read("scripts/verify-restored-backup.rb")
     require_text(
@@ -2727,12 +2752,35 @@ def validate_secrets_and_workflows() -> None:
             'timeout --signal=TERM --kill-after=15s 180s bash "${release_dir}/scripts/verify-discourse-docker-checkout.sh"',
             'timeout --signal=TERM --kill-after=10s 180s bash "${release_dir}/scripts/verify-runtime-assets.sh"',
             'timeout --signal=TERM --kill-after=5s 30s docker image inspect',
+            "docker exec -u discourse app bash -lc",
+            "export GIT_OPTIONAL_LOCKS=0",
             "git -C /var/www/discourse diff --no-ext-diff --quiet HEAD --",
             "git -C /var/www/discourse/plugins/docker_manager diff --no-ext-diff --quiet HEAD --",
             "status --porcelain=v1 --untracked-files=all",
         ],
         "bounded full hosted source verification",
     )
+    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = cbf996f65aae3da1843224aa624bcd9a225931ac'"
+    hosted_manager_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)\" = c008c3ca7fcc44775215843992e88190adb7b3bf'"
+    hosted_source_block = '''timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc '
+  set -e
+  export GIT_OPTIONAL_LOCKS=0
+  git -C /var/www/discourse diff --no-ext-diff --quiet HEAD --
+  git -C /var/www/discourse diff --no-ext-diff --cached --quiet
+  test -z "$(git -c core.fsmonitor=false -C /var/www/discourse status --porcelain=v1 --untracked-files=all)"
+  git -C /var/www/discourse/plugins/docker_manager diff --no-ext-diff --quiet HEAD --
+  git -C /var/www/discourse/plugins/docker_manager diff --no-ext-diff --cached --quiet
+  test -z "$(git -c core.fsmonitor=false -C /var/www/discourse/plugins/docker_manager status --porcelain=v1 --untracked-files=all)"
+  cmp -s /var/www/discourse/plugins/mochirii_email_metadata/plugin.rb /opt/mochirii-release/mochirii-email-metadata-plugin.rb
+' || fail "Running core, Docker Manager, or mandatory mail component bytes differ."'''
+    if (
+        host_verify.count(hosted_core_readback) != 1
+        or host_verify.count(hosted_manager_readback) != 1
+        or host_verify.count(hosted_source_block) != 1
+        or "docker exec app bash -lc 'test \"$(cd /var/www/discourse" in host_verify
+        or "safe.directory" in host_verify
+    ):
+        fail("Hosted Git proof is not exactly bound to the owner-scoped mutation-free block.")
     require_text(
         deployment_checkout,
         [

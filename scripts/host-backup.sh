@@ -448,7 +448,7 @@ prove_stopped_backup_identity() {
 prove_running_backup_identity() {
   prove_bound_runtime_contract true || return 1
   [[ "$(timeout --signal=TERM --kill-after=5s 15 docker inspect --type container --format '{{.State.Status}}' app 2>/dev/null)" == running ]] || return 1
-  timeout --signal=TERM --kill-after=5s 30 docker exec app bash -lc \
+  timeout --signal=TERM --kill-after=5s 30 docker exec -u discourse app bash -lc \
     'test "$MOCHIRII_REPOSITORY_COMMIT" = "$1" && test "$MOCHIRII_RELEASE_ASSET_ROOT" = /opt/mochirii-release && test "$DISCOURSE_ENABLE_DISCOURSE_CONNECT" = "$2" && test "$DISCOURSE_DISABLE_EMAILS" = no && test "$(git -C /var/www/discourse rev-parse HEAD)" = cbf996f65aae3da1843224aa624bcd9a225931ac && test "$(git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf' \
     bash "${commit}" "${discourse_connect}" >/dev/null 2>&1 || return 1
 }
