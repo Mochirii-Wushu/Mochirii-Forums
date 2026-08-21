@@ -430,6 +430,25 @@ def test_opensearch_filter_contract() -> None:
         raise RuntimeError("Pinned OpenSearch controller accepted a hostile rendering mutation.")
 
 
+def test_html_denial_types_contract() -> None:
+    template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
+    VALIDATOR.validate_html_denial_types_contract(template)
+    for name in (
+        "mochirii_feed_denied",
+        "mochirii_admin_recovery_denied",
+        "mochirii_email_login_denied",
+    ):
+        marker = f"        location @{name} {{\n          types {{ }}\n"
+        hostile = template.replace(marker, f"        location @{name} {{\n", 1)
+        if hostile == template:
+            raise RuntimeError(f"HTML denial MIME hostile mutation anchor is absent: {name}.")
+        try:
+            VALIDATOR.validate_html_denial_types_contract(hostile)
+        except RuntimeError:
+            continue
+        raise RuntimeError(f"HTML denial accepted inherited extension MIME mappings: {name}.")
+
+
 def test_theme_archive() -> None:
     with tempfile.TemporaryDirectory(prefix="mochirii-theme-test-") as directory:
         first = Path(directory) / "one.zip"
@@ -5634,6 +5653,7 @@ def test_runtime_rails_execution_contract() -> None:
 def main() -> int:
     test_renderer()
     test_opensearch_filter_contract()
+    test_html_denial_types_contract()
     test_theme_archive()
     test_narrative_avatar_contract()
     test_branding_email_renderer_contract()

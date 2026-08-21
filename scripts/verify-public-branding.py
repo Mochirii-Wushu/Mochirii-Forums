@@ -239,7 +239,10 @@ def main() -> int:
             or "no-store" not in recovery_cache
             or "Mochirii Forums" not in recovery_text
         ):
-            raise RuntimeError("A public administrator recovery alias is not denied with private Mochirii HTML.")
+            raise RuntimeError(
+                "A public administrator recovery alias is not denied with private Mochirii HTML: "
+                f"path={recovery_path!r} status={recovery_status} media_type={recovery_type!r}."
+            )
         recovery_visible = VisibleText()
         recovery_visible.feed(recovery_text)
         if VISIBLE_UPSTREAM.search("\n".join(recovery_visible.parts)) or any(

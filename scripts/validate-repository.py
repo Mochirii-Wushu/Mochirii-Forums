@@ -193,7 +193,7 @@ checks["narrative_system_user_branded"] =
 '''
 RUNTIME_VERIFIER_SHA256 = "4e7dedd8f2b10c2049defd855316e6d72f5716704d5a0c9430858a8e7c45663a"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "a6f61d032e77f65b7825bd089386890ee7564b1af9cb451bbdbb9c37c9d5e9db"
+APP_TEMPLATE_SHA256 = "00f51584a657e9c23170c2ee58cb6315b00494bbb99abd6578c00d4890734001"
 OPENSEARCH_FILTER_BLOCK = '''        sub_filter_once off;
         sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
         sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
@@ -1321,8 +1321,28 @@ def validate_opensearch_filter_contract(app: str) -> None:
         fail("OpenSearch nginx replacement is not bound to the pinned application/xml response.")
 
 
+def validate_html_denial_types_contract(app: str) -> None:
+    for name in (
+        "mochirii_feed_denied",
+        "mochirii_admin_recovery_denied",
+        "mochirii_email_login_denied",
+    ):
+        start_marker = f"        location @{name} {{\n"
+        if app.count(start_marker) != 1:
+            fail(f"Named HTML denial location differs: {name}.")
+        start = app.index(start_marker)
+        end = app.find("\n        }", start)
+        if end < 0:
+            fail(f"Named HTML denial location is unterminated: {name}.")
+        block = app[start:end]
+        expected = start_marker + "          types { }\n          default_type text/html;"
+        if not block.startswith(expected) or block.count("types { }") != 1:
+            fail(f"Named HTML denial location does not reset inherited MIME mappings: {name}.")
+
+
 def validate_template() -> None:
     app = read("config/app.yml.example")
+    validate_html_denial_types_contract(app)
     require_text(
         app,
         [

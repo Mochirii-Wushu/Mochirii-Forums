@@ -279,6 +279,7 @@ __MOCHIRII_TLS_RUN__
         # wrapper. The ordinary public GET/PUT form is never exposed.
         location ~ ^/(?:u|users)/admin-login(?:\.[A-Za-z0-9]+)?/?$ { return 419; }
         location @mochirii_feed_denied {
+          types { }
           default_type text/html;
           add_header Cache-Control "private, no-store" always;
           add_header Pragma "no-cache" always;
@@ -286,6 +287,7 @@ __MOCHIRII_TLS_RUN__
           return 404 '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Feed unavailable · Mochirii Forums</title></head><body><main><h1>Feed unavailable</h1><p>Feeds are not available in Mochirii Forums.</p></main></body></html>';
         }
         location @mochirii_admin_recovery_denied {
+          types { }
           default_type text/html;
           add_header Cache-Control "private, no-store" always;
           add_header Pragma "no-cache" always;
@@ -293,6 +295,7 @@ __MOCHIRII_TLS_RUN__
           return 404 '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Page unavailable · Mochirii Forums</title></head><body><main><h1>Page unavailable</h1><p>This page is not available in Mochirii Forums.</p></main></body></html>';
         }
         location @mochirii_email_login_denied {
+          types { }
           default_type text/html;
           add_header Cache-Control "private, no-store, max-age=0" always;
           add_header Pragma "no-cache" always;
