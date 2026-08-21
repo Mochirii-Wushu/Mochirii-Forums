@@ -47,7 +47,7 @@ def materialize(delivery)
 end
 
 def render_parts(mail)
-  text, html = Email.extract_body(mail)
+  text, html = Email.extract_parts(mail.encoded)
   [text, html].compact.join("\n")
 end
 
@@ -157,7 +157,7 @@ end
 
 if ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"
   digest = materialize(deliveries.fetch("digest"))
-  _digest_text, digest_html = Email.extract_body(digest)
+  _digest_text, digest_html = Email.extract_parts(digest.encoded)
   raise "Digest HTML did not render" if digest_html.blank?
   raise "Digest HTML title is not Mochirii-branded" unless digest_html.include?("Mochirii Forums")
   digest_logo = SiteSetting.digest_logo_url.to_s

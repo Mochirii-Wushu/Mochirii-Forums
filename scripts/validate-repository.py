@@ -139,6 +139,13 @@ checks["upload_notice_connector_compiled"] =
     compiled_theme.include?("Direct upload URLs may be accessed without a forum session")
 '''
 RUNTIME_VERIFIER_SHA256 = "7db29c5efb3ff62f7831c07f8742cc8a01c7dff87d45185d93e71143a1bb1e0f"
+BRANDING_EMAIL_RENDERER_SHA256 = "aab3658def25b73b046025d9703b414b7bbeb7ae6e75ecfc9033189b3527f39f"
+PINNED_SOURCE_VERIFIER_SHA256 = "13dd363f337ac65f491dee1d0c4ee8304dc2d7036ccbd8c3080e8133eb9537f4"
+PINNED_EMAIL_EVIDENCE = {
+    "path": "lib/email.rb",
+    "bytes": 1549,
+    "sha256": "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2",
+}
 ALLOWED_FILES = frozenset(
     {
     ".env.example",
@@ -320,7 +327,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "3422eba2ce28a0790275beaa41c240f820255922745f4aeebde75580e1548e82",
+    "docs/operations/third-party-components.v1.json": "1e2184f41c0d63bc92857bd42a60a0512d2d5534ed77d47075be141dde046e6a",
     "docs/operations/upstream-provenance.v1.json": "d5937dfc541fd627fa0ef5e2448e9d7f990a7442aa2b9ca874dab028d9bf8975",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -340,6 +347,28 @@ def validate_theme_runtime_verifier(source: str) -> None:
         fail("Runtime theme verifier differs from the exact pinned semantic block.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != RUNTIME_VERIFIER_SHA256:
         fail("Runtime verifier differs from the exact reviewed source digest.")
+
+
+def validate_branding_email_renderer(source: str) -> None:
+    expected_calls = (
+        "  text, html = Email.extract_parts(mail.encoded)\n",
+        "  _digest_text, digest_html = Email.extract_parts(digest.encoded)\n",
+    )
+    if any(source.count(call) != 1 for call in expected_calls):
+        fail("Branding email renderer does not use the exact pinned raw-message API at both call sites.")
+    if source.count("Email.extract_parts(") != 2 or "Email.extract_body" in source:
+        fail("Branding email renderer contains an unreviewed email extraction call.")
+    if source.count('puts "Mochirii mail presentation passed."') != 1:
+        fail("Branding email renderer success output changed.")
+    if hashlib.sha256(source.encode("utf-8")).hexdigest() != BRANDING_EMAIL_RENDERER_SHA256:
+        fail("Branding email renderer differs from the exact reviewed source digest.")
+
+
+def validate_pinned_source_verifier(source: str) -> None:
+    if source.count('verify_email_semantics(core["lib/email.rb"])') != 1:
+        fail("Pinned-source verifier does not execute the email semantic gate exactly once.")
+    if hashlib.sha256(source.encode("utf-8")).hexdigest() != PINNED_SOURCE_VERIFIER_SHA256:
+        fail("Pinned-source verifier differs from the exact reviewed source digest.")
 
 
 def validate_inventory_paths(
@@ -672,6 +701,13 @@ def validate_manifests() -> None:
         fail("Deployment revision changed.")
     if components["defaultStandaloneComponent"]["revision"] != DOCKER_MANAGER_REVISION:
         fail("Docker Manager revision changed.")
+    email_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") == PINNED_EMAIL_EVIDENCE["path"]
+    ]
+    if email_evidence != [PINNED_EMAIL_EVIDENCE]:
+        fail("Pinned email extraction API evidence changed.")
     vendored = components.get("vendoredRuntimeComponents")
     if (
         not isinstance(vendored, list)
@@ -941,6 +977,7 @@ def validate_theme_and_public_source() -> None:
     if expected_notice not in notice:
         fail("The mandatory public-upload notice changed.")
     validate_theme_runtime_verifier(read("scripts/verify-site.rb"))
+    validate_branding_email_renderer(read("scripts/render-branding-email.rb"))
     for relative in (
         "theme/mochirii/common/head_tag.html",
         "theme/mochirii/common/footer.html",
@@ -3492,6 +3529,7 @@ def validate_secrets_and_workflows() -> None:
     upstream_wrapper = read("scripts/verify-upstream-provenance.ps1")
     upstream_workflow = read(".github/workflows/inspect-upstream.yml")
     upstream_verifier = read("scripts/verify-pinned-source.py")
+    validate_pinned_source_verifier(upstream_verifier)
     require_text(
         upstream_wrapper,
         ["[switch]$RequireCurrentMain", "--require-current-main", "also requires -Online"],
@@ -3510,6 +3548,11 @@ def validate_secrets_and_workflows() -> None:
             "/compare/{pinned}...{revision}",
             "Official deployment-source main moved or returned an ambiguous reference.",
             "Official deployment-source comparison moved after review.",
+            'PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b\'\'\'  def self.extract_parts(raw)',
+            "def verify_email_extract_parts_method(source: bytes) -> None:",
+            "def verify_email_semantics(source: bytes) -> None:",
+            'hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256',
+            'verify_email_semantics(core["lib/email.rb"])',
         ],
         "bounded upstream-main verifier",
     )

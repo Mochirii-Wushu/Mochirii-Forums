@@ -22,6 +22,26 @@ DOCKER_REPOSITORY = "discourse/discourse_docker"
 CORE_REPOSITORY = "discourse/discourse"
 MANAGER_REPOSITORY = "discourse/docker_manager"
 ACME_REPOSITORY = "acmesh-official/acme.sh"
+PINNED_EMAIL_SHA256 = "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2"
+PINNED_EMAIL_BYTES = 1549
+PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)
+    mail = Mail.new(raw)
+    text = nil
+    html = nil
+
+    if mail.multipart?
+      text = mail.text_part
+      html = mail.html_part
+    elsif mail.content_type.to_s["text/html"]
+      html = mail
+    else
+      text = mail
+    end
+
+    [text&.decoded, html&.decoded]
+  end
+
+'''
 
 
 def load(relative: str) -> dict:
@@ -369,6 +389,24 @@ def require(source: dict[str, bytes], path: str, snippets: tuple[bytes, ...]) ->
             raise RuntimeError(f"Pinned semantic contract changed: {path}: {snippet!r}")
 
 
+def verify_email_extract_parts_method(source: bytes) -> None:
+    start = b"  def self.extract_parts(raw)\n"
+    end = b"  def self.site_title\n"
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise RuntimeError("The pinned email extraction method boundary changed.")
+    block = source[source.index(start) : source.index(end)]
+    if block != PINNED_EMAIL_EXTRACT_PARTS_BLOCK:
+        raise RuntimeError("The pinned email extraction method changed.")
+    if b"extract_body" in source:
+        raise RuntimeError("The pinned email body extraction API changed.")
+
+
+def verify_email_semantics(source: bytes) -> None:
+    if len(source) != PINNED_EMAIL_BYTES or hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256:
+        raise RuntimeError("The pinned email source bytes changed.")
+    verify_email_extract_parts_method(source)
+
+
 def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
     require(
         docker,
@@ -413,6 +451,7 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
         (b'<meta name="generator" content="Discourse <%= Discourse::VERSION::STRING %> - https://github.com/discourse/discourse version <%= Discourse.git_version %>">',),
     )
     require(core, "app/views/metadata/opensearch.xml.erb", (b"<Tags>discourse forum</Tags>",))
+    verify_email_semantics(core["lib/email.rb"])
     require(
         core,
         "lib/file_store/s3_store.rb",

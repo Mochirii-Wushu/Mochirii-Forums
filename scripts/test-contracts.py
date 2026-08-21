@@ -494,6 +494,109 @@ def test_theme_archive() -> None:
             raise RuntimeError("Runtime theme verifier accepted a decoy pinned-semantic mutation.")
 
 
+def test_branding_email_renderer_contract() -> None:
+    renderer = (ROOT / "scripts/render-branding-email.rb").read_text(encoding="utf-8")
+    VALIDATOR.validate_branding_email_renderer(renderer)
+    hostile_replacements = (
+        ("Email.extract_parts(mail.encoded)", "Email.extract_body(mail)"),
+        ("Email.extract_parts(digest.encoded)", "Email.extract_body(digest)"),
+        ("Email.extract_parts(mail.encoded)", "Email.extract_parts(mail)"),
+        ("Email.extract_parts(digest.encoded)", "Email.extract_parts(digest)"),
+        ("Email.extract_parts(mail.encoded)", "Email.extract_parts(mail.to_s)"),
+        (
+            'puts "Mochirii mail presentation passed."',
+            'puts body\nputs "Mochirii mail presentation passed."',
+        ),
+        (
+            'puts "Mochirii mail presentation passed."',
+            'warn expected_address\nputs "Mochirii mail presentation passed."',
+        ),
+    )
+    for current, stale in hostile_replacements:
+        hostile = renderer.replace(current, stale, 1)
+        if hostile == renderer:
+            raise RuntimeError("Branding email renderer hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_branding_email_renderer(hostile)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Branding email renderer accepted a stale API or output mutation.")
+
+    components = json.loads(
+        (ROOT / "docs/operations/third-party-components.v1.json").read_text(encoding="utf-8")
+    )
+    email_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") == "lib/email.rb"
+    ]
+    if email_evidence != [VALIDATOR.PINNED_EMAIL_EVIDENCE]:
+        raise RuntimeError("Pinned email extraction API evidence differs.")
+    upstream = (ROOT / "scripts/verify-pinned-source.py").read_text(encoding="utf-8")
+    VALIDATOR.validate_pinned_source_verifier(upstream)
+    for canary in (
+        "PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)",
+        "def verify_email_extract_parts_method(source: bytes) -> None:",
+        "def verify_email_semantics(source: bytes) -> None:",
+        'hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256',
+        'verify_email_semantics(core["lib/email.rb"])',
+    ):
+        if upstream.count(canary) != 1:
+            raise RuntimeError("Pinned email extraction semantic gate differs.")
+
+    baseline_email = (
+        b"module Email\n"
+        + UPSTREAM.PINNED_EMAIL_EXTRACT_PARTS_BLOCK
+        + b"  def self.site_title\n    nil\n  end\nend\n"
+    )
+    UPSTREAM.verify_email_extract_parts_method(baseline_email)
+    hostile_email_methods = (
+        baseline_email.replace(b"[text&.decoded, html&.decoded]", b"[raw.to_s, nil]", 1),
+        baseline_email.replace(b"text = mail.text_part", b"text = mail.html_part", 1),
+        baseline_email.replace(b"def self.extract_parts(raw)", b"def self.extract_body(raw)", 1),
+        baseline_email.replace(
+            UPSTREAM.PINNED_EMAIL_EXTRACT_PARTS_BLOCK,
+            b"  # mail = Mail.new(raw)\n"
+            b"  # if mail.multipart?\n"
+            b"  # [text&.decoded, html&.decoded]\n"
+            b"  def self.extract_parts(raw)\n"
+            b"    [raw.to_s, nil]\n"
+            b"  end\n\n",
+            1,
+        ),
+    )
+    for hostile in hostile_email_methods:
+        try:
+            UPSTREAM.verify_email_extract_parts_method(hostile)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Pinned email semantic gate accepted a wrong implementation.")
+
+    verifier_hostiles = (
+        upstream.replace(
+            '    verify_email_semantics(core["lib/email.rb"])\n',
+            '    if False:\n        verify_email_semantics(core["lib/email.rb"])\n',
+            1,
+        ),
+        upstream.replace(
+            '    verify_email_semantics(core["lib/email.rb"])\n',
+            '    # verify_email_semantics(core["lib/email.rb"])\n',
+            1,
+        ),
+    )
+    for hostile in verifier_hostiles:
+        if hostile == upstream:
+            raise RuntimeError("Pinned-source verifier hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_pinned_source_verifier(hostile)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Pinned-source verifier accepted a disabled email semantic gate.")
+
+
 def test_certificate_create_cleanup() -> None:
     old_identifier = "00000000-0000-4000-8000-000000000001"
     new_identifier = "00000000-0000-4000-8000-000000000002"
@@ -4951,6 +5054,7 @@ def test_runtime_rails_execution_contract() -> None:
 def main() -> int:
     test_renderer()
     test_theme_archive()
+    test_branding_email_renderer_contract()
     test_certificate_create_cleanup()
     test_certificate_identity_read_allowlist()
     test_http_redirect_boundaries()
