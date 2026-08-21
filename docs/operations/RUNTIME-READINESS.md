@@ -29,10 +29,15 @@ The one mandatory first-party operational component is release-bound. It
 removes the exact pinned recipient-visible application headers and owns the
 bounded Sidekiq execution probe; it is not an optional feature. The probe
 separately proves a registered Sidekiq process and execution of one exact
-harmless job by round-tripping a random 128-bit nonce through two private
-`PluginStore` keys. It fails on a stale or wrong completion, waits at most 60
-seconds, and deletes and verifies both keys in an `ensure` path. Probe nonce
-values never enter source evidence or public output.
+harmless default-queue job through one namespaced, expiring Redis lease. The
+caller claims a private preparing nonce, enqueues without a correlation
+argument, binds the returned JID, and accepts only the same JID's completed
+state. Compare-and-swap transitions retain the original lease expiry; same-JID
+retry resumes a started state, while an old JID cannot mutate a new owner. The
+probe observes for 60 seconds after enqueue and conditionally deletes only its
+own state. Its fixed verifier output never contains the nonce, JID, arguments,
+raw exception, process identity, queue contents, or logs. A not-started state
+does not claim to distinguish backlog from failure before job execution.
 
 ## Stage 4 source gate
 

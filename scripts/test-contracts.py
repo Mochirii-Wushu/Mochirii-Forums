@@ -1159,7 +1159,12 @@ def test_storage_response_boundary() -> None:
     )
     if any(value not in disposable for value in required_isolation):
         raise RuntimeError("Disposable Ruby fixtures lost their exact pinned isolated container boundary.")
-    for fixture in ("test-storage-response-boundary.rb", "test-backup-url-boundary.rb", "test-normal-upload-inventory.rb"):
+    for fixture in (
+        "test-storage-response-boundary.rb",
+        "test-backup-url-boundary.rb",
+        "test-normal-upload-inventory.rb",
+        "test-sidekiq-processing-probe.rb",
+    ):
         pattern = re.compile(
             r'docker run "\$\{ruby_fixture_container\[@\]\}" -v "\$GITHUB_WORKSPACE:/repo:ro" "\$image" \\\n\s+ruby /repo/scripts/'
             + re.escape(fixture)
@@ -1509,7 +1514,7 @@ def expect_validation_failure(action, label: str) -> None:
 
 def test_repository_governance() -> None:
     allowed = sorted(VALIDATOR.ALLOWED_FILES)
-    if len(allowed) != 159:
+    if len(allowed) != 160:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")
@@ -3086,32 +3091,221 @@ def test_sidekiq_processing_contract() -> None:
     plugin = (ROOT / "plugins/mochirii_email_metadata/plugin.rb").read_text(encoding="utf-8")
     site = (ROOT / "scripts/verify-site.rb").read_text(encoding="utf-8")
     restored = (ROOT / "scripts/verify-restored-backup.rb").read_text(encoding="utf-8")
+    fixture = (ROOT / "scripts/test-sidekiq-processing-probe.rb").read_text(encoding="utf-8")
     required = (
-        'HEALTH_PENDING_KEY = "sidekiq-pending"',
-        'HEALTH_COMPLETION_KEY = "sidekiq-completion"',
+        'HEALTH_STATE_KEY = "mochirii-runtime-health-sidekiq-probe".freeze',
+        "HEALTH_LEASE_GRACE_SECONDS = 30",
+        "HEALTH_JOB_BIND_SECONDS = 5",
         "HEALTH_NONCE_PATTERN = /\\A[0-9a-f]{32}\\z/",
-        "DistributedMutex.synchronize(HEALTH_MUTEX, &block)",
-        "PluginStore.remove(HEALTH_NAMESPACE, HEALTH_PENDING_KEY)",
-        "PluginStore.remove(HEALTH_NAMESPACE, HEALTH_COMPLETION_KEY)",
-        "Jobs.enqueue(:mochirii_sidekiq_processing_probe, token: token)",
-        "completion == token",
-        "Sidekiq processing probe observed a wrong completion token",
-        "Sidekiq processing probe timed out",
-        "ensure\n      clear_health_probe!",
-        "if pending == token",
+        "HEALTH_JID_PATTERN = /\\A[0-9a-f]{24}\\z/",
+        "HEALTH_PREPARING_PATTERN = /\\Apreparing:[0-9a-f]{32}\\z/",
+        "HEALTH_TRANSITION_SCRIPT",
+        "HEALTH_DELETE_SCRIPT",
+        'redis.call("set", KEYS[1], ARGV[2], "XX", "KEEPTTL")',
+        'for index = 1, #ARGV do',
+        "class SidekiqProbeError < StandardError",
+        "class SidekiqProbeJobError < StandardError",
+        "redis.namespace_key(HEALTH_STATE_KEY)",
+        "redis.without_namespace",
+        "nx: true, ex: lease_seconds",
+        "Jobs.run_later?",
+        "DB.transaction_open?",
+        'Jobs.enqueue(:mochirii_sidekiq_processing_probe, queue: "default")',
+        "jid.is_a?(String) && jid.match?(HEALTH_JID_PATTERN)",
+        'raise SidekiqProbeError.new("marker-mismatch")',
+        'raise SidekiqProbeError.new("job-reported-failure")',
+        "return true if classify_health_probe_timeout(jid) == :completed",
+        "ensure\n      clear_health_probe!(token, jid) if health_probe_owned",
+        "state == started",
+        "return unless state == pending",
+        "transition_health_probe(started, completed)",
+        "transition_health_probe(started, failed)",
+        "raise MochiriiEmailMetadata::SidekiqProbeJobError.new, cause: nil",
     )
     if any(value not in plugin for value in required):
-        raise RuntimeError("Bounded Sidekiq processing probe lost a stale, wrong-token, timeout, or cleanup invariant.")
-    if plugin.index("PluginStore.set(HEALTH_NAMESPACE, HEALTH_PENDING_KEY, token)") > plugin.index(
-        "Jobs.enqueue(:mochirii_sidekiq_processing_probe, token: token)"
-    ):
-        raise RuntimeError("Sidekiq processing probe can execute before its exact pending nonce is sealed.")
+        raise RuntimeError("Leased Sidekiq processing probe lost an enqueue, state, retry, or cleanup invariant.")
+    expected_states = {
+        "cleanup-failed",
+        "enqueue-rejected",
+        "job-not-started-before-timeout",
+        "job-reported-failure",
+        "job-started-without-completion",
+        "marker-mismatch",
+        "probe-already-running",
+        "probe-internal-failure",
+        "run-mode-invalid",
+        "transaction-open",
+    }
+    state_block = re.search(r"HEALTH_FAILURE_STATES\s*=\s*%w\[(.*?)\][.]freeze", plugin, re.S)
+    if state_block is None or set(state_block.group(1).split()) != expected_states:
+        raise RuntimeError("Sidekiq processing probe fixed-state vocabulary differs.")
+    verifier_method = plugin[
+        plugin.index("def self.verify_sidekiq_processing!") : plugin.index("module ::Jobs")
+    ]
+    verifier_order = (
+        'raise SidekiqProbeError.new("run-mode-invalid")',
+        'raise SidekiqProbeError.new("transaction-open")',
+        "claim_health_probe!(token, timeout_seconds + HEALTH_LEASE_GRACE_SECONDS)",
+        "health_probe_owned = true",
+        'Jobs.enqueue(:mochirii_sidekiq_processing_probe, queue: "default")',
+        "jid.is_a?(String) && jid.match?(HEALTH_JID_PATTERN)",
+        'health_state_value("pending", jid)',
+        "transition_health_probe(preparing, pending) == 1",
+    )
+    verifier_positions = [verifier_method.index(value) for value in verifier_order]
+    if verifier_positions != sorted(verifier_positions):
+        raise RuntimeError("Sidekiq lease claim, enqueue, JID binding, and observation ordering differs.")
+    transition_block = plugin[plugin.index("def self.transition_health_probe") : plugin.index("def self.claim_health_probe!")]
+    cleanup_block = plugin[plugin.index("def self.clear_health_probe!") : plugin.index("def self.expected_health_phase")]
+    if ".to_i" in transition_block or ".to_i" in cleanup_block:
+        raise RuntimeError("Sidekiq Lua outcomes regained Ruby truthiness coercion.")
+    if "health_probe_state" in cleanup_block:
+        raise RuntimeError("Sidekiq cleanup regained a post-delete global-read race.")
+    if plugin.count("redis.without_namespace") != 2:
+        raise RuntimeError("Sidekiq Lua operations are not bound to the physical namespaced key.")
+    if any(value in plugin for value in ('redis.call("set", KEYS[1], ARGV[2], "EX"', "Discourse.redis.del")):
+        raise RuntimeError("Sidekiq transitions can extend the lease or delete without ownership.")
+    expected_lua = {
+        "HEALTH_TRANSITION_SCRIPT": """local current = redis.call(\"get\", KEYS[1])
+if not current then
+  return 0
+end
+if current ~= ARGV[1] then
+  return -1
+end
+if redis.call(\"ttl\", KEYS[1]) <= 0 then
+  return -2
+end
+redis.call(\"set\", KEYS[1], ARGV[2], \"XX\", \"KEEPTTL\")
+return 1""",
+        "HEALTH_DELETE_SCRIPT": """local current = redis.call(\"get\", KEYS[1])
+if not current then
+  return 0
+end
+for index = 1, #ARGV do
+  if current == ARGV[index] then
+    redis.call(\"del\", KEYS[1])
+    return 1
+  end
+end
+return -1""",
+    }
+    for constant, expected_script in expected_lua.items():
+        script_match = re.search(
+            rf"{constant}\s*=\s*DiscourseRedis::EvalHelper[.]new\(<<~LUA\)\n(.*?)\n\s+LUA",
+            plugin,
+            re.S,
+        )
+        if script_match is None:
+            raise RuntimeError(f"{constant} is absent from the Sidekiq probe.")
+        actual_script = "\n".join(
+            line[8:] if line.startswith(" " * 8) else line for line in script_match.group(1).splitlines()
+        )
+        if actual_script != expected_script:
+            raise RuntimeError(f"{constant} differs from its exact fail-closed Lua body.")
     job = plugin[plugin.index("class MochiriiSidekiqProcessingProbe") :]
-    if "else" in job or job.index("if pending == token") > job.index("HEALTH_COMPLETION_KEY"):
-        raise RuntimeError("A stale or wrong Sidekiq job can publish a completion marker.")
+    if not (
+        job.index("state == started") < job.index("return unless state == pending")
+        and job.index("transition_health_probe(pending, started)") < job.index("transition_health_probe(started, completed)")
+        and job.index("rescue StandardError") < job.index("transition_health_probe(started, failed)")
+    ):
+        raise RuntimeError("Sidekiq same-JID resume, completion, or fixed retry ordering differs.")
+    for unsafe in (
+        "Sidekiq::Queue",
+        "Sidekiq::RetrySet",
+        "Sidekiq::DeadSet",
+        "Sidekiq::WorkSet",
+        "Sidekiq::ProcessSet",
+        "DistributedMutex",
+        "PluginStore",
+        '"#{token}"',
+        '"#{jid}"',
+        '"#{arguments}"',
+        "error.message",
+        "backtrace",
+    ):
+        if unsafe in plugin:
+            raise RuntimeError("Sidekiq processing diagnostics inspect or emit an unsafe value.")
+    fixture_canaries = (
+        "spawn_worker_before_bind: true",
+        "ProbeHarness.redis.expiry_history.uniq == [90.0]",
+        '"direct NX claim did not expire and replace the ambiguous owner"',
+        'expect_probe_state("run-mode-invalid")',
+        'expect_probe_state("transaction-open")',
+        'expect_probe_state("enqueue-rejected")',
+        'expect_probe_state("probe-internal-failure")',
+        'expect_probe_state("probe-already-running")',
+        "enqueue_hold: true",
+        '"expired pre-bind caller did not fail closed"',
+        "lease_seconds: 1",
+        'ProbeHarness.reset(mode: :missing_state)',
+        'ProbeHarness.reset(mode: :wrong_state)',
+        'expect_probe_state("job-not-started-before-timeout")',
+        'expect_probe_state("job-started-without-completion")',
+        'expect_probe_state("job-reported-failure")',
+        'ProbeHarness.redis.force_state("started:" + ProbeHarness::VALID_JID)',
+        'ProbeHarness.redis.force_state("pending:" + ProbeHarness::SECOND_JID)',
+        'ProbeHarness.redis.force_state("preparing:" + ProbeHarness::FIXED_NONCE)',
+        "ProbeHarness.delete_override = :nil",
+        "ProbeHarness.delete_override = :raise",
+        "takeover_after_delete: true",
+        '"old cleanup changed the immediately acquired generation"',
+        'expect_probe_state("cleanup-failed")',
+        'ProbeHarness::RAW_WORKER_ERROR',
+        'ProbeHarness::RAW_ENQUEUE_ERROR',
+        'ProbeHarness::RAW_CLAIM_ERROR',
+        "error.cause.nil?",
+        "error.full_message.include?(value)",
+        'puts "Sidekiq processing probe hostile fixture passed."',
+    )
+    if any(value not in fixture for value in fixture_canaries):
+        raise RuntimeError("Sidekiq processing hostile fixture lost a state, retry, cleanup, or redaction case.")
+    fake_redis_set = fixture[
+        fixture.index("def set(key, value, nx:, ex:)") : fixture.index("def transition(key, arguments)")
+    ]
+    if (
+        fake_redis_set.count("expire_if_needed(canonical)") != 1
+        or fake_redis_set.index("expire_if_needed(canonical)")
+        > fake_redis_set.index("return nil if nx && @store.key?(canonical)")
+    ):
+        raise RuntimeError("Sidekiq hostile Redis model does not expire a due key before its NX claim.")
+    sidekiq_doc_requirements = {
+        "docs/operations/RECOVERY.md": (
+            "60-second post-enqueue observation window",
+            "same-JID pending, started, failed,",
+            "conditional Lua delete",
+            "does not distinguish backlog from a",
+        ),
+        "docs/operations/RUNTIME-READINESS.md": (
+            "one namespaced, expiring Redis lease",
+            "enqueues without a correlation",
+            "Compare-and-swap transitions retain the original lease expiry",
+            "does not claim to distinguish backlog",
+        ),
+        "docs/operations/VALIDATION.md": (
+            "private namespaced Redis lease",
+            "exact no-argument JID binding",
+            "60-second post-enqueue observation window",
+            "terminal cleanup removes only the caller-owned state",
+        ),
+    }
+    for document, required_values in sidekiq_doc_requirements.items():
+        source = (ROOT / document).read_text(encoding="utf-8")
+        if any(value not in source for value in required_values):
+            raise RuntimeError(f"Sidekiq processing operations documentation differs in {document}.")
     for verifier in (site, restored):
-        if "Sidekiq::ProcessSet.new.any?" not in verifier or "MochiriiEmailMetadata.verify_sidekiq_processing!" not in verifier:
-            raise RuntimeError("Runtime verification no longer proves both Sidekiq registration and job execution.")
+        required_verifier = (
+            "Sidekiq::ProcessSet.new.any?",
+            "MochiriiEmailMetadata.verify_sidekiq_processing!",
+            "rescue MochiriiEmailMetadata::SidekiqProbeError => error",
+            'sidekiq_probe_state = "completed"',
+            "sidekiq_probe_state = error.state",
+            "sidekiqProbeState: sidekiq_probe_state",
+        )
+        if any(value not in verifier for value in required_verifier):
+            raise RuntimeError("Runtime verification no longer proves and safely reports Sidekiq execution.")
+        if any(value in verifier for value in ("error.message", "error.backtrace", "error.inspect")):
+            raise RuntimeError("Runtime Sidekiq verification emits unsafe exception detail.")
 
 
 def test_backup_restore_normal_upload_contract() -> None:

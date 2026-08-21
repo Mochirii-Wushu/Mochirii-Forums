@@ -62,6 +62,13 @@ unless expected_inventory_count.nil?
     inventory["normalUploadInventoryCount"] == expected_count &&
       inventory["normalUploadInventorySha256"] == expected_inventory_sha256
 end
+sidekiq_probe_state = "completed"
+begin
+  sidekiq_processing = MochiriiEmailMetadata.verify_sidekiq_processing!
+rescue MochiriiEmailMetadata::SidekiqProbeError => error
+  sidekiq_processing = false
+  sidekiq_probe_state = error.state
+end
 checks = {
   repository_revision: commit.match?(/\A[0-9a-f]{40}\z/),
   recovery_marker: PluginStore.get("mochirii-recovery", "repository_commit") == commit,
@@ -74,7 +81,7 @@ checks = {
   database: ActiveRecord::Base.connection.select_value("SELECT 1").to_i == 1,
   redis: Discourse.redis.ping == "PONG",
   sidekiq_process_present: Sidekiq::ProcessSet.new.any?,
-  sidekiq_processing: MochiriiEmailMetadata.verify_sidekiq_processing!,
+  sidekiq_processing: sidekiq_processing,
   all_mail_disabled: SiteSetting.disable_emails == "yes" && ENV.fetch("DISCOURSE_DISABLE_EMAILS") == "yes",
   central_login_disabled: SiteSetting.enable_discourse_connect == false,
   secure_uploads_absent: Upload.where(secure: true).none?,
@@ -82,5 +89,5 @@ checks = {
 }
 
 failed = checks.select { |_name, passed| !passed }.keys
-puts JSON.generate({ checks: checks, failed: failed })
+puts JSON.generate({ checks: checks, failed: failed, sidekiqProbeState: sidekiq_probe_state })
 raise "Mochirii restored-backup verification failed" if failed.any?

@@ -206,6 +206,22 @@ The stable root restore wrapper performs the complete guarded sequence:
     cleanup, and final clean backup, then commit the durable passed event,
     terminal restore record, and journal removal in that order.
 
+The Sidekiq execution proof explicitly routes one harmless job to the default
+queue and keeps a 60-second post-enqueue observation window. Before enqueue it
+atomically acquires one namespaced Redis lease, binds that lease to the exact
+returned Sidekiq JID, and then permits only same-JID pending, started, failed,
+and completed transitions without extending the original timeout-plus-30-second
+lease. A concurrent caller returns fixed `probe-already-running` state; an
+ambiguous or crashed caller's lease expires; and an old or retried job cannot
+mutate a newer generation. Terminal cleanup uses one
+conditional Lua delete, so it removes only the caller-owned state or accepts
+that exact state as already expired without deleting a new owner. Verifier
+output contains one fixed allowlisted state and never the nonce, JID, job
+arguments, exception text, process identity, queue contents, or application
+logs. The observation state deliberately does not distinguish backlog from a
+failure before the job's `execute` method; the separate registered-process
+check and the fixed not-started state remain conservative evidence.
+
 If restore fails after isolation begins, the wrapper keeps the restore
 configuration active and rebuilds into containment. Public ingress and member
 mail remain disabled. Use the distinct operator key or provider console to

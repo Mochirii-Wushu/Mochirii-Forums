@@ -96,9 +96,11 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
   `--location local`, and the restored marker is verified; and
 - PostgreSQL, Redis, a registered Sidekiq process plus one exact bounded
   first-party probe job, and persistent `/shared` data survive one supported
-  restart and `launcher rebuild app` after that local restore. The job writes
-  only a random private completion nonce, is bounded to 60 seconds, and its
-  pending/completion keys are proved absent after every outcome.
+  restart and `launcher rebuild app` after that local restore. The job uses one
+  private namespaced Redis lease, an exact no-argument JID binding, and a
+  60-second post-enqueue observation window. Atomic same-JID transitions retain
+  the lease expiry, concurrent and stale generations cannot interfere, and
+  terminal cleanup removes only the caller-owned state or accepts its expiry.
 
 A successful disposable job is required for the Stage 4 candidate. Its result
 proves local fixture backup, destructive local restore, restart, and rebuild
