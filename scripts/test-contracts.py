@@ -770,6 +770,18 @@ def test_branding_email_renderer_contract() -> None:
         ),
         ("      expected.query.nil? &&", "      true &&"),
         ("      expected.fragment.nil?", "      true"),
+        (
+            'admin_confirmation_fixture_token = "0123456789abcdef" * 2',
+            'admin_confirmation_fixture_token = "fixture-token"',
+        ),
+        (
+            "unless admin_confirmation_fixture_token.match?(/\\A[0-9a-f]+\\z/) && admin_confirmation_fixture_token.length == 32",
+            "unless true",
+        ),
+        (
+            "      admin_confirmation_fixture_token,",
+            '      "fixture-token",',
+        ),
         ("SiteSetting.site_digest_logo_url", "SiteSetting.digest_logo_url"),
     )
     for current, stale in hostile_replacements:
@@ -826,6 +838,17 @@ def test_branding_email_renderer_contract() -> None:
         ),
         fixture.replace('assert_fixture(error.cause.nil?, "#{label} retained an exception cause")', '', 1),
         fixture.replace('source.scan("SiteSetting.site_digest_logo_url").length == 1', 'true', 1),
+        fixture.replace(
+            'source.scan(\'admin_confirmation_fixture_token = "0123456789abcdef" * 2\').length == 1',
+            "true",
+            1,
+        ),
+        fixture.replace('source.scan("SecureRandom").empty?', "true", 1),
+        fixture.replace(
+            '"encoded-separator administrator confirmation token" =>',
+            '"encoded-separator administrator confirmation token removed" =>',
+            1,
+        ),
     )
     for hostile_fixture in fixture_hostiles:
         if hostile_fixture == fixture:
@@ -840,6 +863,9 @@ def test_branding_email_renderer_contract() -> None:
     for canary in (
         "PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)",
         "PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''",
+        "PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE = b'''",
+        "PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK = b'''",
+        "PINNED_ADMIN_CONFIRMATION_ROUTE_BLOCK = b'''",
         "PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX = b'''",
         "PINNED_MESSAGE_BUILDER_HTML_PART_PREFIX = b'''",
         "PINNED_BUILD_EMAIL_HELPER_SOURCE = b'''",
@@ -893,6 +919,11 @@ def test_branding_email_renderer_contract() -> None:
             + b"  def account_created(user, opts = {})\n  end\n\n"
             + UPSTREAM.PINNED_EMAIL_LOGIN_HELPER_BLOCK
             + b"  def build_summary_for(user)\n  end\n",
+        "app/mailers/admin_confirmation_mailer.rb": UPSTREAM.PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE,
+        "lib/admin_confirmation.rb":
+            UPSTREAM.PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK
+            + b"  def email_confirmed!\n  end\n",
+        "config/routes.rb": UPSTREAM.PINNED_ADMIN_CONFIRMATION_ROUTE_BLOCK,
         "lib/email/message_builder.rb":
             UPSTREAM.PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX
             + b"      if @opts[:recipient_user].present?\n      end\n"
@@ -932,6 +963,21 @@ def test_branding_email_renderer_contract() -> None:
                 "app/mailers/user_notifications.rb",
                 b"email_token: email_token",
                 b"email_token: nil",
+            ),
+            (
+                "app/mailers/admin_confirmation_mailer.rb",
+                b"confirm_admin_url(token: token, host: Discourse.base_url)",
+                b"confirm_admin_url(token: nil, host: Discourse.base_url)",
+            ),
+            (
+                "lib/admin_confirmation.rb",
+                b"@token = SecureRandom.hex",
+                b'@token = "invalid-token"',
+            ),
+            (
+                "config/routes.rb",
+                b"token: /[0-9a-f]+/",
+                b"token: /[^/]+/",
             ),
             (
                 "lib/email/message_builder.rb",

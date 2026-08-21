@@ -82,6 +82,45 @@ assert_fixture(
   "stale digest-logo accessor remains",
 )
 
+admin_confirmation_fixture_token = "0123456789abcdef" * 2
+assert_fixture(
+  source.scan('admin_confirmation_fixture_token = "0123456789abcdef" * 2').length == 1,
+  "administrator confirmation fixture token assignment differed",
+)
+assert_fixture(
+  source.scan("unless admin_confirmation_fixture_token.match?(/\\A[0-9a-f]+\\z/) && admin_confirmation_fixture_token.length == 32\n").length == 1,
+  "administrator confirmation fixture token guard differed",
+)
+assert_fixture(
+  source.scan("      admin_confirmation_fixture_token,\n").length == 1,
+  "administrator confirmation mailer token argument differed",
+)
+assert_fixture(source.scan("SecureRandom").empty?, "renderer generated a real administrator confirmation token")
+admin_confirmation_route_token = /\A[0-9a-f]+\z/
+assert_fixture(
+  admin_confirmation_fixture_token.match?(admin_confirmation_route_token) &&
+    admin_confirmation_fixture_token.length == 32,
+  "administrator confirmation fixture token was not pinned-route compatible",
+)
+assert_fixture("0".match?(admin_confirmation_route_token), "one-character pinned-route token was rejected")
+assert_fixture(("0" * 33).match?(admin_confirmation_route_token), "long pinned-route token was rejected")
+{
+  "empty administrator confirmation token" => "",
+  "uppercase administrator confirmation token" => "0123456789ABCDEF0123456789ABCDEF",
+  "hyphenated administrator confirmation token" => "0123456789abcdef-0123456789abcde",
+  "nonhex administrator confirmation token" => "0123456789abcdef0123456789abcdeg",
+  "short administrator confirmation token" => "0" * 31,
+  "long administrator confirmation token" => "0" * 33,
+  "slash administrator confirmation token" => "0" * 16 + "/" + "0" * 15,
+  "encoded-separator administrator confirmation token" => "0" * 15 + "%2F" + "0" * 14,
+  "newline administrator confirmation token" => "0" * 15 + "\n" + "0" * 16,
+}.each do |label, token|
+  assert_fixture(
+    !token.match?(admin_confirmation_route_token) || token.length != 32,
+    "#{label} was accepted",
+  )
+end
+
 fixture_base = "http://forums.mochirii.com"
 production_base = "https://forums.mochirii.com"
 fixture_link = "http://forums.mochirii.com/session/email-login/mochirii-fixture-admin-login-token"
