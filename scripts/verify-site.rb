@@ -136,6 +136,9 @@ checks["upstream_marketing_disabled"] =
     SiteSetting.send_old_credential_reminder_days == 0 &&
     SiteSetting.simple_email_subject == false &&
     SiteSetting.discourse_narrative_bot_enabled == false
+checks["automatic_gravatar_downloads_disabled"] =
+  ENV["DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS"] == "false" &&
+    SiteSetting.automatically_download_gravatars == false
 checks["mail_suppression_matches_runtime"] =
   SiteSetting.disable_emails == ENV.fetch("DISCOURSE_DISABLE_EMAILS")
 smtp = GlobalSetting.smtp_settings
@@ -154,16 +157,30 @@ checks["notification_sender_runtime_bound"] =
 
 bot = User.find_by(id: -2)
 bot_profile_text = [bot&.name, bot&.username, bot&.user_profile&.bio_raw, bot&.user_profile&.bio_cooked, bot&.user_profile&.website].compact.join("\n")
-checks["narrative_system_user_branded"] =
+checks["narrative_system_user_identity_branded"] =
   bot&.username == "mochirii-guide" &&
     bot&.name == "Mochirii Guide" &&
     bot&.email == "mochirii-guide@forums.mochirii.com" &&
-    bot&.uploaded_avatar_id == icon_id &&
-    bot&.user_avatar&.custom_upload_id == icon_id &&
-    bot&.user_avatar&.gravatar_upload_id.nil? &&
-    icon_upload.sha1 == "c1fde880bdf518e913d5eeb9a868f886e3e47fa0" &&
-    !bot_profile_text.match?(/discobot|discourse[.]org|meta[.]discourse|blog[.]discourse|digitaloceanspaces|amazonaws/i) &&
     User.where(username_lower: "discobot").none?
+checks["narrative_system_user_profile_branded"] =
+  !bot.nil? &&
+    !bot.user_profile.nil? &&
+    !bot_profile_text.match?(/discobot|discourse[.]org|meta[.]discourse|blog[.]discourse|digitaloceanspaces|amazonaws/i)
+checks["narrative_system_user_active_avatar_branded"] =
+  !bot.nil? &&
+    !bot.user_avatar.nil? &&
+    bot.uploaded_avatar_id == icon_id &&
+    bot.user_avatar.custom_upload_id == icon_id &&
+    icon_upload.sha1 == "c1fde880bdf518e913d5eeb9a868f886e3e47fa0"
+checks["narrative_system_user_gravatar_absent"] =
+  !bot.nil? && !bot.user_avatar.nil? && bot.user_avatar.gravatar_upload_id.nil?
+checks["narrative_system_user_branded"] =
+  checks.values_at(
+    "narrative_system_user_identity_branded",
+    "narrative_system_user_profile_branded",
+    "narrative_system_user_active_avatar_branded",
+    "narrative_system_user_gravatar_absent",
+  ).all?
 checks["narrative_old_profile_unavailable"] = User.find_by_username("discobot").nil?
 
 expected_badges = {

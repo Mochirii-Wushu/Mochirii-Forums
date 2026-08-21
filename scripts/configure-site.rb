@@ -135,6 +135,7 @@ expected = {
   set_locale_from_cookie: false,
   set_locale_from_param: false,
   discourse_narrative_bot_enabled: false,
+  automatically_download_gravatars: false,
 }
 
 expected.each do |name, value|
@@ -142,27 +143,31 @@ expected.each do |name, value|
   raise "Unexpected site setting #{name}" unless actual == value
 end
 
-bot = User.find_by(id: -2)
-raise "Pinned narrative system user is absent" if bot.nil?
-unless %w[discobot mochirii-guide].include?(bot.username)
-  raise "Pinned narrative system user identity is unexpected"
+def configure_narrative_system_user!(icon_upload)
+  bot = User.find_by(id: -2)
+  raise "Pinned narrative system user is absent" if bot.nil?
+  unless %w[discobot mochirii-guide].include?(bot.username)
+    raise "Pinned narrative system user identity is unexpected"
+  end
+  if bot.username == "discobot"
+    changed = UsernameChanger.new(bot, "mochirii-guide", Discourse.system_user).change(asynchronous: false)
+    raise "Narrative system user rename failed" unless changed
+    bot.reload
+  end
+  bot.update!(name: "Mochirii Guide", email: "mochirii-guide@forums.mochirii.com")
+  bot.create_user_profile! if bot.user_profile.nil?
+  bot.user_profile.update!(
+    bio_raw: "Mochirii Forums guidance is maintained by the Mochirii moderation team.",
+    website: "https://mochirii.com",
+    location: "Mochirii",
+  )
+  bot.create_user_avatar! if bot.user_avatar.nil?
+  bot.user_avatar.update!(custom_upload_id: icon_upload.id, gravatar_upload_id: nil)
+  bot.update!(uploaded_avatar_id: icon_upload.id)
+  raise "Old narrative system username remains" if User.exists?(username_lower: "discobot")
 end
-if bot.username == "discobot"
-  changed = UsernameChanger.new(bot, "mochirii-guide", Discourse.system_user).change(asynchronous: false)
-  raise "Narrative system user rename failed" unless changed
-  bot.reload
-end
-bot.update!(name: "Mochirii Guide", email: "mochirii-guide@forums.mochirii.com")
-bot.create_user_profile! if bot.user_profile.nil?
-bot.user_profile.update!(
-  bio_raw: "Mochirii Forums guidance is maintained by the Mochirii moderation team.",
-  website: "https://mochirii.com",
-  location: "Mochirii",
-)
-bot.create_user_avatar! if bot.user_avatar.nil?
-bot.user_avatar.update!(custom_upload_id: icon_upload.id, gravatar_upload_id: nil)
-bot.update!(uploaded_avatar_id: icon_upload.id)
-raise "Old narrative system username remains" if User.exists?(username_lower: "discobot")
+
+configure_narrative_system_user!(icon_upload)
 
 # Preserve the pinned guideline seed and revise only its single upstream-brand
 # phrase. Any unexpected seed or later edit stops instead of overwriting member

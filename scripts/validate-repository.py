@@ -138,14 +138,89 @@ checks["upload_notice_connector_compiled"] =
   compiled_theme.include?('"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":') &&
     compiled_theme.include?("Direct upload URLs may be accessed without a forum session")
 '''
-RUNTIME_VERIFIER_SHA256 = "7db29c5efb3ff62f7831c07f8742cc8a01c7dff87d45185d93e71143a1bb1e0f"
+NARRATIVE_CONFIGURATOR_BLOCK = '''def configure_narrative_system_user!(icon_upload)
+  bot = User.find_by(id: -2)
+  raise "Pinned narrative system user is absent" if bot.nil?
+  unless %w[discobot mochirii-guide].include?(bot.username)
+    raise "Pinned narrative system user identity is unexpected"
+  end
+  if bot.username == "discobot"
+    changed = UsernameChanger.new(bot, "mochirii-guide", Discourse.system_user).change(asynchronous: false)
+    raise "Narrative system user rename failed" unless changed
+    bot.reload
+  end
+  bot.update!(name: "Mochirii Guide", email: "mochirii-guide@forums.mochirii.com")
+  bot.create_user_profile! if bot.user_profile.nil?
+  bot.user_profile.update!(
+    bio_raw: "Mochirii Forums guidance is maintained by the Mochirii moderation team.",
+    website: "https://mochirii.com",
+    location: "Mochirii",
+  )
+  bot.create_user_avatar! if bot.user_avatar.nil?
+  bot.user_avatar.update!(custom_upload_id: icon_upload.id, gravatar_upload_id: nil)
+  bot.update!(uploaded_avatar_id: icon_upload.id)
+  raise "Old narrative system username remains" if User.exists?(username_lower: "discobot")
+end
+
+configure_narrative_system_user!(icon_upload)
+'''
+NARRATIVE_RUNTIME_VERIFIER_BLOCK = '''checks["narrative_system_user_identity_branded"] =
+  bot&.username == "mochirii-guide" &&
+    bot&.name == "Mochirii Guide" &&
+    bot&.email == "mochirii-guide@forums.mochirii.com" &&
+    User.where(username_lower: "discobot").none?
+checks["narrative_system_user_profile_branded"] =
+  !bot.nil? &&
+    !bot.user_profile.nil? &&
+    !bot_profile_text.match?(/discobot|discourse[.]org|meta[.]discourse|blog[.]discourse|digitaloceanspaces|amazonaws/i)
+checks["narrative_system_user_active_avatar_branded"] =
+  !bot.nil? &&
+    !bot.user_avatar.nil? &&
+    bot.uploaded_avatar_id == icon_id &&
+    bot.user_avatar.custom_upload_id == icon_id &&
+    icon_upload.sha1 == "c1fde880bdf518e913d5eeb9a868f886e3e47fa0"
+checks["narrative_system_user_gravatar_absent"] =
+  !bot.nil? && !bot.user_avatar.nil? && bot.user_avatar.gravatar_upload_id.nil?
+checks["narrative_system_user_branded"] =
+  checks.values_at(
+    "narrative_system_user_identity_branded",
+    "narrative_system_user_profile_branded",
+    "narrative_system_user_active_avatar_branded",
+    "narrative_system_user_gravatar_absent",
+  ).all?
+'''
+RUNTIME_VERIFIER_SHA256 = "4e7dedd8f2b10c2049defd855316e6d72f5716704d5a0c9430858a8e7c45663a"
+CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
+APP_TEMPLATE_SHA256 = "2eb8acf2626011b91e0f37880fffe0ec6cefdeb9f1415f791e0ad4571119f734"
+NARRATIVE_AVATAR_FIXTURE_SHA256 = "4c3d3945c022ee9c344787f3331367b85bd5602dc071482d3e00a66d8ea6ad0e"
+NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
+            ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
+'''
+NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "99d00d20611e37bc41f8c1aa72c0e408a4c82a2765c295491f80ab245748152c"
 BRANDING_EMAIL_RENDERER_SHA256 = "aab3658def25b73b046025d9703b414b7bbeb7ae6e75ecfc9033189b3527f39f"
-PINNED_SOURCE_VERIFIER_SHA256 = "13dd363f337ac65f491dee1d0c4ee8304dc2d7036ccbd8c3080e8133eb9537f4"
+PINNED_SOURCE_VERIFIER_SHA256 = "5c949e9a85f3bff3283fb3b71701e75ac9e2b29f67e5886248f0f54c53221350"
 PINNED_EMAIL_EVIDENCE = {
     "path": "lib/email.rb",
     "bytes": 1549,
     "sha256": "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2",
 }
+PINNED_GRAVATAR_EVIDENCE = [
+    {
+        "path": "app/models/user.rb",
+        "bytes": 73523,
+        "sha256": "79c453b7bf56a69f7919572020ffa5fdf9b32de37255439d0a22c2b73f3ff7ca",
+    },
+    {
+        "path": "app/models/user_avatar.rb",
+        "bytes": 7189,
+        "sha256": "a53eb92ffe3793ef32c3f48f3e3216133916424a19a2ffea376b22e0b705a5a9",
+    },
+    {
+        "path": "app/jobs/regular/update_gravatar.rb",
+        "bytes": 539,
+        "sha256": "2757a35e7521b9b6d8a7cdf7d6cf5e5ebf1273132956533dcf3951b27bca397c",
+    },
+]
 ALLOWED_FILES = frozenset(
     {
     ".env.example",
@@ -261,6 +336,7 @@ ALLOWED_FILES = frozenset(
     "scripts/test-backup-url-boundary.rb",
     "scripts/test-backup-transaction.py",
     "scripts/test-normal-upload-inventory.rb",
+    "scripts/test-narrative-avatar.rb",
     "scripts/test-operation-survivor.rb",
     "scripts/test-sidekiq-processing-probe.rb",
     "scripts/test-contracts.py",
@@ -320,14 +396,14 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/backup-restore-contract.v1.json": "cea30f18d0842adfd5712dd05ad52089a276c67fe9e61a9f28c7f779a8652b4c",
     "docs/operations/cost-gate.v1.json": "1ae0eb5cf7f4b32a530575a690952c0d1d82226686b37549e22deefea4619d64",
     "docs/operations/customizations.v1.json": "8028131bf21a3519916c70d049a8c1a1d2c5f737be754accd4fca84b98873c42",
-    "docs/operations/forum-central-identity.consumer.v1.json": "636c6ddd5ee94c1e23df3114574800019bc27c9d397637ed8fada6f830bfc932",
+    "docs/operations/forum-central-identity.consumer.v1.json": "7b891ccb1c5b1559b0750dcef4add6c17b6b4fd2f932acf235be9a102238479d",
     "docs/operations/release-evidence.v1.example.json": "99b73f2448df6dfdfe2dea6cebe7c21bd182c036f6e8fb0923681c12100d2e42",
     "docs/operations/release-evidence.v2.example.json": "c2e42a164c118ae5367f7cdc310dbc3c2e15edf8919c6a29905b5475b661a536",
     "docs/operations/repository-capabilities.v1.json": "3382dab28678b9d56e7cb430ffacda4fc3e1f52df94adc0f74b5761433487806",
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "1e2184f41c0d63bc92857bd42a60a0512d2d5534ed77d47075be141dde046e6a",
+    "docs/operations/third-party-components.v1.json": "5f626b8ab08d8a1770fdbf9a254cbb9cd2fd351130f81fe07698f5315be866f2",
     "docs/operations/upstream-provenance.v1.json": "d5937dfc541fd627fa0ef5e2448e9d7f990a7442aa2b9ca874dab028d9bf8975",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -349,6 +425,63 @@ def validate_theme_runtime_verifier(source: str) -> None:
         fail("Runtime verifier differs from the exact reviewed source digest.")
 
 
+def validate_narrative_avatar_contract(template: str, configure: str, verifier: str) -> None:
+    environment_line = '  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"\n'
+    environment_block = '''  DISCOURSE_ALLOW_EMAIL_INVITES: "false"
+  DISCOURSE_DISCOURSE_NARRATIVE_BOT_ENABLED: "false"
+  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"
+
+  DISCOURSE_LOGIN_REQUIRED: "true"'''
+    expected_setting = "  automatically_download_gravatars: false,\n"
+    runtime_setting = '''checks["automatic_gravatar_downloads_disabled"] =
+  ENV["DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS"] == "false" &&
+    SiteSetting.automatically_download_gravatars == false
+'''
+    env_start = "\nenv:\n"
+    env_end = "\nvolumes:\n"
+    if template.count(env_start) != 1 or template.count(env_end) != 1:
+        fail("Application environment section boundary differs.")
+    environment = template[template.index(env_start) : template.index(env_end)]
+    key_pattern = r"(?m)^  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS[ \t]*:"
+    if (
+        template.count(environment_line) != 1
+        or environment.count(environment_line) != 1
+        or environment.count(environment_block) != 1
+        or len(re.findall(key_pattern, template)) != 1
+        or len(re.findall(key_pattern, environment)) != 1
+    ):
+        fail("Automatic Gravatar downloads are not disabled exactly once in the runtime environment.")
+    if hashlib.sha256(template.encode("utf-8")).hexdigest() != APP_TEMPLATE_SHA256:
+        fail("Application template differs from the exact reviewed source digest.")
+    if configure.count(expected_setting) != 1:
+        fail("Site configuration does not fail closed on the automatic Gravatar setting.")
+    if configure.count(NARRATIVE_CONFIGURATOR_BLOCK) != 1:
+        fail("Narrative system-user configuration differs from the exact reviewed helper and call.")
+    if verifier.count(runtime_setting) != 1 or verifier.count(NARRATIVE_RUNTIME_VERIFIER_BLOCK) != 1:
+        fail("Narrative runtime verifier lost its environment, setting, or fixed subcheck boundary.")
+    if hashlib.sha256(configure.encode("utf-8")).hexdigest() != CONFIGURE_SITE_SHA256:
+        fail("Site configurator differs from the exact reviewed source digest.")
+    if hashlib.sha256(verifier.encode("utf-8")).hexdigest() != RUNTIME_VERIFIER_SHA256:
+        fail("Runtime verifier differs from the exact reviewed source digest.")
+    require_text(
+        read("docs/operations/VALIDATION.md"),
+        [
+            "automatic external Gravatar downloads are disabled",
+            "fixed identity, profile,",
+            "active-avatar, and no-Gravatar subchecks",
+        ],
+        "automatic Gravatar validation contract",
+    )
+    require_text(
+        read("docs/operations/RUNTIME-READINESS.md"),
+        [
+            "`automatically_download_gravatars=false` before narrative-user branding",
+            "no asynchronously downloaded Gravatar after Sidekiq runs",
+        ],
+        "automatic Gravatar runtime-readiness contract",
+    )
+
+
 def validate_branding_email_renderer(source: str) -> None:
     expected_calls = (
         "  text, html = Email.extract_parts(mail.encoded)\n",
@@ -362,6 +495,45 @@ def validate_branding_email_renderer(source: str) -> None:
         fail("Branding email renderer success output changed.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != BRANDING_EMAIL_RENDERER_SHA256:
         fail("Branding email renderer differs from the exact reviewed source digest.")
+
+
+def validate_narrative_avatar_fixture(source: str) -> None:
+    required = {
+        'method_marker = "def configure_narrative_system_user!(icon_upload)\\n"': 1,
+        'APP_SETTING = "DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS"': 1,
+        'assert_fixture(method_source.scan(avatar_write_order).length == 1, "avatar write-order anchor differed")': 1,
+        '.sub(avatar_write_order, reordered_avatar_write_order)': 1,
+        '"reorder hostile did not invert the exact avatar writes"': 1,
+        'app_setting: :false, gravatar_response: :success': 1,
+        'app_setting: :true, gravatar_response: :success': 1,
+        'app_setting: :omitted, gravatar_response: :success': 1,
+        'configure_narrative_system_user_reordered!(icon_upload)': 2,
+        'app_setting: :true, gravatar_response: :not_found': 1,
+        'Jobs.drain_update_gravatar!': 6,
+        'puts "Narrative avatar delayed-job fixture passed."': 1,
+    }
+    if any(source.count(value) != expected for value, expected in required.items()):
+        fail("Narrative avatar delayed-writer hostile inventory differs.")
+    if hashlib.sha256(source.encode("utf-8")).hexdigest() != NARRATIVE_AVATAR_FIXTURE_SHA256:
+        fail("Narrative avatar hostile fixture differs from the exact reviewed source digest.")
+
+
+def validate_narrative_avatar_workflow(source: str) -> None:
+    start = "      - name: Prove one-effective-CPU command path\n"
+    end = "      - name: Bootstrap exact standalone under one effective CPU\n"
+    if source.count(start) != 1 or source.count(end) != 1:
+        fail("Disposable preflight step boundary differs.")
+    step = source[source.index(start) : source.index(end)]
+    run_marker = "        run: |\n"
+    if step.count(run_marker) != 1 or re.search(r"(?m)^        if:", step[: step.index(run_marker)]):
+        fail("Disposable preflight step is conditional or malformed.")
+    if (
+        source.count(NARRATIVE_AVATAR_WORKFLOW_CALL) != 1
+        or step.count(NARRATIVE_AVATAR_WORKFLOW_CALL) != 1
+    ):
+        fail("Narrative avatar fixture is not executed exactly once in the required preflight step.")
+    if hashlib.sha256(step.encode("utf-8")).hexdigest() != NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256:
+        fail("Disposable preflight step differs from the exact reviewed executable body.")
 
 
 def validate_pinned_source_verifier(source: str) -> None:
@@ -708,6 +880,13 @@ def validate_manifests() -> None:
     ]
     if email_evidence != [PINNED_EMAIL_EVIDENCE]:
         fail("Pinned email extraction API evidence changed.")
+    gravatar_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in {expected["path"] for expected in PINNED_GRAVATAR_EVIDENCE}
+    ]
+    if gravatar_evidence != PINNED_GRAVATAR_EVIDENCE:
+        fail("Pinned automatic Gravatar lifecycle evidence changed.")
     vendored = components.get("vendoredRuntimeComponents")
     if (
         not isinstance(vendored, list)
@@ -774,6 +953,8 @@ def validate_manifests() -> None:
     }
     if fixture != expected_fixture:
         fail("Built-in DiscourseConnect loopback fixture contract changed.")
+    if identity.get("consumer", {}).get("settings", {}).get("automatically_download_gravatars") is not False:
+        fail("Consumer identity contract does not disable automatic external Gravatar downloads.")
     if any(value is not False for value in identity["activation"].values()):
         fail("Identity activation overclaims hosted or production evidence.")
     if identity.get("providerMutationAuthorized") is not False or identity.get("publicActivationAuthorized") is not False:
@@ -846,6 +1027,7 @@ def validate_template() -> None:
             'DISCOURSE_ALLOW_STAFF_TO_UPLOAD_ANY_FILE_IN_PM: "false"',
             'DISCOURSE_ALLOW_ALL_ATTACHMENTS_FOR_GROUP_MESSAGES: "false"',
             'DISCOURSE_DISCOURSE_NARRATIVE_BOT_ENABLED: "false"',
+            'DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"',
             'DISCOURSE_SEND_TL2_PROMOTION_MESSAGE: "false"',
             'DISCOURSE_ENABLE_DISCOURSE_CONNECT: __MOCHIRII_ENABLE_DISCOURSE_CONNECT__',
             'DISCOURSE_ENABLE_DISCOURSE_CONNECT_PROVIDER: "false"',
@@ -902,6 +1084,11 @@ def validate_template() -> None:
         fail("Every runtime token must occur exactly once.")
     if app.count("git clone --no-tags") != 1 or "discourse/docker_manager.git" not in app:
         fail("Only the pinned default Docker Manager clone is permitted.")
+    validate_narrative_avatar_contract(
+        app,
+        read("scripts/configure-site.rb"),
+        read("scripts/verify-site.rb"),
+    )
 
     forbidden = [
         r"(?m)^\s*DISCOURSE_CDN_URL:",
@@ -1440,6 +1627,7 @@ def validate_secrets_and_workflows() -> None:
         fail("Protected deploy workflow bypasses the forced-command SSH boundary.")
 
     disposable = read(".github/workflows/disposable-bootstrap.yml")
+    validate_narrative_avatar_workflow(disposable)
     require_text(
         disposable,
         [
@@ -1464,6 +1652,7 @@ def validate_secrets_and_workflows() -> None:
             "test-backup-transaction.py",
             "test-deployment-mutation.py",
             "test-normal-upload-inventory.rb",
+            "test-narrative-avatar.rb",
             "test-operation-survivor.rb",
             "test-sidekiq-processing-probe.rb",
             "ruby_fixture_container=(--rm --pull=never --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m --memory-swap 256m)",
@@ -1518,10 +1707,12 @@ def validate_secrets_and_workflows() -> None:
         ],
         "disposable launcher terminal image-equality and Nginx syntax hostile fixture",
     )
+    validate_narrative_avatar_fixture(read("scripts/test-narrative-avatar.rb"))
     for fixture in (
         "test-storage-response-boundary.rb",
         "test-backup-url-boundary.rb",
         "test-normal-upload-inventory.rb",
+        "test-narrative-avatar.rb",
         "test-operation-survivor.rb",
         "test-sidekiq-processing-probe.rb",
     ):

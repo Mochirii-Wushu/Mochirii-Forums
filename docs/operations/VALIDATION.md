@@ -90,7 +90,9 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
   composer upload-notice connector is compiled;
 - site settings, translation overrides, static error pages, generator and
   OpenSearch replacements, PWA metadata, and non-delivered mail presentation
-  use Mochirii branding;
+  use Mochirii branding; automatic external Gravatar downloads are disabled
+  before the narrative system user is saved, and fixed identity, profile,
+  active-avatar, and no-Gravatar subchecks remain true after Sidekiq processing;
 - one local application backup is created in the fixture, a protected marker is
   changed, the exact local backup is destructively restored with
   `--location local`, and the restored marker is verified; and

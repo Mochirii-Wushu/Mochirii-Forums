@@ -56,6 +56,21 @@
         "sha256": "ac66d5c93971418cafdf23dc7f511759b5d305eb5e5bf2ffab0b8b65057e5c73"
       },
       {
+        "path": "app/models/user.rb",
+        "bytes": 73523,
+        "sha256": "79c453b7bf56a69f7919572020ffa5fdf9b32de37255439d0a22c2b73f3ff7ca"
+      },
+      {
+        "path": "app/models/user_avatar.rb",
+        "bytes": 7189,
+        "sha256": "a53eb92ffe3793ef32c3f48f3e3216133916424a19a2ffea376b22e0b705a5a9"
+      },
+      {
+        "path": "app/jobs/regular/update_gravatar.rb",
+        "bytes": 539,
+        "sha256": "2757a35e7521b9b6d8a7cdf7d6cf5e5ebf1273132956533dcf3951b27bca397c"
+      },
+      {
         "path": "app/models/s3_region_site_setting.rb",
         "bytes": 788,
         "sha256": "d62ea0eafea398bfa376283d33b17ea9da050370f107e40b682e521f51fc63de"

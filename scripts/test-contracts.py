@@ -494,6 +494,238 @@ def test_theme_archive() -> None:
             raise RuntimeError("Runtime theme verifier accepted a decoy pinned-semantic mutation.")
 
 
+def test_narrative_avatar_contract() -> None:
+    template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
+    configure = (ROOT / "scripts/configure-site.rb").read_text(encoding="utf-8")
+    verifier = (ROOT / "scripts/verify-site.rb").read_text(encoding="utf-8")
+    VALIDATOR.validate_narrative_avatar_contract(template, configure, verifier)
+    components = json.loads(
+        (ROOT / "docs/operations/third-party-components.v1.json").read_text(encoding="utf-8")
+    )
+    gravatar_paths = {entry["path"] for entry in VALIDATOR.PINNED_GRAVATAR_EVIDENCE}
+    gravatar_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in gravatar_paths
+    ]
+    if gravatar_evidence != VALIDATOR.PINNED_GRAVATAR_EVIDENCE:
+        raise RuntimeError("Pinned automatic Gravatar lifecycle evidence differs.")
+    upstream = (ROOT / "scripts/verify-pinned-source.py").read_text(encoding="utf-8")
+    VALIDATOR.validate_pinned_source_verifier(upstream)
+    for canary in (
+        "PINNED_GRAVATAR_EVIDENCE = {",
+        "PINNED_USER_GRAVATAR_SCHEDULE_BLOCK = b'''",
+        "def verify_gravatar_semantics(core: dict[str, bytes]) -> None:",
+        'verify_gravatar_semantics(core)',
+        'settings.count(b"  automatically_download_gravatars: true\\n") != 1',
+    ):
+        if upstream.count(canary) != 1:
+            raise RuntimeError("Pinned automatic Gravatar semantic gate differs.")
+    fixture = (ROOT / "scripts/test-narrative-avatar.rb").read_text(encoding="utf-8")
+    VALIDATOR.validate_narrative_avatar_fixture(fixture)
+    fixture_hostiles = (
+        fixture.replace("  .sub(avatar_write_order, reordered_avatar_write_order)\n", "", 1),
+        fixture.replace(
+            'assert_fixture(method_source.scan(avatar_write_order).length == 1, "avatar write-order anchor differed")\n',
+            "",
+            1,
+        ),
+        fixture.replace("app_setting: :false, gravatar_response: :success", "app_setting: :true, gravatar_response: :success", 1),
+        fixture.replace("app_setting: :omitted, gravatar_response: :success", "app_setting: :false, gravatar_response: :success", 1),
+        fixture.replace("Jobs.drain_update_gravatar!\n", "", 1),
+    )
+    for hostile_fixture in fixture_hostiles:
+        if hostile_fixture == fixture:
+            raise RuntimeError("Narrative avatar fixture hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_narrative_avatar_fixture(hostile_fixture)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Narrative avatar fixture hostile mutation was accepted.")
+    workflow = (ROOT / ".github/workflows/disposable-bootstrap.yml").read_text(encoding="utf-8")
+    VALIDATOR.validate_narrative_avatar_workflow(workflow)
+    preflight_start = "      - name: Prove one-effective-CPU command path\n"
+    bootstrap_start = "      - name: Bootstrap exact standalone under one effective CPU\n"
+    inert_step = '''      - name: Inert narrative fixture decoy
+        if: ${{ false }}
+        shell: bash
+        run: |
+''' + VALIDATOR.NARRATIVE_AVATAR_WORKFLOW_CALL
+    workflow_hostiles = (
+        workflow.replace(VALIDATOR.NARRATIVE_AVATAR_WORKFLOW_CALL, "", 1).replace(
+            bootstrap_start,
+            inert_step + bootstrap_start,
+            1,
+        ),
+        workflow.replace(
+            preflight_start,
+            preflight_start + "        if: ${{ false }}\n",
+            1,
+        ),
+        workflow.replace(
+            VALIDATOR.NARRATIVE_AVATAR_WORKFLOW_CALL,
+            "          if false; then\n" + VALIDATOR.NARRATIVE_AVATAR_WORKFLOW_CALL + "          fi\n",
+            1,
+        ),
+    )
+    for hostile_workflow in workflow_hostiles:
+        try:
+            VALIDATOR.validate_narrative_avatar_workflow(hostile_workflow)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Narrative avatar workflow hostile mutation was accepted.")
+
+    environment_block = '''  DISCOURSE_ALLOW_EMAIL_INVITES: "false"
+  DISCOURSE_DISCOURSE_NARRATIVE_BOT_ENABLED: "false"
+  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"
+
+  DISCOURSE_LOGIN_REQUIRED: "true"'''
+    hostile_cases = (
+        (
+            template.replace(
+                'DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"',
+                'DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "true"',
+                1,
+            ),
+            configure,
+            verifier,
+        ),
+        (
+            template.replace(
+                environment_block,
+                environment_block.replace(
+                    '  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"\n',
+                    "",
+                ),
+                1,
+            ),
+            configure,
+            verifier,
+        ),
+        (
+            template.replace(
+                environment_block,
+                environment_block.replace(
+                    '  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"\n\n',
+                    "",
+                ) + '\n  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "false"',
+                1,
+            ),
+            configure,
+            verifier,
+        ),
+        (
+            template.replace(
+                '  DISCOURSE_LOGIN_REQUIRED: "true"',
+                '  DISCOURSE_LOGIN_REQUIRED: "true"\n'
+                '  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS: "true"',
+                1,
+            ),
+            configure,
+            verifier,
+        ),
+        (
+            template.replace(
+                '  DISCOURSE_LOGIN_REQUIRED: "true"',
+                '  DISCOURSE_LOGIN_REQUIRED: "true"\n'
+                '  DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS : "true"',
+                1,
+            ),
+            configure,
+            verifier,
+        ),
+        (
+            template.replace(
+                '  DISCOURSE_LOGIN_REQUIRED: "true"',
+                '  DISCOURSE_LOGIN_REQUIRED: "true"\n'
+                '  "DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS": "true"',
+                1,
+            ),
+            configure,
+            verifier,
+        ),
+        (
+            template.replace(
+                '  DISCOURSE_LOGIN_REQUIRED: "true"',
+                '  DISCOURSE_LOGIN_REQUIRED: "true"\n'
+                "  'DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS': \"true\"",
+                1,
+            ),
+            configure,
+            verifier,
+        ),
+        (
+            template,
+            configure.replace(
+                "  automatically_download_gravatars: false,",
+                "  automatically_download_gravatars: true,",
+                1,
+            ),
+            verifier,
+        ),
+        (
+            template,
+            configure.replace("\nconfigure_narrative_system_user!(icon_upload)\n", "\n", 1),
+            verifier,
+        ),
+        (
+            template,
+            configure.replace(
+                "  bot.user_avatar.update!(custom_upload_id: icon_upload.id, gravatar_upload_id: nil)",
+                "  bot.user_avatar.update!(custom_upload_id: icon_upload.id)",
+                1,
+            ),
+            verifier,
+        ),
+        (
+            template,
+            configure,
+            verifier.replace(
+                'ENV["DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS"] == "false" &&',
+                'ENV["DISCOURSE_AUTOMATICALLY_DOWNLOAD_GRAVATARS"] == "true" &&',
+                1,
+            ),
+        ),
+        (
+            template,
+            configure,
+            verifier.replace(
+                "SiteSetting.automatically_download_gravatars == false",
+                "SiteSetting.automatically_download_gravatars == true",
+                1,
+            ),
+        ),
+        (
+            template,
+            configure,
+            verifier.replace(
+                'checks["narrative_system_user_gravatar_absent"] =\n',
+                'checks["narrative_system_user_gravatar_absent"] = true ||\n',
+                1,
+            ),
+        ),
+        (
+            template,
+            configure,
+            verifier.replace(
+                'checks["narrative_system_user_branded"] =\n  checks.values_at(',
+                'checks["narrative_system_user_branded"] = true ||\n  checks.values_at(',
+                1,
+            ),
+        ),
+    )
+    for hostile_template, hostile_configure, hostile_verifier in hostile_cases:
+        try:
+            VALIDATOR.validate_narrative_avatar_contract(
+                hostile_template,
+                hostile_configure,
+                hostile_verifier,
+            )
+        except RuntimeError:
+            continue
+        raise RuntimeError("Narrative avatar hostile mutation was accepted.")
+
+
 def test_branding_email_renderer_contract() -> None:
     renderer = (ROOT / "scripts/render-branding-email.rb").read_text(encoding="utf-8")
     VALIDATOR.validate_branding_email_renderer(renderer)
@@ -1349,6 +1581,7 @@ def test_storage_response_boundary() -> None:
         "test-storage-response-boundary.rb",
         "test-backup-url-boundary.rb",
         "test-normal-upload-inventory.rb",
+        "test-narrative-avatar.rb",
         "test-sidekiq-processing-probe.rb",
     ):
         pattern = re.compile(
@@ -1700,7 +1933,7 @@ def expect_validation_failure(action, label: str) -> None:
 
 def test_repository_governance() -> None:
     allowed = sorted(VALIDATOR.ALLOWED_FILES)
-    if len(allowed) != 160:
+    if len(allowed) != 161:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")
@@ -5054,6 +5287,7 @@ def test_runtime_rails_execution_contract() -> None:
 def main() -> int:
     test_renderer()
     test_theme_archive()
+    test_narrative_avatar_contract()
     test_branding_email_renderer_contract()
     test_certificate_create_cleanup()
     test_certificate_identity_read_allowlist()

@@ -42,6 +42,26 @@ PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)
   end
 
 '''
+PINNED_GRAVATAR_EVIDENCE = {
+    "app/models/user.rb": (
+        73523,
+        "79c453b7bf56a69f7919572020ffa5fdf9b32de37255439d0a22c2b73f3ff7ca",
+    ),
+    "app/models/user_avatar.rb": (
+        7189,
+        "a53eb92ffe3793ef32c3f48f3e3216133916424a19a2ffea376b22e0b705a5a9",
+    ),
+    "app/jobs/regular/update_gravatar.rb": (
+        539,
+        "2757a35e7521b9b6d8a7cdf7d6cf5e5ebf1273132956533dcf3951b27bca397c",
+    ),
+}
+PINNED_USER_GRAVATAR_SCHEDULE_BLOCK = b'''    if primary_email.present? && SiteSetting.automatically_download_gravatars? &&
+         !avatar.last_gravatar_download_attempt
+      Jobs.cancel_scheduled_job(:update_gravatar, user_id: id, avatar_id: avatar.id)
+      Jobs.enqueue_in(1.second, :update_gravatar, user_id: id, avatar_id: avatar.id)
+    end
+'''
 
 
 def load(relative: str) -> dict:
@@ -407,6 +427,45 @@ def verify_email_semantics(source: bytes) -> None:
     verify_email_extract_parts_method(source)
 
 
+def verify_gravatar_semantics(core: dict[str, bytes]) -> None:
+    for path, (expected_bytes, expected_sha256) in PINNED_GRAVATAR_EVIDENCE.items():
+        source = core[path]
+        if len(source) != expected_bytes or hashlib.sha256(source).hexdigest() != expected_sha256:
+            raise RuntimeError(f"Pinned Gravatar lifecycle source changed: {path}")
+
+    user = core["app/models/user.rb"]
+    if (
+        user.count(b"  after_save :refresh_avatar\n") != 1
+        or user.count(PINNED_USER_GRAVATAR_SCHEDULE_BLOCK) != 1
+    ):
+        raise RuntimeError("Pinned user Gravatar scheduling semantics changed.")
+
+    avatar = core["app/models/user_avatar.rb"]
+    require(
+        core,
+        "app/models/user_avatar.rb",
+        (
+            b'Discourse::SYSTEM_USER_ID => User.email_hash("info@discourse.org")',
+            b'DistributedMutex.synchronize("update_gravatar_#{user_id}")',
+            b'"https://#{SiteSetting.gravatar_base_url}/avatar/#{email_hash}.png?s=#{max}&d=404&reset_cache=',
+            b"update!(gravatar_upload: upload)",
+        ),
+    )
+    if avatar.count(b"update!(gravatar_upload: upload)") != 1:
+        raise RuntimeError("Pinned Gravatar upload mutation is ambiguous.")
+
+    job = core["app/jobs/regular/update_gravatar.rb"]
+    if (
+        job.count(b'sidekiq_options queue: "low"') != 1
+        or job.count(b"avatar.update_gravatar!") != 1
+    ):
+        raise RuntimeError("Pinned delayed Gravatar job semantics changed.")
+
+    settings = core["config/site_settings.yml"]
+    if settings.count(b"  automatically_download_gravatars: true\n") != 1:
+        raise RuntimeError("Pinned automatic Gravatar default changed.")
+
+
 def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
     require(
         docker,
@@ -452,6 +511,7 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
     )
     require(core, "app/views/metadata/opensearch.xml.erb", (b"<Tags>discourse forum</Tags>",))
     verify_email_semantics(core["lib/email.rb"])
+    verify_gravatar_semantics(core)
     require(
         core,
         "lib/file_store/s3_store.rb",

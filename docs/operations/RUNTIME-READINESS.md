@@ -120,7 +120,8 @@ Before public access, record current evidence that:
 The exact runtime must prove:
 
 - `login_required=true`, `secure_uploads=false`, native registration closed,
-  local login disabled, and every additional login provider disabled;
+  local login disabled, every additional login provider disabled, and
+  `automatically_download_gravatars=false` before narrative-user branding;
 - the built-in DiscourseConnect consumer is the sole member login path;
 - valid active/verified members pass while anonymous, inactive, unverified,
   malformed, expired, replayed, and cross-session requests fail;
@@ -130,7 +131,8 @@ The exact runtime must prove:
   a standing public local-login form; and
 - public/member HTML, metadata, PWA assets, emails, errors, logos, footer, and
   upload notice are Mochirii-branded while required legal notices remain
-  preserved internally.
+  preserved internally; the narrative system user retains the exact Mochirii
+  active avatar with no asynchronously downloaded Gravatar after Sidekiq runs.
 
 DiscourseConnect stays disabled through backup and disposable restore. After
 the irreversible marker exists, provision the same secret while the Website
