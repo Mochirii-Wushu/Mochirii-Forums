@@ -104,6 +104,41 @@ THEME_ASSETS = {
         "039a3356756542ed351d87a6756d5f7c769bdaec6a1a0fca58f486149455878b",
     ),
 }
+THEME_RUNTIME_VERIFIER_BLOCK = '''checks["theme_logo_uploads"] =
+  %w[mochirii_emblem mochirii_icon mochirii_social_card].all? { |name| theme_uploads[name]&.upload }
+if checks["theme_logo_uploads"]
+  emblem_id = theme_uploads.fetch("mochirii_emblem").upload.id
+  icon_id = theme_uploads.fetch("mochirii_icon").upload.id
+  icon_upload = theme_uploads.fetch("mochirii_icon").upload
+  social_card_id = theme_uploads.fetch("mochirii_social_card").upload.id
+  checks["theme_logo_settings"] =
+    [
+      SiteSetting.logo,
+      SiteSetting.logo_dark,
+      SiteSetting.mobile_logo,
+      SiteSetting.mobile_logo_dark,
+    ].all? { |value| value&.id == emblem_id } &&
+      [
+        SiteSetting.logo_small,
+        SiteSetting.logo_small_dark,
+        SiteSetting.favicon,
+        SiteSetting.apple_touch_icon,
+      ].all? { |value| value&.id == icon_id } &&
+      [
+        SiteSetting.digest_logo,
+        SiteSetting.large_icon,
+        SiteSetting.manifest_icon,
+        SiteSetting.opengraph_image,
+      ].all? { |value| value&.id == social_card_id }
+else
+  checks["theme_logo_settings"] = false
+end
+compiled_theme = theme&.javascript_cache&.content.to_s
+checks["upload_notice_connector_compiled"] =
+  compiled_theme.include?('"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":') &&
+    compiled_theme.include?("Direct upload URLs may be accessed without a forum session")
+'''
+RUNTIME_VERIFIER_SHA256 = "7db29c5efb3ff62f7831c07f8742cc8a01c7dff87d45185d93e71143a1bb1e0f"
 ALLOWED_FILES = frozenset(
     {
     ".env.example",
@@ -293,6 +328,18 @@ JSON_SHAPE_SHA256 = {
 
 def fail(message: str) -> None:
     raise RuntimeError(message)
+
+
+def validate_theme_runtime_verifier(source: str) -> None:
+    start = 'checks["theme_logo_uploads"] =\n'
+    end = 'checks["core_revision"] ='
+    if source.count(start) != 1 or source.count(end) != 1:
+        fail("Runtime theme verifier block boundary differs.")
+    block = source[source.index(start) : source.index(end)]
+    if block != THEME_RUNTIME_VERIFIER_BLOCK:
+        fail("Runtime theme verifier differs from the exact pinned semantic block.")
+    if hashlib.sha256(source.encode("utf-8")).hexdigest() != RUNTIME_VERIFIER_SHA256:
+        fail("Runtime verifier differs from the exact reviewed source digest.")
 
 
 def validate_inventory_paths(
@@ -893,6 +940,7 @@ def validate_theme_and_public_source() -> None:
     expected_notice = "Direct upload URLs may be accessed without a forum session. Do not upload confidential material."
     if expected_notice not in notice:
         fail("The mandatory public-upload notice changed.")
+    validate_theme_runtime_verifier(read("scripts/verify-site.rb"))
     for relative in (
         "theme/mochirii/common/head_tag.html",
         "theme/mochirii/common/footer.html",

@@ -409,6 +409,89 @@ def test_theme_archive() -> None:
                 raise RuntimeError("Theme archive contains an unsafe path.")
         if not hashlib.sha256(first_bytes).hexdigest():
             raise RuntimeError("Theme archive digest could not be calculated.")
+    verifier = (ROOT / "scripts/verify-site.rb").read_text(encoding="utf-8")
+    VALIDATOR.validate_theme_runtime_verifier(verifier)
+    hostile_replacements = (
+        ('].all? { |value| value&.id == emblem_id }', '].all? { |value| value == emblem_id }'),
+        ('].all? { |value| value&.id == icon_id }', '].all? { |value| value == icon_id }'),
+        ('].all? { |value| value&.id == social_card_id }', '].all? { |value| value == social_card_id }'),
+        (
+            '"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":',
+            '"discourse/connectors/composer-fields-below/mochirii-upload-notice":',
+        ),
+        ('checks["theme_logo_settings"] =\n    [', 'checks["theme_logo_settings"] = true ||\n    ['),
+        (
+            '].all? { |value| value&.id == emblem_id } &&',
+            '].all? { |value| value&.id == emblem_id } ||',
+        ),
+        (
+            '].all? { |value| value&.id == icon_id } &&',
+            '].all? { |value| value&.id == icon_id } ||',
+        ),
+        (
+            """compiled_theme.include?('"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":') &&""",
+            """compiled_theme.include?('"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":') ||""",
+        ),
+    )
+    for current, stale in hostile_replacements:
+        hostile = verifier.replace(current, stale, 1)
+        if hostile == verifier:
+            raise RuntimeError("Runtime theme verifier hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_theme_runtime_verifier(hostile)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Runtime theme verifier accepted a stale pinned-semantic mutation.")
+    decoy_hostiles = (
+        verifier.replace(
+            '].all? { |value| value&.id == emblem_id }',
+            '].all? { true } # ].all? { |value| value&.id == emblem_id }',
+            1,
+        ),
+        verifier.replace(
+            """compiled_theme.include?('"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":')""",
+            """compiled_theme.include?('"discourse/' 'connectors/composer-fields-below/mochirii-upload-notice":') # "discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":""",
+            1,
+        ),
+        verifier.replace(
+            'checks["repository_revision"] =',
+            'checks["theme_logo_settings"] = true\n'
+            'checks["upload_notice_connector_compiled"] = true\n'
+            'checks["repository_revision"] =',
+            1,
+        ),
+        verifier.replace(
+            'checks["repository_revision"] =',
+            'results = checks\n'
+            'results["theme_logo_settings"] = true\n'
+            'results["upload_notice_connector_compiled"] = true\n'
+            'checks["repository_revision"] =',
+            1,
+        ),
+        verifier.replace(
+            'checks["repository_revision"] =',
+            'checks.merge!("theme_logo_settings" => true, "upload_notice_connector_compiled" => true)\n'
+            'checks["repository_revision"] =',
+            1,
+        ),
+        verifier.replace(
+            'checks["repository_revision"] =',
+            'checks["theme_logo_" + "settings"] = true\n'
+            'checks["upload_notice_" + "connector_compiled"] = true\n'
+            'checks["repository_revision"] =',
+            1,
+        ),
+    )
+    for hostile in decoy_hostiles:
+        if hostile == verifier:
+            raise RuntimeError("Runtime theme verifier decoy hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_theme_runtime_verifier(hostile)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Runtime theme verifier accepted a decoy pinned-semantic mutation.")
 
 
 def test_certificate_create_cleanup() -> None:

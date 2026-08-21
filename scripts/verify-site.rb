@@ -30,25 +30,25 @@ if checks["theme_logo_uploads"]
       SiteSetting.logo_dark,
       SiteSetting.mobile_logo,
       SiteSetting.mobile_logo_dark,
-    ].all? { |value| value == emblem_id } &&
+    ].all? { |value| value&.id == emblem_id } &&
       [
         SiteSetting.logo_small,
         SiteSetting.logo_small_dark,
         SiteSetting.favicon,
         SiteSetting.apple_touch_icon,
-      ].all? { |value| value == icon_id } &&
+      ].all? { |value| value&.id == icon_id } &&
       [
         SiteSetting.digest_logo,
         SiteSetting.large_icon,
         SiteSetting.manifest_icon,
         SiteSetting.opengraph_image,
-      ].all? { |value| value == social_card_id }
+      ].all? { |value| value&.id == social_card_id }
 else
   checks["theme_logo_settings"] = false
 end
 compiled_theme = theme&.javascript_cache&.content.to_s
 checks["upload_notice_connector_compiled"] =
-  compiled_theme.include?('"discourse/connectors/composer-fields-below/mochirii-upload-notice":') &&
+  compiled_theme.include?('"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":') &&
     compiled_theme.include?("Direct upload URLs may be accessed without a forum session")
 checks["core_revision"] = Discourse.git_version == "cbf996f65aae3da1843224aa624bcd9a225931ac"
 checks["repository_revision"] = ENV["MOCHIRII_REPOSITORY_COMMIT"]&.match?(/\A[0-9a-f]{40}\z/) == true
