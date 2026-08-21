@@ -392,6 +392,44 @@ def test_renderer() -> None:
                 raise RuntimeError("Stage 4 DiscourseConnect fixture accepted a non-lowercase key.")
 
 
+def test_opensearch_filter_contract() -> None:
+    template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
+    VALIDATOR.validate_opensearch_filter_contract(template)
+    hostile_replacements = (
+        ("sub_filter_types application/xml;", "sub_filter_types application/opensearchdescription+xml;"),
+        ("sub_filter_once off;", "sub_filter_once on;"),
+        ("<Tags>discourse forum</Tags>", "<Tags>forum</Tags>"),
+        ("<Tags>Mochirii Forums</Tags>", "<Tags>Mochirii</Tags>"),
+    )
+    for current, stale in hostile_replacements:
+        hostile = template.replace(current, stale, 1)
+        if hostile == template:
+            raise RuntimeError("OpenSearch nginx hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_opensearch_filter_contract(hostile)
+        except RuntimeError:
+            continue
+        raise RuntimeError("OpenSearch nginx filter accepted a mismatched media type or replacement.")
+
+    controller = (
+        b"class MetadataController < ApplicationController\n"
+        + UPSTREAM.PINNED_OPENSEARCH_CONTROLLER_BLOCK
+        + b"  def app_association_android\n  end\nend\n"
+    )
+    UPSTREAM.verify_opensearch_controller_method(controller)
+    controller_hostiles = (
+        controller.replace(b"formats: [:xml]", b"formats: [:json]", 1),
+        controller.replace(b"expires_in 1.minute", b"expires_now", 1),
+        controller.replace(b'template: "metadata/opensearch"', b'template: "metadata/manifest"', 1),
+    )
+    for hostile in controller_hostiles:
+        try:
+            UPSTREAM.verify_opensearch_controller_method(hostile)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Pinned OpenSearch controller accepted a hostile rendering mutation.")
+
+
 def test_theme_archive() -> None:
     with tempfile.TemporaryDirectory(prefix="mochirii-theme-test-") as directory:
         first = Path(directory) / "one.zip"
@@ -5595,6 +5633,7 @@ def test_runtime_rails_execution_contract() -> None:
 
 def main() -> int:
     test_renderer()
+    test_opensearch_filter_contract()
     test_theme_archive()
     test_narrative_avatar_contract()
     test_branding_email_renderer_contract()

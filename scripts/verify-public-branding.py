@@ -272,7 +272,9 @@ def main() -> int:
             raise RuntimeError(f"Public identity image is absent: {key}")
         verify_image(args.base_url, source)
 
-    opensearch = responses["/opensearch.xml"][1]
+    opensearch_type, opensearch = responses["/opensearch.xml"]
+    if opensearch_type.split(";", 1)[0].strip().lower() != "application/xml":
+        raise RuntimeError("OpenSearch metadata did not use the pinned XML response type.")
     if "<Tags>Mochirii Forums</Tags>" not in opensearch or "<Tags>discourse forum</Tags>" in opensearch:
         raise RuntimeError("OpenSearch metadata was not replaced exactly.")
 

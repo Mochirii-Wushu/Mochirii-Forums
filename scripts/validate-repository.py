@@ -193,14 +193,21 @@ checks["narrative_system_user_branded"] =
 '''
 RUNTIME_VERIFIER_SHA256 = "4e7dedd8f2b10c2049defd855316e6d72f5716704d5a0c9430858a8e7c45663a"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "2eb8acf2626011b91e0f37880fffe0ec6cefdeb9f1415f791e0ad4571119f734"
+APP_TEMPLATE_SHA256 = "a6f61d032e77f65b7825bd089386890ee7564b1af9cb451bbdbb9c37c9d5e9db"
+OPENSEARCH_FILTER_BLOCK = '''        sub_filter_once off;
+        sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
+        sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
+        # The pinned metadata controller renders formats: [:xml], which Rails
+        # serves as application/xml. Bind the replacement to that exact type.
+        sub_filter_types application/xml;
+'''
 NARRATIVE_AVATAR_FIXTURE_SHA256 = "4c3d3945c022ee9c344787f3331367b85bd5602dc071482d3e00a66d8ea6ad0e"
 NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
 BRANDING_EMAIL_RENDERER_SHA256 = "80d8ff8a52018314f806d9b70c97cadb81bd0e91482bb22725a6e180216436b2"
-PINNED_SOURCE_VERIFIER_SHA256 = "2d38f3a9a1fdabafcbf37691ac95b18fb6b87cccfdaf2bce61d1867e5c88939b"
+PINNED_SOURCE_VERIFIER_SHA256 = "4651050d754daf53553c659102e5bc5e07ea2a28881d79aa353f90a209495ed1"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
@@ -210,6 +217,18 @@ PINNED_EMAIL_EVIDENCE = {
     "bytes": 1549,
     "sha256": "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2",
 }
+PINNED_OPENSEARCH_EVIDENCE = [
+    {
+        "path": "app/controllers/metadata_controller.rb",
+        "bytes": 4914,
+        "sha256": "7bf4d3f2034773d7cc5ad5c1ea621b8716caed198cd5f7a4a377bb6a04321de6",
+    },
+    {
+        "path": "app/views/metadata/opensearch.xml.erb",
+        "bytes": 926,
+        "sha256": "44e583c097b8dacc3a6825e7d9376505ff886c521b6632bd9ad176ea6360cc64",
+    },
+]
 PINNED_MAIL_RENDERING_EVIDENCE = [
     {
         "path": "app/mailers/user_notifications.rb",
@@ -462,7 +481,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "c892f981a8cf54356f62970d1f408708c53db8a3ffee1c7d5b195299386b12dd",
+    "docs/operations/third-party-components.v1.json": "32bf20277854c6b2d55e6cb2bcc02be1f695c31fbb881b0c3b84e365bd23a6c7",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -791,8 +810,14 @@ def validate_pinned_source_verifier(source: str) -> None:
     required = (
         'verify_email_semantics(core["lib/email.rb"])',
         "verify_mail_evidence_manifest(components)",
+        "verify_opensearch_evidence_manifest(components)",
+        "verify_opensearch_semantics(core)",
         "verify_mail_semantics(core)",
         "def verify_mail_evidence_manifest(components: dict) -> None:",
+        "def verify_opensearch_evidence_manifest(components: dict) -> None:",
+        "def verify_opensearch_controller_method(source: bytes) -> None:",
+        "def verify_opensearch_semantics(core: dict[str, bytes]) -> None:",
+        "PINNED_OPENSEARCH_CONTROLLER_BLOCK = b'''",
         "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
         "PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''",
         "PINNED_TOPIC_FOR_DIGEST_BLOCK = b'''",
@@ -816,7 +841,7 @@ def validate_pinned_source_verifier(source: str) -> None:
         'if b"SiteSetting.digest_logo_url" in helper:',
     )
     if any(source.count(value) != 1 for value in required):
-        fail("Pinned-source verifier does not execute the exact mail semantic gates once.")
+        fail("Pinned-source verifier does not execute the exact mail and OpenSearch semantic gates once.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != PINNED_SOURCE_VERIFIER_SHA256:
         fail("Pinned-source verifier differs from the exact reviewed source digest.")
 
@@ -1158,6 +1183,14 @@ def validate_manifests() -> None:
     ]
     if email_evidence != [PINNED_EMAIL_EVIDENCE]:
         fail("Pinned email extraction API evidence changed.")
+    opensearch_paths = {expected["path"] for expected in PINNED_OPENSEARCH_EVIDENCE}
+    opensearch_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in opensearch_paths
+    ]
+    if opensearch_evidence != PINNED_OPENSEARCH_EVIDENCE:
+        fail("Pinned OpenSearch controller and template evidence changed.")
     mail_rendering_paths = {expected["path"] for expected in PINNED_MAIL_RENDERING_EVIDENCE}
     mail_rendering_evidence = [
         entry
@@ -1272,6 +1305,22 @@ def validate_manifests() -> None:
                 fail(f"Invalid application evidence: {entry['path']}")
 
 
+def validate_opensearch_filter_contract(app: str) -> None:
+    outlet_start = "      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
+    outlet_end = "  - file:\n      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
+    if app.count(outlet_start) != 1 or app.count(outlet_end) != 1:
+        fail("Public metadata nginx outlet boundary differs.")
+    start = app.index(outlet_start)
+    end = app.index(outlet_end, start)
+    outlet = app[start:end]
+    if (
+        outlet.count(OPENSEARCH_FILTER_BLOCK) != 1
+        or outlet.count("sub_filter_types application/xml;") != 1
+        or "application/opensearchdescription+xml" in outlet
+    ):
+        fail("OpenSearch nginx replacement is not bound to the pinned application/xml response.")
+
+
 def validate_template() -> None:
     app = read("config/app.yml.example")
     require_text(
@@ -1375,6 +1424,7 @@ def validate_template() -> None:
         read("scripts/configure-site.rb"),
         read("scripts/verify-site.rb"),
     )
+    validate_opensearch_filter_contract(app)
 
     forbidden = [
         r"(?m)^\s*DISCOURSE_CDN_URL:",
@@ -1475,6 +1525,8 @@ def validate_theme_and_public_source() -> None:
             "x-amz-(?:algorithm|credential|date|expires|security-token|signature|signedheaders)",
             "awsaccesskeyid",
             "authorization\\s*[=:]\\s*aws4-hmac-sha256",
+            'opensearch_type.split(";", 1)[0].strip().lower() != "application/xml"',
+            "OpenSearch metadata did not use the pinned XML response type.",
         ],
         "bounded public signed-credential decoding",
     )

@@ -215,7 +215,9 @@ __MOCHIRII_TLS_RUN__
         sub_filter_once off;
         sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
         sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
-        sub_filter_types application/opensearchdescription+xml;
+        # The pinned metadata controller renders formats: [:xml], which Rails
+        # serves as application/xml. Bind the replacement to that exact type.
+        sub_filter_types application/xml;
   - file:
       path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf
       contents: |

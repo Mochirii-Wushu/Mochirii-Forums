@@ -91,6 +91,11 @@
         "sha256": "fd9b06c6b412094457b7cb7fa00ac19d5ac5d492d21f6988e3396d9317448e27"
       },
       {
+        "path": "app/controllers/metadata_controller.rb",
+        "bytes": 4914,
+        "sha256": "7bf4d3f2034773d7cc5ad5c1ea621b8716caed198cd5f7a4a377bb6a04321de6"
+      },
+      {
         "path": "app/views/metadata/opensearch.xml.erb",
         "bytes": 926,
         "sha256": "44e583c097b8dacc3a6825e7d9376505ff886c521b6632bd9ad176ea6360cc64"

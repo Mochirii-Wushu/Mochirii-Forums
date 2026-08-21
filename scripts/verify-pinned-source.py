@@ -24,6 +24,22 @@ MANAGER_REPOSITORY = "discourse/docker_manager"
 ACME_REPOSITORY = "acmesh-official/acme.sh"
 PINNED_EMAIL_SHA256 = "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2"
 PINNED_EMAIL_BYTES = 1549
+PINNED_OPENSEARCH_EVIDENCE = {
+    "app/controllers/metadata_controller.rb": (
+        4914,
+        "7bf4d3f2034773d7cc5ad5c1ea621b8716caed198cd5f7a4a377bb6a04321de6",
+    ),
+    "app/views/metadata/opensearch.xml.erb": (
+        926,
+        "44e583c097b8dacc3a6825e7d9376505ff886c521b6632bd9ad176ea6360cc64",
+    ),
+}
+PINNED_OPENSEARCH_CONTROLLER_BLOCK = b'''  def opensearch
+    expires_in 1.minute
+    render template: "metadata/opensearch", formats: [:xml]
+  end
+
+'''
 PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)
     mail = Mail.new(raw)
     text = nil
@@ -868,6 +884,50 @@ def verify_mail_evidence_manifest(components: dict) -> None:
             raise RuntimeError(f"Pinned mail semantic evidence changed: {path}")
 
 
+def verify_opensearch_evidence_manifest(components: dict) -> None:
+    entries = components.get("application", {}).get("semanticEvidenceFiles")
+    if not isinstance(entries, list):
+        raise RuntimeError("Pinned OpenSearch semantic evidence inventory is absent.")
+    for path, (expected_bytes, expected_sha256) in PINNED_OPENSEARCH_EVIDENCE.items():
+        matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("path") == path]
+        if len(matches) != 1:
+            raise RuntimeError(f"Pinned OpenSearch semantic evidence is not unique: {path}")
+        entry = matches[0]
+        if (
+            set(entry) != {"path", "bytes", "sha256"}
+            or type(entry["bytes"]) is not int
+            or entry["bytes"] != expected_bytes
+            or not isinstance(entry["sha256"], str)
+            or entry["sha256"] != expected_sha256
+        ):
+            raise RuntimeError(f"Pinned OpenSearch semantic evidence changed: {path}")
+
+
+def verify_opensearch_controller_method(source: bytes) -> None:
+    verify_exact_region(
+        source,
+        b"  def opensearch\n",
+        b"  def app_association_android\n",
+        PINNED_OPENSEARCH_CONTROLLER_BLOCK,
+        "OpenSearch controller method",
+    )
+
+
+def verify_opensearch_semantics(core: dict[str, bytes]) -> None:
+    for path, (expected_bytes, expected_sha256) in PINNED_OPENSEARCH_EVIDENCE.items():
+        source = core.get(path)
+        if source is None:
+            raise RuntimeError(f"Pinned OpenSearch semantic source is absent: {path}")
+        if len(source) != expected_bytes or hashlib.sha256(source).hexdigest() != expected_sha256:
+            raise RuntimeError(f"Pinned OpenSearch semantic source changed: {path}")
+    verify_opensearch_controller_method(core["app/controllers/metadata_controller.rb"])
+    require(
+        core,
+        "app/views/metadata/opensearch.xml.erb",
+        (b"<Tags>discourse forum</Tags>",),
+    )
+
+
 def verify_email_extract_parts_method(source: bytes) -> None:
     start = b"  def self.extract_parts(raw)\n"
     end = b"  def self.site_title\n"
@@ -1065,7 +1125,7 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
         "app/views/layouts/_head.html.erb",
         (b'<meta name="generator" content="Discourse <%= Discourse::VERSION::STRING %> - https://github.com/discourse/discourse version <%= Discourse.git_version %>">',),
     )
-    require(core, "app/views/metadata/opensearch.xml.erb", (b"<Tags>discourse forum</Tags>",))
+    verify_opensearch_semantics(core)
     verify_email_semantics(core["lib/email.rb"])
     verify_mail_semantics(core)
     verify_gravatar_semantics(core)
@@ -1148,6 +1208,7 @@ def main() -> int:
     components = load("docs/operations/third-party-components.v1.json")
     identity = load("docs/operations/forum-central-identity.consumer.v1.json")
     verify_mail_evidence_manifest(components)
+    verify_opensearch_evidence_manifest(components)
     if not args.online:
         print("Pinned-source manifest structure passed; online bytes were not requested.")
         return 0
