@@ -476,6 +476,314 @@ def test_login_code_denial_contract() -> None:
         raise RuntimeError("Pinned local email-code denial accepted a hostile controller mutation.")
 
 
+def test_https_consumer_fixture_contract() -> None:
+    verifier = (ROOT / "scripts/verify-discourse-connect.py").read_text(encoding="utf-8")
+    VALIDATOR.validate_https_consumer_fixture_contract(verifier)
+    hostile_mutations = (
+        ('"X-Forwarded-Proto": "https"', '"X-Forwarded-Proto": "http"'),
+        (
+            'ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"',
+            'ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"',
+        ),
+        ("original_force_https = read_fixture_force_https()", "original_force_https = False"),
+        ("set_fixture_force_https(self.original)", "set_fixture_force_https(False)"),
+        ("raise SystemExit(128 + signum)", "raise RuntimeError(signum)"),
+        ("atexit.unregister(restore_force_https)", "atexit.unregister(lambda: None)"),
+        (
+            "run_with_fixture_force_https(lambda: verify_fixture(args, secret))",
+            "verify_fixture(args, secret)",
+        ),
+        (
+            'arguments=("true" if enabled else "false",)',
+            'arguments=("false" if enabled else "true",)',
+        ),
+        (
+            "    finally:\n        absence_error: BaseException | None = None",
+            "    absence_error: BaseException | None = None",
+        ),
+        (
+            "def run_with_fixture_force_https(operation: Callable[[], None]) -> None:\n",
+            "def run_with_fixture_force_https(operation: Callable[[], None]) -> None:\n"
+            "    return\n",
+        ),
+        (
+            "def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:\n",
+            "def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:\n"
+            "    return\n",
+        ),
+        (
+            "    verify_fixture_user()\n",
+            "    os._exit(0)\n",
+        ),
+        (
+            "    valid = Session(args.port)\n",
+            "    valid, verify_fixture_user = Session(args.port), (lambda: None)\n",
+        ),
+    )
+    for current, hostile in hostile_mutations:
+        candidate = verifier.replace(current, hostile, 1)
+        if candidate == verifier:
+            raise RuntimeError("HTTPS consumer fixture hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_https_consumer_fixture_contract(candidate)
+        except RuntimeError:
+            continue
+        raise RuntimeError("HTTPS consumer fixture accepted a scheme or restoration hostile mutation.")
+
+    unreachable_wrapper = verifier.replace(
+        "    run_with_fixture_force_https(lambda: verify_fixture(args, secret))\n"
+        '    print("Built-in DiscourseConnect consumer fixtures passed.")\n'
+        "    return 0",
+        "    verify_fixture(args, secret)\n"
+        "    return 0\n"
+        "    run_with_fixture_force_https(lambda: verify_fixture(args, secret))\n"
+        '    print("Built-in DiscourseConnect consumer fixtures passed.")',
+        1,
+    )
+    if unreachable_wrapper == verifier:
+        raise RuntimeError("HTTPS consumer fixture unreachable-wrapper anchor is absent.")
+    try:
+        VALIDATOR.validate_https_consumer_fixture_contract(unreachable_wrapper)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("HTTPS consumer fixture accepted an unreachable wrapper call.")
+
+    shadowed_wrapper = verifier.replace(
+        "    run_with_fixture_force_https(lambda: verify_fixture(args, secret))",
+        "    run_with_fixture_force_https = lambda _operation: None\n"
+        "    run_with_fixture_force_https(lambda: verify_fixture(args, secret))",
+        1,
+    )
+    if shadowed_wrapper == verifier:
+        raise RuntimeError("HTTPS consumer fixture shadowed-wrapper anchor is absent.")
+    try:
+        VALIDATOR.validate_https_consumer_fixture_contract(shadowed_wrapper)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("HTTPS consumer fixture accepted a locally shadowed wrapper.")
+
+    rebound_wrapper = verifier.replace(
+        "def main() -> int:",
+        "run_with_fixture_force_https = lambda _operation: None\n\n\ndef main() -> int:",
+        1,
+    )
+    if rebound_wrapper == verifier:
+        raise RuntimeError("HTTPS consumer fixture rebound-wrapper anchor is absent.")
+    try:
+        VALIDATOR.validate_https_consumer_fixture_contract(rebound_wrapper)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("HTTPS consumer fixture accepted a rebound global wrapper.")
+
+    pattern_rebound_wrapper = verifier.replace(
+        "def main() -> int:",
+        "match (lambda _operation: None):\n"
+        "    case run_with_fixture_force_https:\n"
+        "        pass\n\n\n"
+        "def main() -> int:",
+        1,
+    )
+    if pattern_rebound_wrapper == verifier:
+        raise RuntimeError("HTTPS consumer fixture pattern-rebound anchor is absent.")
+    try:
+        VALIDATOR.validate_https_consumer_fixture_contract(pattern_rebound_wrapper)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("HTTPS consumer fixture accepted a pattern-rebound global wrapper.")
+
+    reflectively_rebound_wrapper = verifier.replace(
+        "def main() -> int:",
+        'globals()["run_with_fixture_force_https"] = lambda _operation: None\n\n\n'
+        "def main() -> int:",
+        1,
+    )
+    if reflectively_rebound_wrapper == verifier:
+        raise RuntimeError("HTTPS consumer fixture reflective-rebind anchor is absent.")
+    try:
+        VALIDATOR.validate_https_consumer_fixture_contract(reflectively_rebound_wrapper)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("HTTPS consumer fixture accepted a reflective global wrapper rebind.")
+
+    disabled_entrypoint = verifier.replace(
+        'if __name__ == "__main__":\n    raise SystemExit(main())',
+        'if __name__ == "__main__":\n    pass',
+        1,
+    )
+    if disabled_entrypoint == verifier:
+        raise RuntimeError("HTTPS consumer fixture disabled-entrypoint anchor is absent.")
+    try:
+        VALIDATOR.validate_https_consumer_fixture_contract(disabled_entrypoint)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("HTTPS consumer fixture accepted a disabled module entry point.")
+
+    imported_module_name = verifier.replace(
+        "def main() -> int:",
+        "from sys import __name__\n\n\ndef main() -> int:",
+        1,
+    )
+    if imported_module_name == verifier:
+        raise RuntimeError("HTTPS consumer fixture imported-name anchor is absent.")
+    try:
+        VALIDATOR.validate_https_consumer_fixture_contract(imported_module_name)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("HTTPS consumer fixture accepted an imported module name guard.")
+
+    original_runner = CONNECT_FIXTURE.run_container_runner
+    runner_calls: list[tuple[str, tuple[str, ...]]] = []
+    try:
+        def record_runner(
+            script: str,
+            *,
+            arguments: tuple[str, ...] = (),
+            input_bytes: bytes | None = None,
+            capture_stdout: bool = False,
+        ) -> bytes:
+            if input_bytes is not None or capture_stdout:
+                raise RuntimeError("Force-HTTPS setter changed its runner boundary.")
+            runner_calls.append((script, arguments))
+            return b""
+
+        CONNECT_FIXTURE.run_container_runner = record_runner
+        CONNECT_FIXTURE.set_fixture_force_https(True)
+        CONNECT_FIXTURE.set_fixture_force_https(False)
+        if [arguments for _script, arguments in runner_calls] != [("true",), ("false",)]:
+            raise RuntimeError("Force-HTTPS setter inverted its Rails boolean arguments.")
+        if any(
+            'ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"' not in script
+            or 'ARGV.fetch(0) == "true"' not in script
+            or '"$1"' not in script
+            for script, _arguments in runner_calls
+        ):
+            raise RuntimeError("Force-HTTPS setter bypassed its guarded Rails argument contract.")
+    finally:
+        CONNECT_FIXTURE.run_container_runner = original_runner
+
+    original_setter = CONNECT_FIXTURE.set_fixture_force_https
+    calls: list[bool] = []
+    try:
+        CONNECT_FIXTURE.set_fixture_force_https = calls.append
+        restorer = CONNECT_FIXTURE.FixtureForceHttpsRestorer(True)
+        restorer()
+        restorer()
+        if calls != [True] or restorer.pending:
+            raise RuntimeError("Force-HTTPS restoration was not exact and once-only.")
+    finally:
+        CONNECT_FIXTURE.set_fixture_force_https = original_setter
+
+    try:
+        CONNECT_FIXTURE.fixture_interrupted(signal.SIGTERM, None)
+    except SystemExit as error:
+        if error.code != 128 + signal.SIGTERM:
+            raise RuntimeError("Force-HTTPS interruption exit code changed.") from error
+    else:
+        raise RuntimeError("Force-HTTPS interruption did not preserve process failure.")
+
+    original_reader = CONNECT_FIXTURE.read_fixture_force_https
+    original_setter = CONNECT_FIXTURE.set_fixture_force_https
+    original_handlers = {
+        signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    calls = []
+    try:
+        CONNECT_FIXTURE.read_fixture_force_https = lambda: False
+        CONNECT_FIXTURE.set_fixture_force_https = calls.append
+
+        def injected_error() -> None:
+            raise RuntimeError("injected fixture failure")
+
+        try:
+            CONNECT_FIXTURE.run_with_fixture_force_https(injected_error)
+        except RuntimeError as error:
+            if str(error) != "injected fixture failure":
+                raise
+        else:
+            raise RuntimeError("Force-HTTPS wrapper swallowed its injected failure.")
+        if calls != [True, False]:
+            raise RuntimeError("Injected failure did not restore the exact force-HTTPS state once.")
+
+        calls.clear()
+        try:
+            CONNECT_FIXTURE.run_with_fixture_force_https(
+                lambda: CONNECT_FIXTURE.fixture_interrupted(signal.SIGTERM, None)
+            )
+        except SystemExit as error:
+            if error.code != 128 + signal.SIGTERM:
+                raise RuntimeError("Wrapped force-HTTPS signal exit code changed.") from error
+        else:
+            raise RuntimeError("Force-HTTPS wrapper swallowed its injected signal.")
+        if calls != [True, False]:
+            raise RuntimeError("Injected signal did not restore the exact force-HTTPS state once.")
+        if any(signal.getsignal(signum) != handler for signum, handler in original_handlers.items()):
+            raise RuntimeError("Force-HTTPS wrapper did not restore prior signal handlers.")
+    finally:
+        CONNECT_FIXTURE.read_fixture_force_https = original_reader
+        CONNECT_FIXTURE.set_fixture_force_https = original_setter
+        for signum, handler in original_handlers.items():
+            signal.signal(signum, handler)
+
+    original_run = CONNECT_FIXTURE.subprocess.run
+    original_absence = CONNECT_FIXTURE.container_operation_absent
+    absence_checks: list[str] = []
+    try:
+        def interrupted_run(*_args: object, **_kwargs: object) -> None:
+            raise SystemExit(128 + signal.SIGTERM)
+
+        CONNECT_FIXTURE.subprocess.run = interrupted_run
+        CONNECT_FIXTURE.container_operation_absent = lambda token: not absence_checks.append(token)
+        try:
+            CONNECT_FIXTURE.run_container_runner("fixture-interruption")
+        except SystemExit as error:
+            if error.code != 128 + signal.SIGTERM:
+                raise RuntimeError("Interrupted runner exit code changed.") from error
+        else:
+            raise RuntimeError("Interrupted runner unexpectedly returned.")
+        if len(absence_checks) != 1 or not re.fullmatch(r"[0-9a-f]{32}", absence_checks[0]):
+            raise RuntimeError("Interrupted runner skipped its marked-process absence proof.")
+    finally:
+        CONNECT_FIXTURE.subprocess.run = original_run
+        CONNECT_FIXTURE.container_operation_absent = original_absence
+
+    original_run = CONNECT_FIXTURE.subprocess.run
+    original_absence = CONNECT_FIXTURE.container_operation_absent
+    original_stop = CONNECT_FIXTURE.stop_fixture_app
+    stop_calls: list[bool] = []
+    try:
+        CONNECT_FIXTURE.subprocess.run = lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b""
+        )
+
+        def failed_absence_probe(_token: str) -> bool:
+            raise subprocess.TimeoutExpired(cmd="fixture-absence", timeout=1)
+
+        CONNECT_FIXTURE.container_operation_absent = failed_absence_probe
+        CONNECT_FIXTURE.stop_fixture_app = lambda: stop_calls.append(True)
+        try:
+            CONNECT_FIXTURE.run_container_runner("fixture-absence-failure")
+        except RuntimeError as error:
+            if str(error) != "A disposable in-container fixture absence proof failed.":
+                raise
+            if not isinstance(error.__cause__, subprocess.TimeoutExpired):
+                raise RuntimeError("Absence-proof failure discarded its causal exception.") from error
+        else:
+            raise RuntimeError("Failed absence proof unexpectedly returned.")
+        if stop_calls != [True]:
+            raise RuntimeError("Failed absence proof did not emergency-stop the fixture exactly once.")
+    finally:
+        CONNECT_FIXTURE.subprocess.run = original_run
+        CONNECT_FIXTURE.container_operation_absent = original_absence
+        CONNECT_FIXTURE.stop_fixture_app = original_stop
+
+
 def test_theme_archive() -> None:
     with tempfile.TemporaryDirectory(prefix="mochirii-theme-test-") as directory:
         first = Path(directory) / "one.zip"
@@ -5614,7 +5922,7 @@ def test_runtime_rails_execution_contract() -> None:
         ".github/workflows/disposable-bootstrap.yml": 14,
         "scripts/host-restore-validate.sh": 19,
         "scripts/host-backup.sh": 5,
-        "scripts/verify-discourse-connect.py": 4,
+        "scripts/verify-discourse-connect.py": 6,
         "scripts/host-deploy.sh": 3,
         "scripts/historical-recovery-scratch-reader.sh": 2,
         "scripts/verify-contained-activation.sh": 2,
@@ -5639,7 +5947,7 @@ def test_runtime_rails_execution_contract() -> None:
                 or source.count("rails runner") != expected
             ):
                 raise RuntimeError(f"Runtime Rails owner-wrapper inventory differs: {relative}")
-        if sum(expected_wrappers.values()) != 52:
+        if sum(expected_wrappers.values()) != 54:
             raise RuntimeError("Runtime Rails owner-wrapper total differs.")
         if (
             candidate_template.count("bundle exec rails runner") != 1
@@ -5682,6 +5990,7 @@ def main() -> int:
     test_opensearch_filter_contract()
     test_html_denial_types_contract()
     test_login_code_denial_contract()
+    test_https_consumer_fixture_contract()
     test_theme_archive()
     test_narrative_avatar_contract()
     test_branding_email_renderer_contract()

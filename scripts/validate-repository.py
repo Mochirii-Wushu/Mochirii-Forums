@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import gzip
 import hashlib
@@ -12,6 +13,7 @@ import os
 import re
 import stat
 import subprocess
+import symtable
 from pathlib import Path
 
 
@@ -1351,6 +1353,515 @@ def validate_login_code_denial_contract(verifier: str) -> None:
         fail("Local email-code denial does not match the pinned not-found controller boundary.")
 
 
+def validate_https_consumer_fixture_contract(verifier: str) -> None:
+    required = (
+        "import atexit",
+        "import signal",
+        '            "X-Forwarded-Proto": "https",',
+        "def read_fixture_force_https() -> bool:",
+        "def set_fixture_force_https(enabled: bool) -> None:",
+        "class FixtureForceHttpsRestorer:",
+        "set_fixture_force_https(self.original)",
+        "def fixture_interrupted(signum: int, _frame: object) -> None:",
+        "raise SystemExit(128 + signum)",
+        "def run_with_fixture_force_https(operation: Callable[[], None]) -> None:",
+        "original_force_https = read_fixture_force_https()",
+        "restore_force_https = FixtureForceHttpsRestorer(original_force_https)",
+        "atexit.register(restore_force_https)",
+        "signal.signal(signum, fixture_interrupted)",
+        "set_fixture_force_https(True)",
+        "restore_force_https()",
+        "atexit.unregister(restore_force_https)",
+        "signal.signal(signum, handler)",
+        '["https://forums.mochirii.com/session/sso_login"]',
+        'arguments=("true" if enabled else "false",)',
+        "run_with_fixture_force_https(lambda: verify_fixture(args, secret))",
+        'print("Built-in DiscourseConnect consumer fixtures passed.")',
+    )
+    if any(verifier.count(value) != 1 for value in required):
+        fail("DiscourseConnect fixture does not bind and restore the production HTTPS callback scheme.")
+    if (
+        verifier.count('ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"') != 2
+        or verifier.count('ARGV.fetch(0) == "true"\' "$1"') != 1
+        or verifier.count(
+            "    finally:\n"
+            "        absence_error: BaseException | None = None\n"
+            "        try:\n"
+            "            absent = container_operation_absent(token)\n"
+            "        except BaseException as error:\n"
+            "            absence_error = error\n"
+            "            absent = False\n"
+            "        if not absent:\n"
+            "            stop_fixture_app()\n"
+            "            if absence_error is not None:\n"
+            "                raise RuntimeError(\n"
+            '                    "A disposable in-container fixture absence proof failed."\n'
+            "                ) from absence_error"
+        )
+        != 1
+        or verifier.count(
+            "        set_fixture_force_https(True)\n"
+            "        operation()\n"
+            "    finally:\n"
+            "        try:\n"
+            "            restore_force_https()\n"
+            "        finally:"
+        )
+        != 1
+    ):
+        fail("DiscourseConnect fixture mutation guard or interrupted survivor proof differs.")
+    try:
+        tree = ast.parse(verifier)
+    except SyntaxError as error:
+        fail(f"DiscourseConnect fixture is not valid Python: {error}")
+    expected_imports = ast.parse(
+        "from __future__ import annotations\n"
+        "import argparse\n"
+        "import atexit\n"
+        "import base64\n"
+        "import hashlib\n"
+        "import hmac\n"
+        "import http.client\n"
+        "import json\n"
+        "import os\n"
+        "import re\n"
+        "import secrets\n"
+        "import signal\n"
+        "import subprocess\n"
+        "import tempfile\n"
+        "from collections.abc import Callable\n"
+        "from http.cookies import SimpleCookie\n"
+        "from html.parser import HTMLParser\n"
+        "from pathlib import Path\n"
+        "from urllib.parse import parse_qs, quote, urlencode, urlparse\n"
+    ).body
+    actual_imports = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
+    module_assignments = [
+        node for node in tree.body if isinstance(node, (ast.Assign, ast.AnnAssign))
+    ]
+    assignment_targets: list[str] = []
+    for node in module_assignments:
+        if isinstance(node, ast.Assign):
+            if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+                fail("DiscourseConnect fixture module assignment target differs.")
+            assignment_targets.append(node.targets[0].id)
+            value = node.value
+        else:
+            if not isinstance(node.target, ast.Name) or node.value is None:
+                fail("DiscourseConnect fixture annotated module assignment differs.")
+            assignment_targets.append(node.target.id)
+            value = node.value
+        for call in (child for child in ast.walk(value) if isinstance(child, ast.Call)):
+            if not (
+                isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "re"
+                and call.func.attr == "compile"
+            ):
+                fail("DiscourseConnect fixture module constant executes an unexpected call.")
+    expected_definition_shape = [
+        ("class", "VisibleText"),
+        ("function", "register_sensitive_marker"),
+        ("function", "register_admin_recovery_markers"),
+        ("function", "sensitive_marker_reached"),
+        ("class", "Session"),
+        ("function", "exactly_one"),
+        ("function", "request_nonce"),
+        ("function", "callback"),
+        ("function", "callback_path"),
+        ("function", "assert_branded_error"),
+        ("function", "stop_fixture_app"),
+        ("function", "container_operation_absent"),
+        ("function", "run_container_runner"),
+        ("function", "read_fixture_force_https"),
+        ("function", "set_fixture_force_https"),
+        ("class", "FixtureForceHttpsRestorer"),
+        ("function", "fixture_interrupted"),
+        ("function", "run_with_fixture_force_https"),
+        ("function", "expire_nonce"),
+        ("function", "verify_fixture_user"),
+        ("function", "admin_recovery_fixture"),
+        ("function", "assert_admin_login_form_denied"),
+        ("function", "assert_local_login_denied"),
+        ("function", "verify_admin_email_recovery"),
+        ("function", "json_object"),
+        ("function", "string_values"),
+        ("function", "assert_member_values"),
+        ("function", "verify_member_branding"),
+        ("function", "assert_callback_logs_redacted"),
+        ("function", "verify_fixture"),
+        ("function", "main"),
+    ]
+    actual_definition_shape = [
+        ("function" if isinstance(node, ast.FunctionDef) else "class", node.name)
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+    ]
+    expected_top_level_types = (
+        [ast.Expr]
+        + [type(node) for node in expected_imports]
+        + [ast.Assign, ast.Assign, ast.Assign, ast.Assign, ast.AnnAssign, ast.Assign]
+        + [ast.FunctionDef if kind == "function" else ast.ClassDef
+           for kind, _name in expected_definition_shape]
+        + [ast.If]
+    )
+    if (
+        not tree.body
+        or not isinstance(tree.body[0], ast.Expr)
+        or not isinstance(tree.body[0].value, ast.Constant)
+        or not isinstance(tree.body[0].value.value, str)
+        or [ast.dump(node, include_attributes=False) for node in actual_imports]
+        != [ast.dump(node, include_attributes=False) for node in expected_imports]
+        or assignment_targets
+        != [
+            "MAX_BYTES",
+            "FORBIDDEN",
+            "VALUE_FORBIDDEN",
+            "VISIBLE_UPSTREAM",
+            "CALLBACK_LOG_MARKERS",
+            "FORBIDDEN_RESPONSE_METADATA",
+        ]
+        or actual_definition_shape != expected_definition_shape
+        or [type(node) for node in tree.body] != expected_top_level_types
+        or any(
+            not isinstance(
+                node,
+                (
+                    ast.Expr,
+                    ast.Import,
+                    ast.ImportFrom,
+                    ast.Assign,
+                    ast.AnnAssign,
+                    ast.FunctionDef,
+                    ast.ClassDef,
+                    ast.If,
+                ),
+            )
+            for node in tree.body
+        )
+        or any(
+            node.decorator_list
+            or any(
+                isinstance(call, ast.Call)
+                for default in [*node.args.defaults, *node.args.kw_defaults]
+                if default is not None
+                for call in ast.walk(default)
+            )
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+        or any(
+            node.decorator_list
+            or any(
+                isinstance(call, ast.Call)
+                for expression in [*node.bases, *(keyword.value for keyword in node.keywords)]
+                for call in ast.walk(expression)
+            )
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+        )
+        or any(
+            any(not isinstance(statement, ast.FunctionDef) for statement in node.body)
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+        )
+        or any(
+            isinstance(node, ast.Expr) and index != 0
+            for index, node in enumerate(tree.body)
+        )
+        or any(
+            isinstance(node, ast.If) and index != len(tree.body) - 1
+            for index, node in enumerate(tree.body)
+        )
+    ):
+        fail("DiscourseConnect fixture module-level execution shape differs.")
+    main_functions = [
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"
+    ]
+    if len(main_functions) != 1:
+        fail("DiscourseConnect fixture main entry point differs.")
+    main_function = main_functions[0]
+    wrapper_name = "run_with_fixture_force_https"
+    wrapper_functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == wrapper_name
+    ]
+    wrapper_aliases = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.alias)
+        and (node.asname or node.name.split(".", 1)[0]) == wrapper_name
+    ]
+    if (
+        len(wrapper_functions) != 1
+        or wrapper_functions[0] not in tree.body
+        or wrapper_functions[0].decorator_list
+        or any(
+            isinstance(node, ast.Name)
+            and node.id == wrapper_name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for node in ast.walk(tree)
+        )
+        or any(
+            isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef)) and node.name == wrapper_name
+            for node in ast.walk(tree)
+        )
+        or wrapper_aliases
+        or any(
+            isinstance(node, ast.ExceptHandler) and node.name == wrapper_name
+            for node in ast.walk(tree)
+        )
+        or any(
+            (
+                isinstance(node, (ast.MatchAs, ast.MatchStar))
+                and node.name == wrapper_name
+            )
+            or (
+                isinstance(node, ast.MatchMapping)
+                and node.rest == wrapper_name
+            )
+            for node in ast.walk(tree)
+        )
+    ):
+        fail("DiscourseConnect fixture HTTPS wrapper binding differs or is shadowed.")
+    expected_wrapper_function = ast.parse(
+        "def run_with_fixture_force_https(operation: Callable[[], None]) -> None:\n"
+        "    original_force_https = read_fixture_force_https()\n"
+        "    restore_force_https = FixtureForceHttpsRestorer(original_force_https)\n"
+        "    atexit.register(restore_force_https)\n"
+        "    previous_handlers: dict[int, object] = {}\n"
+        "    try:\n"
+        "        for signum in (signal.SIGINT, signal.SIGTERM):\n"
+        "            previous_handlers[signum] = signal.signal(signum, fixture_interrupted)\n"
+        "        set_fixture_force_https(True)\n"
+        "        operation()\n"
+        "    finally:\n"
+        "        try:\n"
+        "            restore_force_https()\n"
+        "        finally:\n"
+        "            for signum, handler in previous_handlers.items():\n"
+        "                signal.signal(signum, handler)\n"
+        "        atexit.unregister(restore_force_https)\n"
+    ).body[0]
+    if ast.dump(wrapper_functions[0], include_attributes=False) != ast.dump(
+        expected_wrapper_function, include_attributes=False
+    ):
+        fail("DiscourseConnect fixture HTTPS wrapper control flow differs.")
+    symbol_root = symtable.symtable(verifier, "verify-discourse-connect.py", "exec")
+    verify_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "verify_fixture"
+    ]
+    expected_verify_statement_types = (
+        "Assign,Assign,If,Assign,Expr,If,Expr,Expr,Assign,Assign,If,Assign,If,Assign,If,"
+        "Assign,Assign,Assign,Assign,Assign,Assign,If,Assign,Assign,If,Expr,Expr,Assign,Expr,"
+        "Assign,Assign,Assign,Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,Assign,Assign,"
+        "Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,"
+        "Assign,Assign,Assign,If,Expr,Expr"
+    ).split(",")
+    if len(verify_functions) != 1:
+        fail("DiscourseConnect fixture verification function differs.")
+    verify_function = verify_functions[0]
+    verify_symbol_tables = [
+        table
+        for table in symbol_root.get_children()
+        if table.get_type() == "function"
+        and table.get_name() == "verify_fixture"
+        and table.get_lineno() == verify_function.lineno
+    ]
+    if len(verify_symbol_tables) != 1:
+        fail("DiscourseConnect fixture verification symbol table differs.")
+    verify_symbol_table = verify_symbol_tables[0]
+    name_call_counts: dict[str, int] = {}
+    attribute_call_counts: dict[str, int] = {}
+    for call in (node for node in ast.walk(verify_function) if isinstance(node, ast.Call)):
+        if isinstance(call.func, ast.Name):
+            name_call_counts[call.func.id] = name_call_counts.get(call.func.id, 0) + 1
+        elif isinstance(call.func, ast.Attribute):
+            attribute_call_counts[call.func.attr] = attribute_call_counts.get(call.func.attr, 0) + 1
+        else:
+            fail("DiscourseConnect fixture verification uses a dynamic call target.")
+    for call_name in name_call_counts:
+        call_symbol = verify_symbol_table.lookup(call_name)
+        if (
+            not call_symbol.is_global()
+            or call_symbol.is_assigned()
+            or call_symbol.is_imported()
+            or call_symbol.is_parameter()
+            or call_symbol.is_nonlocal()
+        ):
+            fail("DiscourseConnect fixture verification call target is shadowed.")
+    if (
+        [type(node).__name__ for node in verify_function.body]
+        != expected_verify_statement_types
+        or ast.dump(verify_function.body[0], include_attributes=False)
+        != ast.dump(ast.parse("signed_out = Session(args.port)").body[0], include_attributes=False)
+        or [ast.dump(node, include_attributes=False) for node in verify_function.body[-2:]]
+        != [
+            ast.dump(node, include_attributes=False)
+            for node in ast.parse(
+                "verify_admin_email_recovery(args.port)\n"
+                "assert_callback_logs_redacted()\n"
+            ).body
+        ]
+        or any(
+            isinstance(
+                node,
+                (
+                    ast.Return,
+                    ast.Yield,
+                    ast.YieldFrom,
+                    ast.Await,
+                    ast.Try,
+                    ast.TryStar,
+                    ast.With,
+                    ast.AsyncWith,
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.While,
+                    ast.Match,
+                    ast.Import,
+                    ast.ImportFrom,
+                    ast.Global,
+                    ast.Nonlocal,
+                    ast.Delete,
+                    ast.NamedExpr,
+                ),
+            )
+            for node in ast.walk(verify_function)
+        )
+        or any(
+            not (
+                isinstance(node.exc, ast.Call)
+                and isinstance(node.exc.func, ast.Name)
+                and node.exc.func.id == "RuntimeError"
+            )
+            for node in ast.walk(verify_function)
+            if isinstance(node, ast.Raise)
+        )
+        or name_call_counts
+        != {
+            "RuntimeError": 8,
+            "Session": 10,
+            "VisibleText": 1,
+            "any": 2,
+            "assert_admin_login_form_denied": 1,
+            "assert_branded_error": 6,
+            "assert_callback_logs_redacted": 1,
+            "assert_local_login_denied": 1,
+            "callback": 5,
+            "callback_path": 8,
+            "exactly_one": 1,
+            "expire_nonce": 1,
+            "isinstance": 1,
+            "json_object": 2,
+            "len": 1,
+            "request_nonce": 6,
+            "urlencode": 2,
+            "urlparse": 1,
+            "verify_admin_email_recovery": 1,
+            "verify_fixture_user": 1,
+            "verify_member_branding": 1,
+        }
+        or attribute_call_counts
+        != {
+            "b64encode": 1,
+            "decode": 2,
+            "encode": 4,
+            "feed": 1,
+            "get": 17,
+            "hexdigest": 2,
+            "issubset": 1,
+            "join": 4,
+            "lower": 3,
+            "new": 2,
+            "post_form": 1,
+            "replace": 1,
+            "request": 1,
+            "search": 4,
+            "split": 1,
+            "strip": 2,
+            "token_hex": 1,
+        }
+    ):
+        fail("DiscourseConnect fixture verification reachability differs.")
+    main_symbol_tables = [
+        table
+        for table in symbol_root.get_children()
+        if table.get_type() == "function"
+        and table.get_name() == "main"
+        and table.get_lineno() == main_function.lineno
+    ]
+    if len(main_symbol_tables) != 1:
+        fail("DiscourseConnect fixture main symbol table differs.")
+    wrapper_symbol = main_symbol_tables[0].lookup(wrapper_name)
+    expected_entrypoint = ast.parse(
+        'if __name__ == "__main__":\n'
+        "    raise SystemExit(main())\n"
+    ).body[0]
+    if (
+        len(tree.body) < 2
+        or tree.body[-2] is not main_function
+        or ast.dump(tree.body[-1], include_attributes=False)
+        != ast.dump(expected_entrypoint, include_attributes=False)
+        or main_function.decorator_list
+        or symbol_root.lookup("__name__").is_assigned()
+        or symbol_root.lookup("__name__").is_imported()
+        or symbol_root.lookup("SystemExit").is_assigned()
+        or symbol_root.lookup("SystemExit").is_imported()
+    ):
+        fail("DiscourseConnect fixture module entry point differs or is shadowed.")
+    expected_tail = ast.parse(
+        'run_with_fixture_force_https(lambda: verify_fixture(args, secret))\n'
+        'print("Built-in DiscourseConnect consumer fixtures passed.")\n'
+        "return 0\n"
+    ).body
+    if (
+        len(main_function.body) < len(expected_tail)
+        or [ast.dump(node, include_attributes=False) for node in main_function.body[-3:]]
+        != [ast.dump(node, include_attributes=False) for node in expected_tail]
+        or len([node for node in ast.walk(main_function) if isinstance(node, ast.Return)]) != 1
+        or not wrapper_symbol.is_global()
+        or wrapper_symbol.is_assigned()
+        or wrapper_symbol.is_imported()
+        or wrapper_symbol.is_parameter()
+        or wrapper_symbol.is_nonlocal()
+        or len(
+            [
+                node
+                for node in ast.walk(main_function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "verify_fixture"
+            ]
+        )
+        != 1
+    ):
+        fail("DiscourseConnect fixture main does not structurally bind cleanup before success.")
+    order = tuple(
+        verifier.index(value)
+        for value in (
+            "original_force_https = read_fixture_force_https()",
+            "restore_force_https = FixtureForceHttpsRestorer(original_force_https)",
+            "atexit.register(restore_force_https)",
+            "signal.signal(signum, fixture_interrupted)",
+            "set_fixture_force_https(True)",
+            "operation()",
+            "restore_force_https()",
+            "signal.signal(signum, handler)",
+            "atexit.unregister(restore_force_https)",
+        )
+    )
+    if (
+        order != tuple(sorted(order))
+        or verifier.index("signed_out = Session(args.port)")
+        >= verifier.index("    assert_callback_logs_redacted()")
+    ):
+        fail("DiscourseConnect fixture HTTPS setup or restoration order differs.")
+
+
 def validate_template() -> None:
     app = read("config/app.yml.example")
     validate_html_denial_types_contract(app)
@@ -2146,6 +2657,7 @@ def validate_secrets_and_workflows() -> None:
     producer_probe = read("scripts/probe-website-forums-producer.py")
     connect_fixture = read("scripts/verify-discourse-connect.py")
     validate_login_code_denial_contract(connect_fixture)
+    validate_https_consumer_fixture_contract(connect_fixture)
     sensitive_log_verifier = read("scripts/verify-sensitive-log-redaction.rb")
     finalizer = read("scripts/finalize-member-rollout.sh")
     require_text(
@@ -4149,7 +4661,7 @@ def validate_runtime_rails_execution_contract() -> None:
         ".github/workflows/disposable-bootstrap.yml": 14,
         "scripts/host-restore-validate.sh": 19,
         "scripts/host-backup.sh": 5,
-        "scripts/verify-discourse-connect.py": 4,
+        "scripts/verify-discourse-connect.py": 6,
         "scripts/host-deploy.sh": 3,
         "scripts/historical-recovery-scratch-reader.sh": 2,
         "scripts/verify-contained-activation.sh": 2,
@@ -4166,7 +4678,7 @@ def validate_runtime_rails_execution_contract() -> None:
         ):
             fail(f"Runtime Rails execution bypasses the pinned owner-scoped wrapper: {relative}")
         total += expected
-    if total != 52:
+    if total != 54:
         fail("Runtime Rails owner-wrapper inventory differs.")
 
     template = read("config/app.yml.example")

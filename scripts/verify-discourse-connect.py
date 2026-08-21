@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import hashlib
 import hmac
@@ -12,8 +13,10 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import tempfile
+from collections.abc import Callable
 from http.cookies import SimpleCookie
 from html.parser import HTMLParser
 from pathlib import Path
@@ -105,6 +108,7 @@ class Session:
             "Host": "forums.mochirii.com",
             "Accept-Encoding": "identity",
             "User-Agent": "Mochirii-Forums-DiscourseConnect-Fixture/1",
+            "X-Forwarded-Proto": "https",
         }
         if self.cookies:
             headers["Cookie"] = "; ".join(f"{name}={value}" for name, value in self.cookies.items())
@@ -298,25 +302,94 @@ def run_container_runner(
     completed: subprocess.CompletedProcess[bytes] | None = None
     timed_out = False
     try:
-        completed = subprocess.run(
-            command,
-            input=input_bytes,
-            stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=60,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        timed_out = True
-    if not container_operation_absent(token):
-        stop_fixture_app()
-        raise RuntimeError("A disposable in-container fixture survived its operation boundary.")
+        try:
+            completed = subprocess.run(
+                command,
+                input=input_bytes,
+                stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            timed_out = True
+    finally:
+        absence_error: BaseException | None = None
+        try:
+            absent = container_operation_absent(token)
+        except BaseException as error:
+            absence_error = error
+            absent = False
+        if not absent:
+            stop_fixture_app()
+            if absence_error is not None:
+                raise RuntimeError(
+                    "A disposable in-container fixture absence proof failed."
+                ) from absence_error
+            raise RuntimeError("A disposable in-container fixture survived its operation boundary.")
     if timed_out or completed is None or completed.returncode != 0:
         raise RuntimeError("A disposable in-container fixture failed within its bounded operation.")
     output = completed.stdout or b""
     if len(output) > 16_384:
         raise RuntimeError("A disposable in-container fixture exceeded its output boundary.")
     return output.strip()
+
+
+def read_fixture_force_https() -> bool:
+    value = run_container_runner(
+        """/usr/local/bin/rails runner 'raise "Connect fixture marker is absent" unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"; print(SiteSetting.force_https? ? "true" : "false")'""",
+        capture_stdout=True,
+    )
+    if value not in {b"true", b"false"}:
+        raise RuntimeError("Connect fixture force-HTTPS readback is malformed.")
+    return value == b"true"
+
+
+def set_fixture_force_https(enabled: bool) -> None:
+    run_container_runner(
+        '''/usr/local/bin/rails runner 'raise "Connect fixture marker is absent" unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"; SiteSetting.force_https = ARGV.fetch(0) == "true"' "$1"''',
+        arguments=("true" if enabled else "false",),
+    )
+
+
+class FixtureForceHttpsRestorer:
+    def __init__(self, original: bool) -> None:
+        self.original = original
+        self.pending = True
+
+    def __call__(self) -> None:
+        if not self.pending:
+            return
+        set_fixture_force_https(self.original)
+        self.pending = False
+
+
+def fixture_interrupted(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
+def run_with_fixture_force_https(operation: Callable[[], None]) -> None:
+    # The loopback container intentionally has no certificate lifecycle, but
+    # the built-in consumer must still construct the exact production HTTPS
+    # callback. The forwarded scheme keeps every fixture request inside HTTP
+    # loopback while this isolated setting is enabled. Register exact-state and
+    # catchable-signal restoration before the first mutation.
+    original_force_https = read_fixture_force_https()
+    restore_force_https = FixtureForceHttpsRestorer(original_force_https)
+    atexit.register(restore_force_https)
+    previous_handlers: dict[int, object] = {}
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[signum] = signal.signal(signum, fixture_interrupted)
+        set_fixture_force_https(True)
+        operation()
+    finally:
+        try:
+            restore_force_https()
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
+        atexit.unregister(restore_force_https)
 
 
 def expire_nonce(nonce: str) -> None:
@@ -596,21 +669,7 @@ def assert_callback_logs_redacted() -> None:
             raise RuntimeError("A callback secret or member marker reached the container log boundary.")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--secret-file", type=Path, required=True)
-    parser.add_argument("--port", type=int, default=18080)
-    args = parser.parse_args()
-    if not 1 <= args.port <= 65535:
-        raise RuntimeError("Loopback fixture port is invalid.")
-    mode = args.secret_file.stat().st_mode & 0o777
-    if mode != 0o600:
-        raise RuntimeError("Fixture key file must be mode 0600.")
-    secret_text = args.secret_file.read_text(encoding="ascii").strip()
-    if not re.fullmatch(r"[0-9a-f]{64}", secret_text):
-        raise RuntimeError("Fixture key must be exactly 64 lowercase hex characters.")
-    secret = secret_text.encode("ascii")
-
+def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:
     signed_out = Session(args.port)
     status, _headers, body = signed_out.get("/login")
     if status != 200 or b"Mochirii" not in body or any(pattern.search(body) for pattern in FORBIDDEN):
@@ -714,6 +773,21 @@ def main() -> int:
     verify_admin_email_recovery(args.port)
     assert_callback_logs_redacted()
 
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--secret-file", type=Path, required=True)
+    parser.add_argument("--port", type=int, default=18080)
+    args = parser.parse_args()
+    if not 1 <= args.port <= 65535:
+        raise RuntimeError("Loopback fixture port is invalid.")
+    mode = args.secret_file.stat().st_mode & 0o777
+    if mode != 0o600:
+        raise RuntimeError("Fixture key file must be mode 0600.")
+    secret_text = args.secret_file.read_text(encoding="ascii").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", secret_text):
+        raise RuntimeError("Fixture key must be exactly 64 lowercase hex characters.")
+    secret = secret_text.encode("ascii")
+    run_with_fixture_force_https(lambda: verify_fixture(args, secret))
     print("Built-in DiscourseConnect consumer fixtures passed.")
     return 0
 
