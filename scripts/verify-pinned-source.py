@@ -47,6 +47,10 @@ PINNED_MAIL_SEMANTIC_EVIDENCE = {
         28133,
         "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
     ),
+    "app/models/topic.rb": (
+        78502,
+        "fd6468dd779edc6767dd8fb380e36c735b0698f6f4a2951a5e8a3b186ea6f056",
+    ),
     "app/mailers/admin_confirmation_mailer.rb": (
         438,
         "409f849e00ee2d001c2106e5c2aacdb15c448a9aee246005381b735194347849",
@@ -80,6 +84,243 @@ PINNED_MAIL_SEMANTIC_EVIDENCE = {
         "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b",
     ),
 }
+PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''  def digest(user, opts = {})
+    build_summary_for(user)
+    if !opts[:skip_unsubscribe_links]
+      @unsubscribe_key = UnsubscribeKey.create_key_for(@user, UnsubscribeKey::DIGEST_TYPE)
+    end
+
+    @since = opts[:since].presence
+    @since ||= [user.last_seen_at, user.user_stat&.digest_attempted_at, 1.month.ago].compact.max
+
+    # Fetch some topics and posts to show
+    digest_opts = {
+      limit: SiteSetting.digest_topics + SiteSetting.digest_other_topics,
+      top_order: true,
+    }
+    topics_for_digest = Topic.for_digest(user, @since, digest_opts)
+    if topics_for_digest.empty? && !user.user_option.try(:include_tl0_in_digests)
+      # Find some topics from new users that are at least 24 hours old
+      topics_for_digest =
+        Topic.for_digest(user, @since, digest_opts.merge(include_tl0: true)).where(
+          "topics.created_at < ?",
+          24.hours.ago,
+        )
+    end
+
+    @popular_topics = topics_for_digest[0, SiteSetting.digest_topics]
+
+    if @popular_topics.present?
+      @other_new_for_you =
+        (
+          if topics_for_digest.size > SiteSetting.digest_topics
+            topics_for_digest[SiteSetting.digest_topics..-1]
+          else
+            []
+          end
+        )
+
+      @popular_posts =
+        if SiteSetting.digest_posts > 0
+          Post
+            .order("posts.score DESC")
+            .for_mailing_list(user, @since)
+            .where("posts.post_type = ?", Post.types[:regular])
+            .where(
+              "posts.deleted_at IS NULL AND posts.hidden = false AND posts.user_deleted = false",
+            )
+            .where(
+              "posts.post_number > ? AND posts.score > ?",
+              1,
+              ScoreCalculator.default_score_weights[:like_score] * 5.0,
+            )
+            .where("posts.created_at < ?", (SiteSetting.editing_grace_period || 0).seconds.ago)
+            .limit(SiteSetting.digest_posts)
+        else
+          []
+        end
+
+      @excerpts = {}
+
+      @popular_topics.each do |t|
+        next if t.first_post.blank?
+        @excerpts[t.first_post.id] = email_excerpt(t.first_post.cooked, t.first_post)
+      end
+
+      # Try to find 3 interesting stats for the top of the digest
+      new_topics_count = Topic.for_digest(user, @since).count
+      # We used topics from new users instead, so count should match
+      new_topics_count = topics_for_digest.size if new_topics_count == 0
+
+      @counts = [
+        {
+          id: "new_topics",
+          label_key: "user_notifications.digest.new_topics",
+          value: new_topics_count,
+          href: "#{Discourse.base_url}/new",
+        },
+      ]
+
+      # totalling unread notifications (which are low-priority only) and unread
+      # PMs and bookmark reminder notifications, so the total is both unread low
+      # and high priority PMs
+      value = user.unread_notifications + user.unread_high_priority_notifications
+      if value > 0
+        @counts << {
+          id: "unread_notifications",
+          label_key: "user_notifications.digest.unread_notifications",
+          value: value,
+          href: "#{Discourse.base_url}/my/notifications",
+        }
+      end
+
+      if @counts.size < 3
+        value = user.unread_notifications_of_type(Notification.types[:liked], since: @since)
+        if value > 0
+          @counts << {
+            id: "likes_received",
+            label_key: "user_notifications.digest.liked_received",
+            value: value,
+            href: "#{Discourse.base_url}/my/notifications",
+          }
+        end
+      end
+
+      if @counts.size < 3 && user.user_option.digest_after_minutes.to_i >= 1440
+        value = summary_new_users_count(@since)
+        if value > 0
+          @counts << {
+            id: "new_users",
+            label_key: "user_notifications.digest.new_users",
+            value: value,
+            href: "#{Discourse.base_url}/about",
+          }
+        end
+      end
+
+      @preheader_text = I18n.t("user_notifications.digest.preheader", since: @since)
+
+      subject_key = "user_notifications.digest.subject_template"
+
+      if SiteSetting.simple_email_subject && I18n.exists?("#{subject_key}_improved")
+        subject_key += "_improved"
+      end
+
+      opts = {
+        from_alias: I18n.t("user_notifications.digest.from", site_name: Email.site_title),
+        subject: I18n.t(subject_key, email_prefix: @email_prefix, date: short_date(Time.now)),
+        add_unsubscribe_link: !opts[:skip_unsubscribe_links],
+        unsubscribe_url: "#{Discourse.base_url}/email/unsubscribe/#{@unsubscribe_key}",
+        topic_ids: topics_for_digest.pluck(:id),
+        post_ids:
+          topics_for_digest.joins(:posts).where(posts: { post_number: 1 }).pluck("posts.id"),
+      }
+
+      opts[:recipient_user] = user
+
+      build_email(user.email, opts)
+    end
+  end
+
+'''
+PINNED_TOPIC_FOR_DIGEST_BLOCK = b'''  def self.for_digest(user, since, opts = nil)
+    opts ||= {}
+
+    period = ListController.best_period_for(since)
+
+    topics =
+      Topic
+        .visible
+        .secured(Guardian.new(user))
+        .joins(
+          "LEFT OUTER JOIN topic_users ON topic_users.topic_id = topics.id AND topic_users.user_id = #{user.id.to_i}",
+        )
+        .joins(
+          "LEFT OUTER JOIN category_users ON category_users.category_id = topics.category_id AND category_users.user_id = #{user.id.to_i}",
+        )
+        .joins("LEFT OUTER JOIN users ON users.id = topics.user_id")
+        .where(closed: false, archived: false)
+        .where(
+          "COALESCE(topic_users.notification_level, 1) <> ?",
+          TopicUser.notification_levels[:muted],
+        )
+        .created_since(since)
+        .where("topics.created_at < ?", (SiteSetting.editing_grace_period || 0).seconds.ago)
+        .listable_topics
+        .includes(:category)
+
+    unless opts[:include_tl0] || user.user_option.try(:include_tl0_in_digests)
+      topics = topics.where("COALESCE(users.trust_level, 0) > 0")
+    end
+
+    if !!opts[:top_order]
+      topics =
+        topics.joins("LEFT OUTER JOIN top_topics ON top_topics.topic_id = topics.id").order(<<~SQL)
+          COALESCE(topic_users.notification_level, 1) DESC,
+          COALESCE(category_users.notification_level, 1) DESC,
+          COALESCE(top_topics.#{TopTopic.score_column_for_period(period)}, 0) DESC,
+          topics.bumped_at DESC
+      SQL
+    end
+
+    topics = topics.limit(opts[:limit]) if opts[:limit]
+
+    # Remove category topics
+    topics = topics.where.not(id: Category.select(:topic_id).where.not(topic_id: nil))
+
+    # Remove suppressed categories
+    if SiteSetting.digest_suppress_categories.present?
+      topics =
+        topics.where.not(category_id: SiteSetting.digest_suppress_categories.split("|").map(&:to_i))
+    end
+
+    # Remove suppressed tags
+    if SiteSetting.digest_suppress_tags.present?
+      tag_ids = Tag.where_name(SiteSetting.digest_suppress_tags.split("|")).pluck(:id)
+
+      topics =
+        topics.where.not(id: TopicTag.where(tag_id: tag_ids).select(:topic_id)) if tag_ids.present?
+    end
+
+    # Remove muted and shared draft categories
+    remove_category_ids =
+      CategoryUser.where(user:, notification_level: CategoryUser.notification_levels[:muted]).pluck(
+        :category_id,
+      )
+
+    remove_category_ids << SiteSetting.shared_drafts_category if SiteSetting.shared_drafts_enabled?
+
+    if remove_category_ids.present?
+      remove_category_ids.uniq!
+      topics =
+        topics.where(
+          "topic_users.notification_level != ? OR topics.category_id NOT IN (?)",
+          TopicUser.notification_levels[:muted],
+          remove_category_ids,
+        )
+    end
+
+    # Remove topics from ignored users
+    ignored_user_ids =
+      IgnoredUser.where(user:).where(expiring_at: Time.zone.now..).pluck(:ignored_user_id)
+    topics = topics.where.not(user_id: ignored_user_ids) if ignored_user_ids.present?
+
+    # Remove muted tags
+    muted_tag_ids = TagUser.lookup(user, :muted).pluck(:tag_id)
+    unless muted_tag_ids.empty?
+      # If multiple tags per topic, include topics with tags that aren't muted,
+      # and don't forget untagged topics.
+      topics =
+        topics.where(
+          "EXISTS (SELECT 1 FROM topic_tags WHERE topic_tags.topic_id = topics.id AND tag_id NOT IN (?)) OR NOT EXISTS (SELECT 1 FROM topic_tags WHERE topic_tags.topic_id = topics.id)",
+          muted_tag_ids,
+        )
+    end
+
+    topics
+  end
+
+'''
 PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''  def admin_login(user, opts = {})
     build_user_email_token_by_template("user_notifications.admin_login", user, opts[:email_token])
   end
@@ -654,6 +895,20 @@ def verify_mail_semantics(core: dict[str, bytes]) -> None:
             raise RuntimeError(f"Pinned mail semantic source changed: {path}")
 
     notifications = core["app/mailers/user_notifications.rb"]
+    verify_exact_region(
+        notifications,
+        b"  def digest(user, opts = {})\n",
+        b"  def user_replied(user, opts)\n",
+        PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK,
+        "digest mail-production method",
+    )
+    verify_exact_region(
+        core["app/models/topic.rb"],
+        b"  def self.for_digest(user, since, opts = nil)\n",
+        b"  def reload(options = nil)\n",
+        PINNED_TOPIC_FOR_DIGEST_BLOCK,
+        "digest topic-selection method",
+    )
     verify_exact_region(
         notifications,
         b"  def admin_login(user, opts = {})\n",

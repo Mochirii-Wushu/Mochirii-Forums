@@ -200,8 +200,8 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
 BRANDING_EMAIL_RENDERER_SHA256 = "80d8ff8a52018314f806d9b70c97cadb81bd0e91482bb22725a6e180216436b2"
-PINNED_SOURCE_VERIFIER_SHA256 = "90dbe4bbaa2b2afea2a6ef95247595ba28d567f170b356e8159a519d69fb0bfa"
-ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "898ffe7bd732bdacccd4981c0148b9407960a0b4a246eac2457224e0bf426669"
+PINNED_SOURCE_VERIFIER_SHA256 = "2d38f3a9a1fdabafcbf37691ac95b18fb6b87cccfdaf2bce61d1867e5c88939b"
+ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
 '''
@@ -215,6 +215,11 @@ PINNED_MAIL_RENDERING_EVIDENCE = [
         "path": "app/mailers/user_notifications.rb",
         "bytes": 28133,
         "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
+    },
+    {
+        "path": "app/models/topic.rb",
+        "bytes": 78502,
+        "sha256": "fd6468dd779edc6767dd8fb380e36c735b0698f6f4a2951a5e8a3b186ea6f056",
     },
     {
         "path": "app/mailers/admin_confirmation_mailer.rb",
@@ -457,7 +462,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "265fdf222acb47449bef4744ed667e5fa33a3a57b406ca06159ee2b8941359e0",
+    "docs/operations/third-party-components.v1.json": "c892f981a8cf54356f62970d1f408708c53db8a3ffee1c7d5b195299386b12dd",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -569,6 +574,27 @@ def validate_branding_email_renderer(source: str) -> None:
     )
     if any(source.count(value) != 1 for value in digest_fixture_contract):
         fail("Branding email renderer lost its rollback-only real-digest fixture contract.")
+    digest_start = "def render_stage4_digest!(user:, topic:)\n"
+    digest_end = "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\n"
+    if source.count(digest_start) != 1 or source.count(digest_end) != 1:
+        fail("Branding email renderer digest-fixture method boundary differs.")
+    digest_block = source[source.index(digest_start) : source.index(digest_end)]
+    ordered_digest_steps = (
+        "    topic.update_columns(created_at: 2.days.ago)\n",
+        "    delivery = UserNotifications.digest(user, since: 3.days.ago, skip_unsubscribe_links: true)\n",
+        '    mail = materialize(delivery, label: "digest")\n',
+        "    mail.encoded\n",
+        "    raise ActiveRecord::Rollback\n",
+        "  topic.reload\n",
+        "  unless topic.created_at == original_created_at\n",
+    )
+    if any(digest_block.count(value) != 1 for value in ordered_digest_steps):
+        fail("Branding email renderer lost an exact ordered digest-fixture step.")
+    ordered_offsets = [digest_block.index(value) for value in ordered_digest_steps]
+    if ordered_offsets != sorted(ordered_offsets):
+        fail("Branding email renderer does not encode before rollback and prove exact fixture restoration.")
+    if any(value in digest_block for value in ("PostCreator", "Topic.create", "Post.create", ".save!", ".destroy!")):
+        fail("Branding email renderer persists digest fixture content.")
     admin_login_contract = (
         "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\n",
         '  stage4_fixture == "true" &&\n',
@@ -641,6 +667,13 @@ def validate_branding_email_renderer(source: str) -> None:
 
 def validate_admin_login_link_fixture(source: str) -> None:
     required = (
+        "class PermissiveNullMailFixture\n",
+        'materialize_marker = "def materialize(delivery, label:)\\n"',
+        '  materialize(direct_mail, label: "direct").equal?(direct_mail),',
+        '  materialize(lazy_delivery, label: "lazy").equal?(lazy_mail),',
+        '  materialize(PermissiveNullMailFixture.new, label: "digest")',
+        '    error.message == "digest mail path did not render a Mail::Message",',
+        '  raise AdminLoginLinkFixtureError, "permissive NullMail canary was accepted"',
         'method_marker = "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\\n"',
         '"partial fixture HTTP authorization was accepted"',
         'fixture_base = "http://forums.mochirii.com"',
@@ -761,6 +794,11 @@ def validate_pinned_source_verifier(source: str) -> None:
         "verify_mail_semantics(core)",
         "def verify_mail_evidence_manifest(components: dict) -> None:",
         "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
+        "PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''",
+        "PINNED_TOPIC_FOR_DIGEST_BLOCK = b'''",
+        '        PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK,',
+        '        core["app/models/topic.rb"],',
+        '        PINNED_TOPIC_FOR_DIGEST_BLOCK,',
         "PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''",
         "PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE = b'''",
         "PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK = b'''",

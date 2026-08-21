@@ -12,6 +12,29 @@ RENDERER = File.expand_path("render-branding-email.rb", __dir__)
 class AdminLoginLinkFixtureError < StandardError
 end
 
+module Mail
+  class Message
+  end
+end
+
+class LazyMailMessageFixture
+  attr_reader :message
+
+  def initialize(message)
+    @message = message
+  end
+end
+
+class PermissiveNullMailFixture
+  def respond_to?(_name, _include_all = false)
+    true
+  end
+
+  def method_missing(...)
+    nil
+  end
+end
+
 def assert_fixture(condition, message)
   raise AdminLoginLinkFixtureError, message unless condition
 end
@@ -59,6 +82,41 @@ def expect_rejection(
 end
 
 source = File.binread(RENDERER)
+materialize_marker = "def materialize(delivery, label:)\n"
+materialize_boundary = "\n\ndef render_parts(mail)\n"
+assert_fixture(source.scan(materialize_marker).length == 1, "mail materializer helper count differed")
+assert_fixture(source.scan(materialize_boundary).length == 1, "mail materializer helper boundary differed")
+materialize_start = source.index(materialize_marker)
+materialize_finish = source.index(materialize_boundary, materialize_start)
+assert_fixture(materialize_finish && materialize_finish > materialize_start, "mail materializer helper was absent")
+materialize_source = source.byteslice(materialize_start, materialize_finish - materialize_start)
+eval(materialize_source, TOPLEVEL_BINDING, RENDERER, source.byteslice(0, materialize_start).count("\n") + 1)
+
+direct_mail = Mail::Message.new
+assert_fixture(
+  materialize(direct_mail, label: "direct").equal?(direct_mail),
+  "direct Mail::Message was not preserved",
+)
+lazy_mail = Mail::Message.new
+lazy_delivery = LazyMailMessageFixture.new(lazy_mail)
+assert_fixture(
+  materialize(lazy_delivery, label: "lazy").equal?(lazy_mail),
+  "lazy Mail::Message was not materialized",
+)
+
+begin
+  materialize(PermissiveNullMailFixture.new, label: "digest")
+rescue StandardError => error
+  assert_fixture(error.instance_of?(RuntimeError), "NullMail canary raised a non-fixed error class")
+  assert_fixture(
+    error.message == "digest mail path did not render a Mail::Message",
+    "NullMail canary raised a different fixed error",
+  )
+  assert_fixture(error.cause.nil?, "NullMail canary retained an exception cause")
+else
+  raise AdminLoginLinkFixtureError, "permissive NullMail canary was accepted"
+end
+
 method_marker = "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\n"
 call_boundary = "\n\nbot = User.find_by(id: -2)\n"
 assert_fixture(source.scan(method_marker).length == 1, "administrator login policy helper count differed")

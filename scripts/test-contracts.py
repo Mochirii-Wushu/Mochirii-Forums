@@ -786,10 +786,20 @@ def test_branding_email_renderer_contract() -> None:
         ("def materialize(delivery, label:)", "def materialize(delivery)"),
         ("mail.is_a?(Mail::Message)", "mail.respond_to?(:header)"),
         ("topic.id != SiteSetting.welcome_topic_id", "false"),
+        ("topic.archetype != Archetype.default", "false"),
+        ("topic.closed?", "false"),
+        ("topic.archived?", "false"),
+        ("Category.exists?(topic_id: topic.id)", "false"),
         ("Topic.transaction(requires_new: true)", "Topic.transaction"),
         ("topic.update_columns(created_at: 2.days.ago)", "topic.update_columns(created_at: 2.minutes.ago)"),
         ("since: 3.days.ago", "since: 1.day.ago"),
         ("raise ActiveRecord::Rollback", "next"),
+        ("  topic.reload\n", "  topic\n"),
+        ("topic.created_at == original_created_at", "true"),
+        (
+            "    mail.encoded\n    raise ActiveRecord::Rollback\n",
+            "    raise ActiveRecord::Rollback\n    mail.encoded\n",
+        ),
         (
             'deliveries["digest"] = render_stage4_digest!(user: bot, topic: post.topic)',
             'deliveries["digest"] = UserNotifications.digest(bot, since: 30.days.ago, skip_unsubscribe_links: true)',
@@ -855,6 +865,17 @@ def test_branding_email_renderer_contract() -> None:
             1,
         ),
         fixture.replace('source.scan("SecureRandom").empty?', "true", 1),
+        fixture.replace("class PermissiveNullMailFixture", "class PermissiveMailFixture", 1),
+        fixture.replace(
+            'materialize(PermissiveNullMailFixture.new, label: "digest")',
+            'materialize(Mail::Message.new, label: "digest")',
+            1,
+        ),
+        fixture.replace(
+            'materialize(direct_mail, label: "direct").equal?(direct_mail)',
+            "true",
+            1,
+        ),
         fixture.replace(
             '"encoded-separator administrator confirmation token" =>',
             '"encoded-separator administrator confirmation token removed" =>',
@@ -873,6 +894,8 @@ def test_branding_email_renderer_contract() -> None:
     VALIDATOR.validate_pinned_source_verifier(upstream)
     for canary in (
         "PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)",
+        "PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''",
+        "PINNED_TOPIC_FOR_DIGEST_BLOCK = b'''",
         "PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''",
         "PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE = b'''",
         "PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK = b'''",
@@ -926,10 +949,15 @@ def test_branding_email_renderer_contract() -> None:
 
     synthetic_mail_core = {
         "app/mailers/user_notifications.rb":
-            UPSTREAM.PINNED_ADMIN_LOGIN_METHOD_BLOCK
+            UPSTREAM.PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK
+            + b"  def user_replied(user, opts)\n  end\n\n"
+            + UPSTREAM.PINNED_ADMIN_LOGIN_METHOD_BLOCK
             + b"  def account_created(user, opts = {})\n  end\n\n"
             + UPSTREAM.PINNED_EMAIL_LOGIN_HELPER_BLOCK
             + b"  def build_summary_for(user)\n  end\n",
+        "app/models/topic.rb":
+            UPSTREAM.PINNED_TOPIC_FOR_DIGEST_BLOCK
+            + b"  def reload(options = nil)\n  end\n",
         "app/mailers/admin_confirmation_mailer.rb": UPSTREAM.PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE,
         "lib/admin_confirmation.rb":
             UPSTREAM.PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK
@@ -965,6 +993,31 @@ def test_branding_email_renderer_contract() -> None:
         UPSTREAM.PINNED_MAIL_SEMANTIC_EVIDENCE = synthetic_evidence(synthetic_mail_core)
         UPSTREAM.verify_mail_semantics(synthetic_mail_core)
         mail_hostiles = (
+            (
+                "app/mailers/user_notifications.rb",
+                b"if @popular_topics.present?",
+                b"if true",
+            ),
+            (
+                "app/mailers/user_notifications.rb",
+                b"topics_for_digest = Topic.for_digest(user, @since, digest_opts)",
+                b"topics_for_digest = Topic.all",
+            ),
+            (
+                "app/models/topic.rb",
+                b".created_since(since)",
+                b".all",
+            ),
+            (
+                "app/models/topic.rb",
+                b'.where("topics.created_at < ?", (SiteSetting.editing_grace_period || 0).seconds.ago)',
+                b'.where("topics.created_at > ?", (SiteSetting.editing_grace_period || 0).seconds.ago)',
+            ),
+            (
+                "app/models/topic.rb",
+                b"topics = topics.where.not(id: Category.select(:topic_id).where.not(topic_id: nil))",
+                b"topics = topics.where(id: Category.select(:topic_id).where.not(topic_id: nil))",
+            ),
             (
                 "app/mailers/user_notifications.rb",
                 b"opts[:email_token]",
