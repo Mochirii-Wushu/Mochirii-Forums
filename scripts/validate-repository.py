@@ -193,9 +193,12 @@ checks["narrative_system_user_branded"] =
     "narrative_system_user_gravatar_absent",
   ).all?
 '''
-RUNTIME_VERIFIER_SHA256 = "4e7dedd8f2b10c2049defd855316e6d72f5716704d5a0c9430858a8e7c45663a"
+RUNTIME_VERIFIER_SHA256 = "e3af12650a530ba3460fc5dfadda0cbfa2b502d75b40eeb3b6ce847099861017"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "76459a635d63603adda9ed0e83a83bc4c402067a6469dfd2918acf803f875687"
+APP_TEMPLATE_SHA256 = "45c1d34ab46ac684a5c688294146670e0e7f4efa36aeaca958ff8e8ed0bc2e68"
+ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
+SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "15e587a43c7d3c8a0cd149e86bce653907c1708430180364ded1a430f23e0322"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "ef3b0e9bfe2ff73dd74d1fe21f6eea4e5aa3d5b42f19890b8c564300fefb0c5c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
 HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "ff6ba88a4bc0eba0373f77799de1594dbd69ecee311c863d43f2cae27f1aec9a"
@@ -1862,6 +1865,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         ("function", "assert_local_login_denied"),
         ("function", "verify_admin_email_recovery"),
         ("function", "json_object"),
+        ("function", "verify_exact_fixture_session"),
         ("function", "string_values"),
         ("function", "assert_member_values"),
         ("function", "verify_member_branding"),
@@ -1952,6 +1956,36 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         )
     ):
         fail("DiscourseConnect fixture module-level execution shape differs.")
+    session_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "verify_exact_fixture_session"
+    ]
+    expected_session_function = ast.parse(
+        "def verify_exact_fixture_session(\n"
+        "    status: int,\n"
+        "    body: bytes,\n"
+        "    label: str,\n"
+        "    *,\n"
+        "    require_admin: bool,\n"
+        ") -> None:\n"
+        "    if status != 200:\n"
+        "        raise RuntimeError(f\"{label} did not return an authenticated session.\")\n"
+        "    document = json_object(body, label)\n"
+        "    current = document.get(\"current_user\")\n"
+        "    if not isinstance(current, dict):\n"
+        "        raise RuntimeError(f\"{label} omitted its authenticated-user envelope.\")\n"
+        "    if current.get(\"username\") != \"mochirii-s4-test\":\n"
+        "        raise RuntimeError(f\"{label} established the wrong fixture identity.\")\n"
+        "    if current.get(\"admin\") is not require_admin:\n"
+        "        raise RuntimeError(f\"{label} administrator authority differed.\")\n"
+    ).body[0]
+    if (
+        len(session_functions) != 1
+        or ast.dump(session_functions[0], include_attributes=False)
+        != ast.dump(expected_session_function, include_attributes=False)
+    ):
+        fail("DiscourseConnect fixture authenticated-session envelope contract differs.")
     main_functions = [
         node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"
     ]
@@ -2031,9 +2065,14 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "verify_fixture"
     ]
+    admin_recovery_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "verify_admin_email_recovery"
+    ]
     expected_verify_statement_types = (
         "Assign,Assign,If,Assign,Expr,If,Expr,Expr,Assign,Assign,If,Assign,If,Assign,If,"
-        "Assign,Assign,Assign,Assign,Assign,Assign,If,Assign,Assign,If,Expr,Expr,Assign,Expr,"
+        "Assign,Assign,Assign,Assign,Assign,Assign,If,Assign,Expr,Expr,Expr,Assign,Expr,"
         "Assign,Assign,Assign,Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,Assign,Assign,"
         "Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,"
         "Assign,Assign,Assign,If,Expr,Expr"
@@ -2041,6 +2080,100 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     if len(verify_functions) != 1:
         fail("DiscourseConnect fixture verification function differs.")
     verify_function = verify_functions[0]
+    if len(admin_recovery_functions) != 1:
+        fail("DiscourseConnect administrator recovery verification function differs.")
+    admin_recovery_function = admin_recovery_functions[0]
+    expected_admin_recovery_function = ast.parse(
+        '''def verify_admin_email_recovery(port: int, member_session: Session) -> None:
+    superseded_token = b""
+    token = b""
+    recovered = Session(port)
+    try:
+        superseded_token = admin_recovery_fixture("issue")
+        token = admin_recovery_fixture("issue")
+        if not re.fullmatch(rb"[A-Za-z0-9_-]{20,256}", token) or not re.fullmatch(
+            rb"[A-Za-z0-9_-]{20,256}", superseded_token
+        ):
+            raise RuntimeError("Admin recovery fixture token is malformed.")
+        if token == superseded_token:
+            raise RuntimeError("Repeated administrator recovery reused a prior token.")
+        register_admin_recovery_markers((superseded_token, token))
+        superseded_path = "/session/email-login/" + quote(superseded_token.decode("ascii"), safe="")
+        obsolete = Session(port)
+        obsolete_status, _obsolete_headers, _obsolete_body = obsolete.get(superseded_path)
+        if obsolete_status not in {403, 404}:
+            raise RuntimeError("A superseded administrator recovery token remained valid.")
+        path = "/session/email-login/" + quote(token.decode("ascii"), safe="")
+        csrf_status, _csrf_headers, csrf_body = recovered.get("/session/csrf.json")
+        csrf = json_object(csrf_body, "admin recovery CSRF").get("csrf") if csrf_status == 200 else None
+        if not isinstance(csrf, str) or len(csrf) < 32:
+            raise RuntimeError("Admin recovery fixture did not obtain a CSRF token.")
+        info_status, _info_headers, info_body = recovered.get(path)
+        info = json_object(info_body, "admin recovery token") if info_status == 200 else {}
+        if info.get("can_login") is not True or info.get("token_email") != "stage4-fixture@forums.mochirii.com":
+            raise RuntimeError("Pinned admin email-login bypass did not accept the exact fixture administrator.")
+        status, _headers, body = recovered.post_form(path, {}, csrf)
+        result = json_object(body, "admin recovery login") if status == 200 else {}
+        if result.get("error") or result.get("success") != "OK":
+            raise RuntimeError("Pinned admin email-login did not establish a session.")
+        current_status, _current_headers, current_body = recovered.get("/session/current.json")
+        verify_exact_fixture_session(
+            current_status,
+            current_body,
+            "Pinned admin email-login",
+            require_admin=True,
+        )
+        replay = Session(port)
+        replay_status, _replay_headers, _replay_body = replay.get(path)
+        if replay_status not in {403, 404}:
+            raise RuntimeError("Consumed admin recovery token remained reusable.")
+        assert_local_login_denied(Session(port))
+        assert_admin_login_form_denied(recovered)
+    finally:
+        admin_recovery_fixture("cleanup")
+    for closed_session in (recovered, member_session):
+        current_status, _current_headers, _current_body = closed_session.get("/session/current.json")
+        if current_status != 404:
+            raise RuntimeError("Admin recovery fixture cleanup retained an authenticated session.")
+'''
+    ).body[0]
+    if ast.dump(admin_recovery_function, include_attributes=False) != ast.dump(
+        expected_admin_recovery_function, include_attributes=False
+    ):
+        fail("DiscourseConnect administrator recovery control flow differs.")
+    expected_member_session_block = ast.parse(
+        'current_status, _current_headers, current_body = valid.get("/session/current.json")\n'
+        "verify_exact_fixture_session(\n"
+        "    current_status,\n"
+        "    current_body,\n"
+        '    "Valid consumer callback",\n'
+        "    require_admin=False,\n"
+        ")\n"
+    ).body
+    expected_admin_recovery_call_block = ast.parse(
+        "verify_admin_email_recovery(args.port, valid)\n"
+        "assert_callback_logs_redacted()\n"
+    ).body
+    member_session_blocks = [
+        verify_function.body[index:index + len(expected_member_session_block)]
+        for index in range(len(verify_function.body) - len(expected_member_session_block) + 1)
+        if [
+            ast.dump(node, include_attributes=False)
+            for node in verify_function.body[index:index + len(expected_member_session_block)]
+        ]
+        == [ast.dump(node, include_attributes=False) for node in expected_member_session_block]
+    ]
+    admin_recovery_call_blocks = [
+        verify_function.body[index:index + len(expected_admin_recovery_call_block)]
+        for index in range(len(verify_function.body) - len(expected_admin_recovery_call_block) + 1)
+        if [
+            ast.dump(node, include_attributes=False)
+            for node in verify_function.body[index:index + len(expected_admin_recovery_call_block)]
+        ]
+        == [ast.dump(node, include_attributes=False) for node in expected_admin_recovery_call_block]
+    ]
+    if len(member_session_blocks) != 1 or len(admin_recovery_call_blocks) != 1:
+        fail("DiscourseConnect fixture session-envelope call-site contract differs.")
     verify_symbol_tables = [
         table
         for table in symbol_root.get_children()
@@ -2079,7 +2212,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         != [
             ast.dump(node, include_attributes=False)
             for node in ast.parse(
-                "verify_admin_email_recovery(args.port)\n"
+                "verify_admin_email_recovery(args.port, valid)\n"
                 "assert_callback_logs_redacted()\n"
             ).body
         ]
@@ -2120,7 +2253,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         )
         or name_call_counts
         != {
-            "RuntimeError": 8,
+            "RuntimeError": 7,
             "Session": 10,
             "VisibleText": 1,
             "any": 2,
@@ -2133,12 +2266,13 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
             "exactly_one": 1,
             "expire_nonce": 1,
             "isinstance": 1,
-            "json_object": 2,
+            "json_object": 1,
             "len": 1,
             "request_nonce": 6,
             "urlencode": 2,
             "urlparse": 1,
             "verify_admin_email_recovery": 1,
+            "verify_exact_fixture_session": 1,
             "verify_fixture_user": 1,
             "verify_member_branding": 1,
         }
@@ -2148,7 +2282,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
             "decode": 2,
             "encode": 4,
             "feed": 1,
-            "get": 17,
+            "get": 16,
             "hexdigest": 2,
             "issubset": 1,
             "join": 4,
@@ -2299,6 +2433,9 @@ def validate_template() -> None:
             "Rails.application.config.filter_parameters |= %i[sso sig token]",
             "module MochiriiSensitiveRequestPathFilter",
             "return FILTERED_EMAIL_LOGIN_PATH if path.match?(EMAIL_LOGIN_PATH)",
+            "module MochiriiSensitiveUserAuthTokenAuditFilter",
+            "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",
+            "UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter)",
             "location ~* ^/session/sso_login(?:\\.[A-Za-z0-9]+)?/?$",
             'location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$"',
             "location ~* ^/session/email-login/ {",
@@ -2312,6 +2449,51 @@ def validate_template() -> None:
         ],
         "app template",
     )
+    sensitive_initializer = r'''  - file:
+      path: /var/www/discourse/config/initializers/mochirii_sensitive_parameter_filter.rb
+      contents: |
+        # frozen_string_literal: true
+
+        # The DiscourseConnect callback carries the signed payload and signature
+        # in its query. Administrator recovery carries its token in one pinned
+        # route segment. Preserve PATH_INFO/routing while redacting only that
+        # canonical segment from Rails::Rack::Logger's filtered_path.
+        module MochiriiSensitiveRequestPathFilter
+          EMAIL_LOGIN_PATH = %r{\A/session/email-login/[A-Za-z0-9_-]{20,256}\z}.freeze
+          FILTERED_EMAIL_LOGIN_PATH = "/session/email-login/[FILTERED]".freeze
+
+          def filtered_path
+            return FILTERED_EMAIL_LOGIN_PATH if path.match?(EMAIL_LOGIN_PATH)
+
+            super
+          end
+        end
+
+        # The pinned UserAuthToken generate, rotate, and verbose lookup paths all
+        # converge on this durable audit writer. Copy and narrow only its exact
+        # canonical recovery-path field; never mutate Rack routing/request state.
+        module MochiriiSensitiveUserAuthTokenAuditFilter
+          def log(info)
+            return super unless info.is_a?(Hash)
+
+            audit_path = info[:path]
+            return super unless audit_path.is_a?(String) &&
+              audit_path.match?(MochiriiSensitiveRequestPathFilter::EMAIL_LOGIN_PATH)
+
+            super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))
+          end
+        end
+
+        ActionDispatch::Request.prepend(MochiriiSensitiveRequestPathFilter) unless
+          ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter)
+        Rails.application.reloader.to_prepare do
+          UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
+            UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
+        end
+        Rails.application.config.filter_parameters |= %i[sso sig token]
+'''
+    if app.count(sensitive_initializer) != 1:
+        fail("Sensitive request and authentication audit filters differ.")
     if app.index('location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$"') > app.index("location ~* ^/session/email-login/ {"):
         fail("Canonical administrator recovery privacy route is shadowed by its denial boundary.")
     localized_error_copy = '''        - |-
@@ -3041,10 +3223,26 @@ def validate_secrets_and_workflows() -> None:
     host_break_glass = read("scripts/host-break-glass-admin.sh")
     authentication_state = read("scripts/authentication-state.py")
     producer_probe = read("scripts/probe-website-forums-producer.py")
+    render_config = read("scripts/render-app-config.py")
+    fixture_developer_binding = (
+        '"__MOCHIRII_DEVELOPER_EMAILS__": scalar("stage4-developer@example.invalid"),'
+    )
+    if (
+        render_config.count(fixture_developer_binding) != 1
+        or '"__MOCHIRII_DEVELOPER_EMAILS__": scalar("stage4-fixture@forums.mochirii.com"),' in render_config
+    ):
+        fail("Disposable developer identity collides with the DiscourseConnect member fixture.")
     connect_fixture = read("scripts/verify-discourse-connect.py")
+    if hashlib.sha256(connect_fixture.encode("utf-8")).hexdigest() != DISCOURSE_CONNECT_VERIFIER_SHA256:
+        fail("DiscourseConnect fixture verifier differs from the exact reviewed source digest.")
     validate_login_code_denial_contract(connect_fixture)
     validate_https_consumer_fixture_contract(connect_fixture)
+    admin_recovery_fixture = read("scripts/prepare-admin-recovery-fixture.rb")
     sensitive_log_verifier = read("scripts/verify-sensitive-log-redaction.rb")
+    if hashlib.sha256(admin_recovery_fixture.encode("utf-8")).hexdigest() != ADMIN_RECOVERY_FIXTURE_SHA256:
+        fail("Administrator recovery fixture differs from the exact reviewed source digest.")
+    if hashlib.sha256(sensitive_log_verifier.encode("utf-8")).hexdigest() != SENSITIVE_LOG_VERIFIER_SHA256:
+        fail("Sensitive-log verifier differs from the exact reviewed source digest.")
     finalizer = read("scripts/finalize-member-rollout.sh")
     require_text(
         host_deploy,
@@ -3207,6 +3405,9 @@ def validate_secrets_and_workflows() -> None:
             'Pathname.new("/shared/log/rails")',
             'redis.scan(cursor, match: "*logster*"',
             'value.match?(/[\\x00-\\x1f\\x7f]/)',
+            'UserAuthTokenLog.where(user_id: user.id).order(:id).limit(129).to_a',
+            'entry.path == filtered_email_login_path',
+            'UserAuthToken.where(user_id: user.id).exists?',
         ],
         "callback log redaction verifier",
     )

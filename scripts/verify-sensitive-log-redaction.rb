@@ -12,6 +12,33 @@ unless markers.all? { |value| value.bytesize.between?(16, 16_384) && value.ascii
   raise "Sensitive-log marker is malformed"
 end
 
+record = SingleSignOnRecord.find_by(external_id: "mochirii-stage4-consumer-fixture")
+raise "Sensitive-log fixture identity is absent" if record.nil? || record.user.nil?
+user = record.user
+raise "Sensitive-log fixture email differs" unless user.email == "stage4-fixture@forums.mochirii.com"
+raise "Sensitive-log fixture retained an authenticated session" if UserAuthToken.where(user_id: user.id).exists?
+
+auth_logs = UserAuthTokenLog.where(user_id: user.id).order(:id).limit(129).to_a
+raise "Sensitive auth-log inventory is empty or excessive" if auth_logs.empty? || auth_logs.length > 128
+filtered_email_login_path = "/session/email-login/[FILTERED]"
+unless auth_logs.any? { |entry| entry.action == "generate" && entry.path == filtered_email_login_path }
+  raise "Sensitive auth-log fixture did not prove a filtered administrator session"
+end
+if auth_logs.any? { |entry| entry.path.to_s.match?(%r{\A/session/email-login/[A-Za-z0-9_-]{20,256}\z}) }
+  raise "An administrator recovery credential reached the authentication audit log"
+end
+auth_log_bytes = 0
+auth_logs.each do |entry|
+  [entry.action, entry.auth_token, entry.path, entry.user_agent, entry.client_ip].compact.each do |value|
+    bytes = value.to_s.b
+    auth_log_bytes += bytes.bytesize
+    if bytes.bytesize > 16_384 || auth_log_bytes > 1_048_576
+      raise "Sensitive auth-log fixture exceeded its response bound"
+    end
+    raise "A callback secret or member marker reached the authentication audit log" if markers.any? { |marker| bytes.include?(marker) }
+  end
+end
+
 roots = [
   Pathname.new("/var/log/nginx"),
   Pathname.new("/var/log/unicorn"),

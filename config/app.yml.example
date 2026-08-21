@@ -192,8 +192,27 @@ __MOCHIRII_TLS_RUN__
           end
         end
 
+        # The pinned UserAuthToken generate, rotate, and verbose lookup paths all
+        # converge on this durable audit writer. Copy and narrow only its exact
+        # canonical recovery-path field; never mutate Rack routing/request state.
+        module MochiriiSensitiveUserAuthTokenAuditFilter
+          def log(info)
+            return super unless info.is_a?(Hash)
+
+            audit_path = info[:path]
+            return super unless audit_path.is_a?(String) &&
+              audit_path.match?(MochiriiSensitiveRequestPathFilter::EMAIL_LOGIN_PATH)
+
+            super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))
+          end
+        end
+
         ActionDispatch::Request.prepend(MochiriiSensitiveRequestPathFilter) unless
           ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter)
+        Rails.application.reloader.to_prepare do
+          UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
+            UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
+        end
         Rails.application.config.filter_parameters |= %i[sso sig token]
   - file:
       path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf

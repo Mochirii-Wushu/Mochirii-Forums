@@ -265,6 +265,7 @@ def test_renderer() -> None:
         required = (
             '127.0.0.1:18080:80',
             'MOCHIRII_STAGE4_FIXTURE: "true"',
+            'DISCOURSE_DEVELOPER_EMAILS: "stage4-developer@example.invalid"',
             'DISCOURSE_ENABLE_S3_UPLOADS: "false"',
             'DISCOURSE_ENABLE_DISCOURSE_CONNECT: "false"',
             commit,
@@ -372,6 +373,7 @@ def test_renderer() -> None:
             '127.0.0.1:18080:80',
             'MOCHIRII_STAGE4_FIXTURE: "true"',
             'MOCHIRII_STAGE4_CONNECT_FIXTURE: "true"',
+            'DISCOURSE_DEVELOPER_EMAILS: "stage4-developer@example.invalid"',
             'DISCOURSE_ENABLE_DISCOURSE_CONNECT: "true"',
             connect_fixture,
         )
@@ -931,6 +933,76 @@ def test_https_consumer_fixture_contract() -> None:
             "    valid = Session(args.port)\n",
             "    valid, verify_fixture_user = Session(args.port), (lambda: None)\n",
         ),
+        (
+            '    current = document.get("current_user")\n',
+            "    current = document\n",
+        ),
+        (
+            '    if current.get("username") != "mochirii-s4-test":\n',
+            "    if False:\n",
+        ),
+        (
+            '    if current.get("admin") is not require_admin:\n',
+            "    if False:\n",
+        ),
+        (
+            "        current_status,\n"
+            "        current_body,\n"
+            '        "Valid consumer callback",\n'
+            "        require_admin=False,\n",
+            "        200,\n"
+            "        b'{\"current_user\":{\"username\":\"mochirii-s4-test\"}}',\n"
+            '        "Valid consumer callback",\n'
+            "        require_admin=False,\n",
+        ),
+        (
+            '        "Valid consumer callback",\n'
+            "        require_admin=False,\n",
+            "        encoded,\n"
+            "        require_admin=False,\n",
+        ),
+        (
+            '            "Pinned admin email-login",\n'
+            "            require_admin=True,\n",
+            '            "Pinned admin email-login",\n'
+            "            require_admin=False,\n",
+        ),
+        (
+            '        current_status, _current_headers, current_body = recovered.get("/session/current.json")\n',
+            '        os._exit(0)\n'
+            '        current_status, _current_headers, current_body = recovered.get("/session/current.json")\n',
+        ),
+        (
+            '            "Pinned admin email-login",\n'
+            "            require_admin=True,\n"
+            "        )\n"
+            "        replay = Session(port)\n",
+            '            "Pinned admin email-login",\n'
+            "            require_admin=True,\n"
+            "        )\n"
+            "        os._exit(0)\n"
+            "        replay = Session(port)\n",
+        ),
+        (
+            '    try:\n        superseded_token = admin_recovery_fixture("issue")\n',
+            '    try:\n'
+            '        globals()["verify_exact_fixture_session"] = lambda *_args, **_kwargs: None\n'
+            '        superseded_token = admin_recovery_fixture("issue")\n',
+        ),
+        (
+            '        current_status, _current_headers, current_body = recovered.get("/session/current.json")\n',
+            '        current_status, _current_headers, current_body = (\n'
+            '            200, {}, b\'{"current_user":{"username":"mochirii-s4-test","admin":true}\'}\n'
+            '        )\n',
+        ),
+        (
+            '    finally:\n        admin_recovery_fixture("cleanup")\n',
+            '    finally:\n        pass\n',
+        ),
+        (
+            "    verify_admin_email_recovery(args.port, valid)\n",
+            "    verify_admin_email_recovery(args.port, signed_out)\n",
+        ),
     )
     for current, hostile in hostile_mutations:
         candidate = verifier.replace(current, hostile, 1)
@@ -1049,6 +1121,93 @@ def test_https_consumer_fixture_contract() -> None:
         pass
     else:
         raise RuntimeError("HTTPS consumer fixture accepted an imported module name guard.")
+
+    rebound_session_checker = verifier.replace(
+        "def verify_fixture_user() -> None:\n",
+        "def verify_fixture_user() -> None:\n"
+        "    global verify_exact_fixture_session\n"
+        "    verify_exact_fixture_session = lambda *_args, **_kwargs: None\n",
+        1,
+    )
+    if rebound_session_checker == verifier:
+        raise RuntimeError("Authenticated-session transitive-rebind mutation anchor is absent.")
+    original_read = VALIDATOR.read
+    try:
+        VALIDATOR.read = (
+            lambda path: rebound_session_checker
+            if path == "scripts/verify-discourse-connect.py"
+            else original_read(path)
+        )
+        try:
+            VALIDATOR.validate_secrets_and_workflows()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Repository validator accepted a transitive authenticated-session rebind.")
+    finally:
+        VALIDATOR.read = original_read
+
+    member_session = json.dumps(
+        {"current_user": {"username": "mochirii-s4-test", "admin": False}},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    administrator_session = json.dumps(
+        {"current_user": {"username": "mochirii-s4-test", "admin": True}},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    CONNECT_FIXTURE.verify_exact_fixture_session(
+        200,
+        member_session,
+        "member fixture",
+        require_admin=False,
+    )
+    CONNECT_FIXTURE.verify_exact_fixture_session(
+        200,
+        administrator_session,
+        "administrator fixture",
+        require_admin=True,
+    )
+    hostile_sessions = (
+        (404, member_session, False),
+        (200, b'{"username":"mochirii-s4-test","admin":true}', False),
+        (200, b'{"current_user":null}', False),
+        (200, b'{"current_user":[]}', False),
+        (200, b'{"current_user":{"username":"wrong"}}', False),
+        (200, administrator_session, False),
+        (200, member_session, True),
+        (200, b'{"current_user":{"username":"mochirii-s4-test","admin":1}}', True),
+    )
+    for status, body, require_admin in hostile_sessions:
+        try:
+            CONNECT_FIXTURE.verify_exact_fixture_session(
+                status,
+                body,
+                "hostile fixture",
+                require_admin=require_admin,
+            )
+        except RuntimeError:
+            continue
+        raise RuntimeError("Authenticated-session verifier accepted a hostile response shape or identity.")
+
+    render_source = (ROOT / "scripts/render-app-config.py").read_text(encoding="utf-8")
+    collision = render_source.replace(
+        'scalar("stage4-developer@example.invalid")',
+        'scalar("stage4-fixture@forums.mochirii.com")',
+        1,
+    )
+    if collision == render_source:
+        raise RuntimeError("Fixture developer/member collision mutation anchor is absent.")
+    original_read = VALIDATOR.read
+    try:
+        VALIDATOR.read = lambda path: collision if path == "scripts/render-app-config.py" else original_read(path)
+        try:
+            VALIDATOR.validate_secrets_and_workflows()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Repository validator accepted a colliding fixture developer identity.")
+    finally:
+        VALIDATOR.read = original_read
 
     original_runner = CONNECT_FIXTURE.run_container_runner
     runner_calls: list[tuple[str, tuple[str, ...]]] = []
@@ -4043,6 +4202,9 @@ def test_sensitive_callback_markers() -> None:
         recovery_required = (
             "EMAIL_LOGIN_PATH = %r{\\A/session/email-login/[A-Za-z0-9_-]{20,256}\\z}.freeze",
             'FILTERED_EMAIL_LOGIN_PATH = "/session/email-login/[FILTERED]".freeze',
+            "module MochiriiSensitiveUserAuthTokenAuditFilter",
+            "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",
+            "UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter)",
             "Rails.application.config.filter_parameters |= %i[sso sig token]",
             exact_route,
             denial_route,
@@ -4053,6 +4215,95 @@ def test_sensitive_callback_markers() -> None:
         initializer = app[app.index("module MochiriiSensitiveRequestPathFilter"):app.index("  - file:", app.index("module MochiriiSensitiveRequestPathFilter"))]
         if "PATH_INFO" in initializer or "def path" in initializer or ".*" in initializer:
             raise RuntimeError("Administrator email-login log filter changes routing or became overbroad.")
+
+        fixture_sources = {
+            "scripts/prepare-admin-recovery-fixture.rb": (
+                ROOT / "scripts/prepare-admin-recovery-fixture.rb"
+            ).read_text(encoding="utf-8"),
+            "scripts/verify-sensitive-log-redaction.rb": scanner,
+        }
+        fixture_mutations = (
+            (
+                "scripts/prepare-admin-recovery-fixture.rb",
+                "  user.grant_admin!\n",
+                "  user.update!(admin: true)\n",
+            ),
+            (
+                "scripts/prepare-admin-recovery-fixture.rb",
+                "  UserAuthToken.where(user_id: user.id).destroy_all\n",
+                "  UserAuthToken.where(user_id: user.id).none?\n",
+            ),
+            (
+                "scripts/prepare-admin-recovery-fixture.rb",
+                "  user.revoke_admin! if user.admin?\n",
+                "  user.update!(admin: false) if user.admin?\n",
+            ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                "auth_logs = UserAuthTokenLog.where(user_id: user.id).order(:id).limit(129).to_a\n",
+                "auth_logs = []\n",
+            ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                'raise "Sensitive-log fixture retained an authenticated session" if UserAuthToken.where(user_id: user.id).exists?\n',
+                'raise "Sensitive-log fixture retained an authenticated session" if false\n',
+            ),
+        )
+        original_read = VALIDATOR.read
+        try:
+            for relative, current, hostile in fixture_mutations:
+                candidate = fixture_sources[relative].replace(current, hostile, 1)
+                if candidate == fixture_sources[relative]:
+                    raise RuntimeError("Sensitive recovery hostile mutation anchor is absent.")
+                VALIDATOR.read = (
+                    lambda path, relative=relative, candidate=candidate: candidate
+                    if path == relative
+                    else original_read(path)
+                )
+                try:
+                    VALIDATOR.validate_secrets_and_workflows()
+                except RuntimeError:
+                    continue
+                raise RuntimeError("Repository validator accepted a hostile recovery or durable-log mutation.")
+        finally:
+            VALIDATOR.read = original_read
+
+        app_candidate = app.replace(
+            "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",
+            "super(info)",
+            1,
+        )
+        original_read = VALIDATOR.read
+        try:
+            VALIDATOR.read = lambda path: app_candidate if path == "config/app.yml.example" else original_read(path)
+            try:
+                VALIDATOR.validate_template()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Repository validator accepted a non-redacting authentication audit wrapper.")
+        finally:
+            VALIDATOR.read = original_read
+
+        runtime_verifier = (ROOT / "scripts/verify-site.rb").read_text(encoding="utf-8")
+        runtime_candidate = runtime_verifier.replace(
+            '    filtered_audit == { action: "generate", path: "/session/email-login/[FILTERED]" } &&\n',
+            "    true &&\n",
+            1,
+        )
+        if runtime_candidate == runtime_verifier:
+            raise RuntimeError("Runtime authentication-path hostile mutation anchor is absent.")
+        original_read = VALIDATOR.read
+        try:
+            VALIDATOR.read = lambda path: runtime_candidate if path == "scripts/verify-site.rb" else original_read(path)
+            try:
+                VALIDATOR.validate_theme_and_public_source()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Repository validator accepted a synthetic authentication-path restoration proof.")
+        finally:
+            VALIDATOR.read = original_read
     finally:
         CONNECT_FIXTURE.CALLBACK_LOG_MARKERS.clear()
         CONNECT_FIXTURE.CALLBACK_LOG_MARKERS.update(original)

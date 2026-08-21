@@ -466,9 +466,10 @@ def assert_local_login_denied(session: Session) -> None:
         raise RuntimeError("Denied ordinary local login unexpectedly authenticated.")
 
 
-def verify_admin_email_recovery(port: int) -> None:
+def verify_admin_email_recovery(port: int, member_session: Session) -> None:
     superseded_token = b""
     token = b""
+    recovered = Session(port)
     try:
         superseded_token = admin_recovery_fixture("issue")
         token = admin_recovery_fixture("issue")
@@ -485,7 +486,6 @@ def verify_admin_email_recovery(port: int) -> None:
         if obsolete_status not in {403, 404}:
             raise RuntimeError("A superseded administrator recovery token remained valid.")
         path = "/session/email-login/" + quote(token.decode("ascii"), safe="")
-        recovered = Session(port)
         csrf_status, _csrf_headers, csrf_body = recovered.get("/session/csrf.json")
         csrf = json_object(csrf_body, "admin recovery CSRF").get("csrf") if csrf_status == 200 else None
         if not isinstance(csrf, str) or len(csrf) < 32:
@@ -499,9 +499,12 @@ def verify_admin_email_recovery(port: int) -> None:
         if result.get("error") or result.get("success") != "OK":
             raise RuntimeError("Pinned admin email-login did not establish a session.")
         current_status, _current_headers, current_body = recovered.get("/session/current.json")
-        current = json_object(current_body, "recovered admin session") if current_status == 200 else {}
-        if current.get("username") != "mochirii-s4-test" or current.get("admin") is not True:
-            raise RuntimeError("Pinned admin email-login established the wrong session.")
+        verify_exact_fixture_session(
+            current_status,
+            current_body,
+            "Pinned admin email-login",
+            require_admin=True,
+        )
         replay = Session(port)
         replay_status, _replay_headers, _replay_body = replay.get(path)
         if replay_status not in {403, 404}:
@@ -510,6 +513,10 @@ def verify_admin_email_recovery(port: int) -> None:
         assert_admin_login_form_denied(recovered)
     finally:
         admin_recovery_fixture("cleanup")
+    for closed_session in (recovered, member_session):
+        current_status, _current_headers, _current_body = closed_session.get("/session/current.json")
+        if current_status != 404:
+            raise RuntimeError("Admin recovery fixture cleanup retained an authenticated session.")
 
 
 def json_object(body: bytes, label: str) -> dict[str, object]:
@@ -520,6 +527,25 @@ def json_object(body: bytes, label: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise RuntimeError(f"{label} response is not one JSON object.")
     return value
+
+
+def verify_exact_fixture_session(
+    status: int,
+    body: bytes,
+    label: str,
+    *,
+    require_admin: bool,
+) -> None:
+    if status != 200:
+        raise RuntimeError(f"{label} did not return an authenticated session.")
+    document = json_object(body, label)
+    current = document.get("current_user")
+    if not isinstance(current, dict):
+        raise RuntimeError(f"{label} omitted its authenticated-user envelope.")
+    if current.get("username") != "mochirii-s4-test":
+        raise RuntimeError(f"{label} established the wrong fixture identity.")
+    if current.get("admin") is not require_admin:
+        raise RuntimeError(f"{label} administrator authority differed.")
 
 
 def string_values(value: object) -> list[str]:
@@ -717,9 +743,12 @@ def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:
     ):
         raise RuntimeError("Valid same-session consumer callback did not return through its private query-scrubbed boundary.")
     current_status, _current_headers, current_body = valid.get("/session/current.json")
-    current = json_object(current_body, "current session") if current_status == 200 else {}
-    if current.get("username") != "mochirii-s4-test":
-        raise RuntimeError("Valid consumer callback did not establish the exact fixture session.")
+    verify_exact_fixture_session(
+        current_status,
+        current_body,
+        "Valid consumer callback",
+        require_admin=False,
+    )
     verify_fixture_user()
     verify_member_branding(valid)
     status, _headers, body = valid.get(callback_path(encoded, signature))
@@ -770,7 +799,7 @@ def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:
     if unexpected_status in {200, 201, 202, 204, 301, 302, 303, 307, 308}:
         raise RuntimeError("Unexpected callback method or normalized-case route did not fail closed.")
 
-    verify_admin_email_recovery(args.port)
+    verify_admin_email_recovery(args.port, valid)
     assert_callback_logs_redacted()
 
 def main() -> int:

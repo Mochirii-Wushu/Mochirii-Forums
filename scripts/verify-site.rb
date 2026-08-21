@@ -118,6 +118,35 @@ checks["admin_recovery_log_path_filtered"] =
     recovery_request.path == "/session/email-login/#{recovery_token}" &&
     recovery_request.filtered_path == "/session/email-login/[FILTERED]" &&
     ordinary_request.filtered_path == "/session/email-login/too-short"
+auth_audit_probe_class =
+  Class.new do
+    class << self
+      attr_reader :observed_info
+
+      def log(info)
+        @observed_info = info
+        :completed
+      end
+    end
+  end
+auth_audit_probe_class.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) if
+  defined?(MochiriiSensitiveUserAuthTokenAuditFilter)
+recovery_audit = { action: "generate", path: "/session/email-login/#{recovery_token}" }.freeze
+recovery_result = auth_audit_probe_class.log(recovery_audit)
+filtered_audit = auth_audit_probe_class.observed_info
+ordinary_audit = { action: "rotate", path: "/session/email-login/too-short" }.freeze
+ordinary_result = auth_audit_probe_class.log(ordinary_audit)
+ordinary_observed = auth_audit_probe_class.observed_info
+checks["admin_recovery_auth_audit_path_filtered"] =
+  defined?(MochiriiSensitiveUserAuthTokenAuditFilter) &&
+    UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter) &&
+    recovery_result == :completed &&
+    filtered_audit.is_a?(Hash) &&
+    !filtered_audit.equal?(recovery_audit) &&
+    filtered_audit == { action: "generate", path: "/session/email-login/[FILTERED]" } &&
+    recovery_audit == { action: "generate", path: "/session/email-login/#{recovery_token}" } &&
+    ordinary_result == :completed &&
+    ordinary_observed.equal?(ordinary_audit)
 expected_discourse_connect =
   case ENV.fetch("DISCOURSE_ENABLE_DISCOURSE_CONNECT")
   when "true" then true

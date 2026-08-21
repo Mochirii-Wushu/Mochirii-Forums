@@ -127,7 +127,7 @@ def fixture_values(*, connect: bool = False) -> dict[str, str]:
         "__MOCHIRII_TLS_HOOKS__": "  # No public TLS lifecycle hook is installed in the loopback fixture.",
         "__MOCHIRII_TLS_RUN__": "  # No public TLS client is installed in the loopback fixture.",
         "__MOCHIRII_EXPOSE__": '  - "127.0.0.1:18080:80"',
-        "__MOCHIRII_DEVELOPER_EMAILS__": scalar("stage4-fixture@forums.mochirii.com"),
+        "__MOCHIRII_DEVELOPER_EMAILS__": scalar("stage4-developer@example.invalid"),
         "__MOCHIRII_SMTP_ADDRESS__": scalar("127.0.0.1"),
         "__MOCHIRII_SMTP_PORT__": scalar("1"),
         "__MOCHIRII_SMTP_USER_NAME__": scalar("fixture"),
