@@ -862,6 +862,150 @@ timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc
 ' || fail "Running core, Docker Manager, or mandatory mail component bytes differ."
 timeout --signal=TERM --kill-after=10s 180s docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
 timeout --signal=TERM --kill-after=10s 180s docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
+timeout --signal=TERM --kill-after=5s 60s docker exec -i app python3 -B - <<'PY_NGINX_FILES' >/dev/null || fail "Active nginx configuration files differ from the exact reviewed inventory."
+import hashlib
+import os
+import pathlib
+import stat
+import sys
+
+MAX_CONFIG_BYTES = 1_048_576
+MAX_DIRECTORY_ENTRIES = 32
+EXPECTED_DIRECTORY_CHILDREN = {
+    "/etc/nginx/conf.d": ("discourse.conf", "outlets"),
+    "/etc/nginx/conf.d/outlets": ("before-server", "discourse", "server"),
+    "/etc/nginx/conf.d/outlets/before-server": (
+        "20-redirect-http-to-https.conf",
+        "30-ratelimited.conf",
+    ),
+    "/etc/nginx/conf.d/outlets/discourse": (
+        "20-https.conf",
+        "30-ratelimited.conf",
+        "40-mochirii-public-metadata.conf",
+    ),
+    "/etc/nginx/conf.d/outlets/server": (
+        "10-http.conf",
+        "20-https.conf",
+        "30-offline-page.conf",
+        "40-mochirii-feed-denial.conf",
+    ),
+    "/etc/nginx/modules-enabled": (),
+    "/etc/nginx/sites-enabled": (),
+}
+EXPECTED_FILE_SHA256 = {
+    "/etc/nginx/nginx.conf": (
+        "942f01a5cce65339d54ef67df4427768473f26b89e348926c8e65929b7863952",
+    ),
+    "/etc/nginx/mime.types": (
+        "d2404914bf644ebde13c987081c3259bdd40e2e31985b90a77c08e42f64efe4e",
+    ),
+    "/etc/nginx/conf.d/discourse.conf": (
+        "be465ea2349ea9b858d3216d4178ac84145d1bbf2c6faa0e39776321778b7a52",
+    ),
+    "/etc/nginx/conf.d/outlets/before-server/20-redirect-http-to-https.conf": (
+        "7bb5588965b9122d7dba2a9cf7ff1c5fd9e933b278eacaf0f88176aa8fd72312",
+    ),
+    "/etc/nginx/conf.d/outlets/before-server/30-ratelimited.conf": (
+        "13a8adb310d300c3e1a4525421c0d28c218617316014baabd583394e10cafd52",
+    ),
+    "/etc/nginx/conf.d/outlets/discourse/20-https.conf": (
+        "cfc7898c735f0ca38c2acaeab9165bcceebe3519db1a19593628d368f5fbba09",
+    ),
+    "/etc/nginx/conf.d/outlets/discourse/30-ratelimited.conf": (
+        "855b446d8b3d803097b970fd14f5696f0395e01464d8518dba152a200d51bfa2",
+    ),
+    "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf": (
+        "1110e9e3080aa91f89e4010a3ddfcab6a56e508b4a6ab27c3ee5333e04de8a78",
+    ),
+    "/etc/nginx/conf.d/outlets/server/10-http.conf": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ),
+    "/etc/nginx/conf.d/outlets/server/20-https.conf": (
+        "5e2dc26f2148bdb83a4927f1e162b959579a8b800f3514272245ca440af21248",
+        "6d26204383871f0e76013485555459940ff6f78df1ee7ac7857a58904d49a162",
+    ),
+    "/etc/nginx/conf.d/outlets/server/30-offline-page.conf": (
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ),
+    "/etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf": (
+        "c82653d574f1747c7ed0822d1423833af8acc982e8d01df96b9072d2bd8b0c87",
+    ),
+}
+
+if len(sys.argv) not in {1, 2}:
+    raise SystemExit("invalid nginx verification root")
+root = pathlib.Path(sys.argv[1]) if len(sys.argv) == 2 else pathlib.Path("/")
+if not root.is_absolute():
+    raise SystemExit("invalid nginx verification root")
+
+
+def rooted(absolute_path):
+    return root / absolute_path.removeprefix("/")
+
+
+def canonical(path):
+    return os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.abspath(path))
+
+
+def directory_children(absolute_path):
+    path = rooted(absolute_path)
+    try:
+        metadata = os.lstat(path)
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode) or not canonical(path):
+            raise SystemExit("nginx configuration directory differs")
+        names = []
+        with os.scandir(path) as entries:
+            for entry in entries:
+                if len(names) >= MAX_DIRECTORY_ENTRIES:
+                    raise SystemExit("nginx configuration inventory exceeds its bound")
+                names.append(entry.name)
+    except OSError as error:
+        raise SystemExit("nginx configuration directory is unreadable") from error
+    return tuple(sorted(names))
+
+
+def normalized_file_sha256(absolute_path):
+    path = rooted(absolute_path)
+    try:
+        metadata = os.lstat(path)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_size > MAX_CONFIG_BYTES
+            or not canonical(path)
+        ):
+            raise SystemExit("nginx configuration file type or size differs")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb", closefd=True) as stream:
+            opened = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_dev != metadata.st_dev
+                or opened.st_ino != metadata.st_ino
+                or opened.st_size > MAX_CONFIG_BYTES
+            ):
+                raise SystemExit("nginx configuration file changed during verification")
+            data = stream.read(MAX_CONFIG_BYTES + 1)
+    except OSError as error:
+        raise SystemExit("nginx configuration file is unreadable") from error
+    if len(data) > MAX_CONFIG_BYTES:
+        raise SystemExit("nginx configuration file exceeds its bound")
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise SystemExit("nginx configuration file is not UTF-8") from error
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+for directory, expected_children in EXPECTED_DIRECTORY_CHILDREN.items():
+    if directory_children(directory) != tuple(sorted(expected_children)):
+        raise SystemExit("nginx configuration inventory differs")
+for path, expected_digests in EXPECTED_FILE_SHA256.items():
+    if normalized_file_sha256(path) not in expected_digests:
+        raise SystemExit("nginx configuration content differs")
+PY_NGINX_FILES
 nginx_log="$(mktemp /var/lib/mochirii/forums/logs/${expected_commit}-nginx.XXXXXXXX.log)"
 chmod 0600 "${nginx_log}"
 timeout --signal=TERM --kill-after=5s 60s docker exec app nginx -T >"${nginx_log}" 2>&1
@@ -875,37 +1019,124 @@ import pathlib
 import re
 import sys
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-marker = r"location ~* ^/session/sso_login(?:\.[A-Za-z0-9]+)?/?$ {"
-match = re.search(re.escape(marker) + r"(?P<body>.*?)\n\s*\}", text, re.S)
-if match is None:
-    raise SystemExit("sensitive callback location is absent")
-body = match.group("body")
+
+def contains_unquoted_block_delimiter(line):
+    quote = None
+    escaped = False
+    for character in line:
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {'"', "'"}:
+            quote = character
+        elif character == "#":
+            break
+        elif character in {"{", "}"}:
+            return True
+    return False
+
+def location_body(marker, label):
+    matches = tuple(re.finditer(re.escape(marker) + r"(?P<body>.*?)\n\s*\}", text, re.S))
+    if len(matches) != 1:
+        raise SystemExit(f"{label} location is absent or duplicated")
+    body = matches[0].group("body")
+    if any(contains_unquoted_block_delimiter(line) for line in body.splitlines()):
+        raise SystemExit(f"{label} location contains a nested block")
+    return body
+
+def nginx_directives(source):
+    directives = []
+    current = []
+    quote = None
+    escaped = False
+    comment = False
+    for character in source:
+        if comment:
+            if character in {"\r", "\n"}:
+                comment = False
+                current.append(" ")
+        elif escaped:
+            current.append(character)
+            escaped = False
+        elif character == "\\":
+            current.append(character)
+            escaped = True
+        elif quote is not None:
+            current.append(character)
+            if character == quote:
+                quote = None
+        elif character in {'"', "'"}:
+            current.append(character)
+            quote = character
+        elif character == "#":
+            comment = True
+        elif character == ";":
+            directive = "".join(current).strip()
+            if directive:
+                directives.append(directive + ";")
+            current = []
+        elif character == "{":
+            directive = "".join(current).strip()
+            if directive:
+                directives.append(directive + " {")
+            current = []
+        elif character == "}":
+            current = []
+        else:
+            current.append(character)
+    return tuple(directives)
+
+def directive_name(directive):
+    token = directive.split(None, 1)[0]
+    return token.replace('"', "").replace("'", "").replace("\\", "").lower()
+
+if any(
+    directive_name(directive) == "proxy_pass_header"
+    for directive in nginx_directives(text)
+):
+    raise SystemExit("rendered proxy configuration can re-enable an upstream response header")
+
 required = {
     "access_log off;", "log_not_found off;", "error_log /dev/null emerg;",
+    "proxy_hide_header Cache-Control;", "proxy_hide_header Pragma;",
+    "proxy_hide_header Expires;", "proxy_hide_header Referrer-Policy;",
+    "expires off;",
     'add_header Cache-Control "private, no-store, max-age=0" always;',
     'add_header Pragma "no-cache" always;', 'add_header Expires "0" always;',
     'add_header Referrer-Policy "no-referrer" always;',
     "include conf.d/outlets/discourse/*.conf;", "proxy_pass http://discourse;",
+    "proxy_set_header Host $http_host;", 'proxy_set_header X-Request-Start "t=${msec}";',
+    "proxy_set_header X-Forwarded-For $remote_addr;", "proxy_set_header X-Forwarded-Proto $thescheme;",
+    'proxy_set_header X-Sendfile-Type "";', 'proxy_set_header X-Accel-Mapping "";',
+    'proxy_set_header Client-Ip "";',
 }
-if any(value not in body for value in required):
-    raise SystemExit("sensitive callback logging or proxy boundary differs")
-for forbidden in ("$request", "$request_uri", "$args", "$query_string", "$http_referer", "$http_cookie"):
-    if forbidden in body:
-        raise SystemExit("sensitive callback location can persist request data")
+
+def verify_sensitive_location(body, label, extra=()):
+    directives = nginx_directives(body)
+    expected = required | set(extra)
+    if len(directives) != len(expected) or set(directives) != expected:
+        raise SystemExit(f"{label} logging or proxy boundary differs")
+    forbidden = ("$request", "$request_uri", "$args", "$query_string", "$http_referer", "$http_cookie")
+    if any(value in directive for value in forbidden for directive in directives):
+        raise SystemExit(f"{label} can persist request data")
+
+callback_marker = r"location ~* ^/session/sso_login(?:\.[A-Za-z0-9]+)?/?$ {"
+verify_sensitive_location(location_body(callback_marker, "sensitive callback"), "sensitive callback")
 
 email_marker = 'location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {'
-email_match = re.search(re.escape(email_marker) + r"(?P<body>.*?)\n\s*\}", text, re.S)
-if email_match is None:
-    raise SystemExit("administrator recovery privacy location is absent")
-email_body = email_match.group("body")
-if any(value not in email_body for value in required | {'add_header X-Content-Type-Options "nosniff" always;'}):
-    raise SystemExit("administrator recovery logging or proxy boundary differs")
-if any(value in email_body for value in ("$request", "$request_uri", "$args", "$query_string", "$http_referer", "$http_cookie")):
-    raise SystemExit("administrator recovery location can persist request data")
+verify_sensitive_location(
+    location_body(email_marker, "administrator recovery privacy"),
+    "administrator recovery",
+    {'add_header X-Content-Type-Options "nosniff" always;'},
+)
 
 denial_marker = r"location ~* ^/session/email-login/ {"
-denial_match = re.search(re.escape(denial_marker) + r"(?P<body>.*?)\n\s*\}", text, re.S)
-if denial_match is None or any(value not in denial_match.group("body") for value in ("access_log off;", "error_log /dev/null emerg;", "return 420;")):
+denial_directives = nginx_directives(location_body(denial_marker, "administrator recovery denial"))
+if any(denial_directives.count(value) != 1 for value in ("access_log off;", "error_log /dev/null emerg;", "return 420;")):
     raise SystemExit("noncanonical administrator recovery route does not fail privately")
 PY
 for hidden_header in X-Discourse-Route X-Discourse-Username X-Discourse-Crawler-View Discourse-No-Onebox Discourse-Rate-Limit-Error-Code Discourse-Xhr-Redirect Discourse-Actions-Remaining Discourse-Actions-Max Discourse-Logged-Out X-Discourse-TrackView X-Discourse-BrowserPageView X-Discourse-Cached; do

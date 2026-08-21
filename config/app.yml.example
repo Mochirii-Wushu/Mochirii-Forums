@@ -231,6 +231,14 @@ __MOCHIRII_TLS_RUN__
           access_log off;
           log_not_found off;
           error_log /dev/null emerg;
+          # Pinned Rails supplies its own cache and referrer metadata. Replace
+          # those upstream values here so this query-bearing callback has one
+          # exact private browser boundary rather than appended policies.
+          proxy_hide_header Cache-Control;
+          proxy_hide_header Pragma;
+          proxy_hide_header Expires;
+          proxy_hide_header Referrer-Policy;
+          expires off;
           add_header Cache-Control "private, no-store, max-age=0" always;
           add_header Pragma "no-cache" always;
           add_header Expires "0" always;
@@ -249,6 +257,13 @@ __MOCHIRII_TLS_RUN__
           access_log off;
           log_not_found off;
           error_log /dev/null emerg;
+          # Replace the pinned Rails defaults for this token-bearing recovery
+          # response just as for the signed DiscourseConnect callback above.
+          proxy_hide_header Cache-Control;
+          proxy_hide_header Pragma;
+          proxy_hide_header Expires;
+          proxy_hide_header Referrer-Policy;
+          expires off;
           add_header Cache-Control "private, no-store, max-age=0" always;
           add_header Pragma "no-cache" always;
           add_header Expires "0" always;

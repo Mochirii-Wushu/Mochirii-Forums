@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import ast
 import hashlib
 import importlib.util
 import io
@@ -474,6 +475,417 @@ def test_login_code_denial_contract() -> None:
         except RuntimeError:
             continue
         raise RuntimeError("Pinned local email-code denial accepted a hostile controller mutation.")
+
+
+def test_sensitive_response_header_contract() -> None:
+    app = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
+    host_verify = (ROOT / "scripts/verify-host.sh").read_text(encoding="utf-8")
+    VALIDATOR.validate_sensitive_response_header_contract(app, host_verify)
+    file_start_marker = (
+        "timeout --signal=TERM --kill-after=5s 60s docker exec -i app python3 -B - "
+        "<<'PY_NGINX_FILES' >/dev/null || fail \"Active nginx configuration files differ "
+        "from the exact reviewed inventory.\"\n"
+    )
+    file_start = host_verify.index(file_start_marker) + len(file_start_marker)
+    file_source = host_verify[file_start:host_verify.index("\nPY_NGINX_FILES\n", file_start)]
+    file_tree = ast.parse(file_source)
+
+    def assignment(name: str) -> ast.Assign:
+        matches = [
+            node
+            for node in file_tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        ]
+        if len(matches) != 1:
+            raise RuntimeError(f"Hosted nginx file fixture assignment differs: {name}.")
+        return matches[0]
+
+    directory_contract = ast.literal_eval(assignment("EXPECTED_DIRECTORY_CHILDREN").value)
+    file_contract = ast.literal_eval(assignment("EXPECTED_FILE_SHA256").value)
+    tls_states = (
+        VALIDATOR.PINNED_WEB_SSL_SERVER_OUTLET,
+        VALIDATOR.MANAGED_WEB_SSL_SERVER_OUTLET,
+    )
+    expected_tls_evidence = (
+        (668, "5e2dc26f2148bdb83a4927f1e162b959579a8b800f3514272245ca440af21248"),
+        (821, "6d26204383871f0e76013485555459940ff6f78df1ee7ac7857a58904d49a162"),
+    )
+    actual_tls_evidence = tuple(
+        (len(value.encode("utf-8")), hashlib.sha256(value.encode("utf-8")).hexdigest())
+        for value in tls_states
+    )
+    if (
+        actual_tls_evidence != expected_tls_evidence
+        or file_contract["/etc/nginx/conf.d/outlets/server/20-https.conf"]
+        != tuple(digest for _, digest in expected_tls_evidence)
+    ):
+        raise RuntimeError("Hosted nginx file verifier does not bind both exact pinned TLS outlet states.")
+    empty_digest = hashlib.sha256(b"").hexdigest()
+    tls_path = "/etc/nginx/conf.d/outlets/server/20-https.conf"
+    fixture_file_contract = {
+        path: tuple(digest for _, digest in expected_tls_evidence) if path == tls_path else (empty_digest,)
+        for path in file_contract
+    }
+    file_assignment = assignment("EXPECTED_FILE_SHA256")
+    file_assignment_source = ast.get_source_segment(file_source, file_assignment)
+    if file_assignment_source is None:
+        raise RuntimeError("Hosted nginx file fixture assignment source is unavailable.")
+    fixture_file_source = file_source.replace(
+        file_assignment_source,
+        f"EXPECTED_FILE_SHA256 = {fixture_file_contract!r}",
+        1,
+    )
+
+    def materialize_file_fixture(root: Path, tls_state: str = tls_states[0]) -> None:
+        for relative in directory_contract:
+            (root / relative.removeprefix("/")).mkdir(parents=True, exist_ok=True)
+        for relative in fixture_file_contract:
+            path = root / relative.removeprefix("/")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(tls_state.encode("utf-8") if relative == tls_path else b"")
+
+    def run_file_fixture(root: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-B", "-", str(root.resolve())],
+            input=fixture_file_source,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+
+    for tls_state in tls_states:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_root = Path(directory)
+            materialize_file_fixture(fixture_root, tls_state)
+            if run_file_fixture(fixture_root).returncode != 0:
+                raise RuntimeError("Hosted nginx file verifier rejected an exact pinned TLS outlet state.")
+
+    def marker_spoof(root: Path) -> None:
+        (root / "etc/nginx/conf.d/outlets/server/10-http.conf").write_text(
+            "# configuration file /tmp/ignored.conf:\n"
+            "location ^~ /session/ { return 204; }\n",
+            encoding="utf-8",
+        )
+
+    def hostile_main(root: Path) -> None:
+        (root / "etc/nginx/conf.d/discourse.conf").write_text(
+            "location ^~ /session/ { return 204; }\n",
+            encoding="utf-8",
+        )
+
+    def hostile_mime_include(root: Path) -> None:
+        (root / "etc/nginx/mime.types").write_text(
+            "types { text/plain txt; }\nserver { listen 443 ssl; }\n",
+            encoding="utf-8",
+        )
+
+    def unexpected_outlet(root: Path) -> None:
+        (root / "etc/nginx/conf.d/outlets/server/99-hostile.conf").write_text(
+            "location ^~ /session/ { return 204; }\n",
+            encoding="utf-8",
+        )
+
+    def unexpected_top_level(root: Path) -> None:
+        (root / "etc/nginx/conf.d/hostile.conf").write_text(
+            "server { listen 443 ssl; }\n",
+            encoding="utf-8",
+        )
+
+    def invalid_utf8(root: Path) -> None:
+        (root / "etc/nginx/nginx.conf").write_bytes(b"\xff")
+
+    def oversized(root: Path) -> None:
+        (root / "etc/nginx/nginx.conf").write_bytes(b"x" * 1_048_577)
+
+    for mutate in (
+        marker_spoof,
+        hostile_main,
+        hostile_mime_include,
+        unexpected_outlet,
+        unexpected_top_level,
+        invalid_utf8,
+        oversized,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_root = Path(directory)
+            materialize_file_fixture(fixture_root)
+            mutate(fixture_root)
+            if run_file_fixture(fixture_root).returncode == 0:
+                raise RuntimeError("Hosted nginx file verifier accepted a hostile raw-file fixture.")
+
+    raw_verifier_mutations = (
+        host_verify.replace(
+            "import hashlib\nimport os\n",
+            "import hashlib\nimport os\nraise SystemExit(0)\n",
+            1,
+        ),
+        host_verify.replace(
+            '    "/etc/nginx/conf.d": ("discourse.conf", "outlets"),',
+            '    "/etc/nginx/conf.d": ("outlets",),',
+            1,
+        ),
+        host_verify.replace(
+            "docker exec -i app python3 -B - <<'PY_NGINX_FILES'",
+            "docker exec -i app python3 -B - /tmp <<'PY_NGINX_FILES'",
+            1,
+        ),
+        host_verify.replace(file_start_marker, "true || " + file_start_marker, 1),
+    )
+    for candidate in raw_verifier_mutations:
+        try:
+            VALIDATOR.validate_sensitive_response_header_contract(app, candidate)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Sensitive response-header source accepted a weakened nginx file verifier.")
+    if os.name == "posix":
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeError("Bash is required for the nginx verifier reachability fixture.")
+        file_block_start = host_verify.index(file_start_marker)
+        file_block_end = host_verify.index("\nPY_NGINX_FILES\n", file_start) + len("\nPY_NGINX_FILES\n")
+        skipped_file_block = "true || " + host_verify[file_block_start:file_block_end]
+        with tempfile.TemporaryDirectory() as directory:
+            sentinel = Path(directory) / "invoked"
+            harness = (
+                "set -euo pipefail\n"
+                "fail() { return 1; }\n"
+                'timeout() { printf invoked >"${NGINX_VERIFIER_SENTINEL}"; return 1; }\n'
+                + skipped_file_block
+                + '[[ ! -e "${NGINX_VERIFIER_SENTINEL}" ]]\n'
+            )
+            completed = subprocess.run(
+                [bash, "-c", harness],
+                env={**os.environ, "NGINX_VERIFIER_SENTINEL": str(sentinel)},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            if completed.returncode != 0 or sentinel.exists():
+                raise RuntimeError("Nginx verifier skipped-invocation hostile fixture changed.")
+    markers = (
+        "        location ~* ^/session/sso_login(?:\\.[A-Za-z0-9]+)?/?$ {\n",
+        '        location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {\n',
+    )
+    outlet_start_marker = (
+        "      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
+        "      contents: |\n"
+    )
+    outlet_start = app.index(outlet_start_marker) + len(outlet_start_marker)
+    outlet_end_marker = "  - file:\n      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
+    outlet_end = app.index(outlet_end_marker, outlet_start)
+    server_outlet_start_marker = (
+        "      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
+        "      contents: |\n"
+    )
+    server_outlet_end_marker = "  - file:\n      path: /var/www/discourse/public/403.html\n"
+
+    def rendered_nginx(source: str, extra: str = "") -> str:
+        current_outlet_start = source.index(outlet_start_marker) + len(outlet_start_marker)
+        current_outlet_end = source.index(outlet_end_marker, current_outlet_start)
+        current_outlet_body = "\n".join(
+            line[8:] if line.startswith("        ") else line
+            for line in source[current_outlet_start:current_outlet_end].splitlines()
+        )
+        current_server_start = source.index(server_outlet_start_marker) + len(server_outlet_start_marker)
+        current_server_end = source.index(server_outlet_end_marker, current_server_start)
+        current_server_body = "\n".join(
+            line[8:] if line.startswith("        ") else line
+            for line in source[current_server_start:current_server_end].splitlines()
+        )
+        return (
+            "# configuration file /etc/nginx/conf.d/outlets/discourse/20-https.conf:\n"
+            + "add_header Strict-Transport-Security 'max-age=31536000';\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/discourse/30-ratelimited.conf:\n"
+            + "limit_conn connperip 20;\n"
+            + "limit_req zone=flood burst=12 nodelay;\n"
+            + "limit_req zone=bot burst=100 nodelay;\n"
+            + "\n# configuration file /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf:\n"
+            + current_outlet_body
+            + "\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/server/10-http.conf:\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/server/20-https.conf:\n"
+            + "listen 443 ssl;\n"
+            + "listen [::]:443 ssl;\n"
+            + "http2 on;\n"
+            + "ssl_protocols TLSv1.2 TLSv1.3;\n"
+            + "ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;\n"
+            + "ssl_prefer_server_ciphers off;\n"
+            + "ssl_certificate /shared/ssl/ssl.crt;\n"
+            + "ssl_certificate_key /shared/ssl/ssl.key;\n"
+            + "ssl_session_tickets off;\n"
+            + "ssl_session_timeout 1d;\n"
+            + "ssl_session_cache shared:SSL:1m;\n"
+            + "add_header Strict-Transport-Security 'max-age=31536000';\n"
+            + "if ($http_host != forums.mochirii.com) {\n"
+            + "rewrite (.*) https://forums.mochirii.com$1 permanent;\n"
+            + "}\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/server/30-offline-page.conf:\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf:\n"
+            + current_server_body
+            + "\n"
+            + extra
+        )
+
+    for name in ("Cache-Control", "Pragma", "Expires", "Referrer-Policy"):
+        directive = f"          proxy_hide_header {name};\n"
+        missing_host_proof = host_verify.replace(
+            f'"proxy_hide_header {name};"', '"proxy_hide_header Hostile-Metadata;"', 1
+        )
+        hostile_cases = [(app, missing_host_proof)]
+        for marker in markers:
+            start = app.index(marker)
+            position = app.index(directive, start)
+            missing = app[:position] + app[position + len(directive):]
+            misplaced = missing.replace(marker, directive + marker, 1)
+            extra = app[:position] + f"          proxy_pass_header    {name.lower()};\n" + app[position:]
+            conflicting = app[:position] + f'          add_header {name} "hostile" always;\n' + app[position:]
+            extra_include = app[:position] + "          include /tmp/hostile-sensitive.conf;\n" + app[position:]
+            add_start = app.index('          add_header Cache-Control "private, no-store, max-age=0" always;\n', start)
+            add_end_line = '          add_header Referrer-Policy "no-referrer" always;\n'
+            add_end = app.index(add_end_line, add_start) + len(add_end_line)
+            nested = (
+                app[:add_start]
+                + '          if ($arg_fixture = "1") {\n'
+                + app[add_start:add_end]
+                + "          }\n"
+                + "          proxy_pass_header Referrer-Policy;\n"
+                + app[add_end:]
+            )
+            hostile_cases.extend(
+                (
+                    (missing, host_verify),
+                    (misplaced, host_verify),
+                    (extra, host_verify),
+                    (conflicting, host_verify),
+                    (extra_include, host_verify),
+                    (nested, host_verify),
+                )
+            )
+        for candidate_app, candidate_host in hostile_cases:
+            try:
+                VALIDATOR.validate_sensitive_response_header_contract(candidate_app, candidate_host)
+            except RuntimeError:
+                continue
+            raise RuntimeError(f"Sensitive identity route accepted hostile {name} response-header composition.")
+
+    early_success = host_verify.replace(
+        'python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\nimport pathlib\nimport re\n',
+        'python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\nimport pathlib\nimport re\nraise SystemExit(0)\n',
+        1,
+    )
+    try:
+        VALIDATOR.validate_sensitive_response_header_contract(app, early_success)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Hosted sensitive response-header verifier accepted an early successful exit.")
+
+    callback_end = app.index("\n        }", app.index(markers[0])) + len("\n        }")
+    parent_pass = app[:callback_end] + "\n        proxy_pass_header Referrer-Policy;" + app[callback_end:]
+    combined_parent_pass = (
+        app[:callback_end]
+        + "\n        proxy_hide_header X-Harmless; proxy_pass_header Referrer-Policy;"
+        + app[callback_end:]
+    )
+    quoted_parent_pass = (
+        app[:callback_end] + '\n        "proxy_pass_header" Referrer-Policy;' + app[callback_end:]
+    )
+    escaped_parent_pass = (
+        app[:callback_end] + "\n        proxy\\_pass_header Referrer-Policy;" + app[callback_end:]
+    )
+    hostile_source_outlet = app[:outlet_end] + "        expires 1h;\n" + app[outlet_end:]
+    for hostile_parent in (
+        parent_pass,
+        combined_parent_pass,
+        quoted_parent_pass,
+        escaped_parent_pass,
+        hostile_source_outlet,
+    ):
+        try:
+            VALIDATOR.validate_sensitive_response_header_contract(hostile_parent, host_verify)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Sensitive response-header source accepted an inherited proxy_pass_header.")
+
+    host_start_marker = 'python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\n'
+    host_start = host_verify.index(host_start_marker) + len(host_start_marker)
+    host_python = host_verify[host_start:host_verify.index("\nPY\n", host_start)]
+    rendered_app = rendered_nginx(app)
+    runtime_cases = [(rendered_app, True)]
+    runtime_cases.extend(
+        (
+            (
+                rendered_nginx(
+                    app[:callback_end] + "\n        proxy_pass_header Referrer-Policy;" + app[callback_end:]
+                ),
+                False,
+            ),
+            (rendered_nginx(quoted_parent_pass), False),
+            (rendered_nginx(escaped_parent_pass), False),
+        )
+    )
+    for marker in markers:
+        start = app.index(marker)
+        hide = "          proxy_hide_header Referrer-Policy;\n"
+        position = app.index(hide, start)
+        end = app.index("\n        }", start) + len("\n        }")
+        duplicate_location = app[:start] + app[start:end] + "\n" + app[start:]
+        commented = app[:position] + "          # proxy_hide_header Referrer-Policy;\n" + app[position + len(hide):]
+        hostile_add = app[:position] + '          add_header Referrer-Policy "unsafe-url" always;\n' + app[position:]
+        hostile_pass = app[:position] + "          proxy_pass_header    referrer-policy;\n" + app[position:]
+        hostile_cache = app[:position] + '          add_header Cache-Control "public" always;\n' + app[position:]
+        hostile_include = app[:position] + "          include /tmp/hostile-sensitive.conf;\n" + app[position:]
+        duplicate = app[:position] + hide + app[position:]
+        expires_off = "          expires off;\n"
+        expires_position = app.index(expires_off, start)
+        missing_expires_off = app[:expires_position] + app[expires_position + len(expires_off):]
+        add_start = app.index('          add_header Cache-Control "private, no-store, max-age=0" always;\n', start)
+        add_end_line = '          add_header Referrer-Policy "no-referrer" always;\n'
+        add_end = app.index(add_end_line, add_start) + len(add_end_line)
+        nested = (
+            app[:add_start]
+            + '          if ($arg_fixture = "1") {\n'
+            + app[add_start:add_end]
+            + "          }\n"
+            + "          proxy_pass_header Referrer-Policy;\n"
+            + app[add_end:]
+        )
+        runtime_cases.extend(
+            (rendered_nginx(candidate), False)
+            for candidate in (
+                duplicate_location,
+                commented,
+                hostile_add,
+                hostile_pass,
+                hostile_cache,
+                hostile_include,
+                duplicate,
+                missing_expires_off,
+                nested,
+            )
+        )
+    with tempfile.TemporaryDirectory() as directory:
+        nginx = Path(directory) / "nginx.conf"
+        for source, expected in runtime_cases:
+            nginx.write_text(source, encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, "-B", "-", str(nginx)],
+                input=host_python,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            if (completed.returncode == 0) is not expected:
+                raise RuntimeError("Hosted sensitive response-header verifier accepted a hostile runtime mutation.")
 
 
 def test_https_consumer_fixture_contract() -> None:
@@ -5990,6 +6402,7 @@ def main() -> int:
     test_opensearch_filter_contract()
     test_html_denial_types_contract()
     test_login_code_denial_contract()
+    test_sensitive_response_header_contract()
     test_https_consumer_fixture_contract()
     test_theme_archive()
     test_narrative_avatar_contract()

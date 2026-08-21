@@ -195,7 +195,43 @@ checks["narrative_system_user_branded"] =
 '''
 RUNTIME_VERIFIER_SHA256 = "4e7dedd8f2b10c2049defd855316e6d72f5716704d5a0c9430858a8e7c45663a"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "00f51584a657e9c23170c2ee58cb6315b00494bbb99abd6578c00d4890734001"
+APP_TEMPLATE_SHA256 = "76459a635d63603adda9ed0e83a83bc4c402067a6469dfd2918acf803f875687"
+HOST_NGINX_FILE_VERIFIER_SHA256 = "ef3b0e9bfe2ff73dd74d1fe21f6eea4e5aa3d5b42f19890b8c564300fefb0c5c"
+HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
+HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "ff6ba88a4bc0eba0373f77799de1594dbd69ecee311c863d43f2cae27f1aec9a"
+# Exact normalized server outlet derived from discourse_docker@ed9f680b0df1de28f062de1769d89d22b2644d1b
+# templates/web.ssl.template.yml (2,111 bytes; SHA-256 7a3b819e65104c9178e004772b487fa809ce6b421668dfa1adf330221dda552b).
+PINNED_WEB_SSL_SERVER_OUTLET = '''listen 443 ssl;
+listen [::]:443 ssl;
+http2 on;
+
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+ssl_prefer_server_ciphers off;
+
+ssl_certificate /shared/ssl/ssl.crt;
+ssl_certificate_key /shared/ssl/ssl.key;
+
+ssl_session_tickets off;
+ssl_session_timeout 1d;
+ssl_session_cache shared:SSL:1m;
+
+add_header Strict-Transport-Security 'max-age=31536000';
+
+if ($http_host != forums.mochirii.com) {
+  rewrite (.*) https://forums.mochirii.com$1 permanent;
+}'''
+MANAGED_WEB_SSL_SERVER_OUTLET = PINNED_WEB_SSL_SERVER_OUTLET.replace(
+    "ssl_certificate /shared/ssl/ssl.crt;",
+    "ssl_certificate /shared/ssl/forums.mochirii.com.cer;  ssl_certificate /shared/ssl/forums.mochirii.com_ecc.cer;",
+).replace(
+    "ssl_certificate_key /shared/ssl/ssl.key;",
+    "ssl_certificate_key /shared/ssl/forums.mochirii.com.key;   ssl_certificate_key /shared/ssl/forums.mochirii.com_ecc.key;",
+)
+EXPECTED_SERVER_TLS_SHA256 = tuple(
+    hashlib.sha256(value.encode("utf-8")).hexdigest()
+    for value in (PINNED_WEB_SSL_SERVER_OUTLET, MANAGED_WEB_SSL_SERVER_OUTLET)
+)
 OPENSEARCH_FILTER_BLOCK = '''        sub_filter_once off;
         sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
         sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
@@ -1353,6 +1389,347 @@ def validate_login_code_denial_contract(verifier: str) -> None:
         fail("Local email-code denial does not match the pinned not-found controller boundary.")
 
 
+def validate_sensitive_response_header_contract(app: str, host_verify: str) -> None:
+    def contains_unquoted_block_delimiter(line: str) -> bool:
+        quote: str | None = None
+        escaped = False
+        for character in line:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif quote is not None:
+                if character == quote:
+                    quote = None
+            elif character in {'"', "'"}:
+                quote = character
+            elif character == "#":
+                break
+            elif character in {"{", "}"}:
+                return True
+        return False
+
+    def nginx_directives(source: str) -> tuple[str, ...]:
+        directives: list[str] = []
+        current: list[str] = []
+        quote: str | None = None
+        escaped = False
+        comment = False
+        for character in source:
+            if comment:
+                if character in {"\r", "\n"}:
+                    comment = False
+                    current.append(" ")
+            elif escaped:
+                current.append(character)
+                escaped = False
+            elif character == "\\":
+                current.append(character)
+                escaped = True
+            elif quote is not None:
+                current.append(character)
+                if character == quote:
+                    quote = None
+            elif character in {'"', "'"}:
+                current.append(character)
+                quote = character
+            elif character == "#":
+                comment = True
+            elif character == ";":
+                directive = "".join(current).strip()
+                if directive:
+                    directives.append(directive + ";")
+                current = []
+            elif character == "{":
+                directive = "".join(current).strip()
+                if directive:
+                    directives.append(directive + " {")
+                current = []
+            elif character == "}":
+                current = []
+            else:
+                current.append(character)
+        return tuple(directives)
+
+    def directive_name(directive: str) -> str:
+        token = directive.split(None, 1)[0]
+        return token.replace('"', "").replace("'", "").replace("\\", "").lower()
+
+    app_directives = nginx_directives(app)
+    if any(
+        directive_name(directive) == "proxy_pass_header"
+        for directive in app_directives
+    ):
+        fail("Application template can re-enable an upstream response header.")
+
+    outlet_start_marker = (
+        "      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
+        "      contents: |\n"
+    )
+    outlet_end_marker = "  - file:\n      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
+    if app.count(outlet_start_marker) != 1 or app.count(outlet_end_marker) != 1:
+        fail("Discourse outlet source boundary differs.")
+    outlet_start = app.index(outlet_start_marker) + len(outlet_start_marker)
+    outlet_end = app.index(outlet_end_marker, outlet_start)
+    outlet_directives = nginx_directives(app[outlet_start:outlet_end])
+    outlet_required = {
+        "proxy_hide_header X-Discourse-Route;",
+        "proxy_hide_header X-Discourse-Username;",
+        "proxy_hide_header X-Discourse-Crawler-View;",
+        "proxy_hide_header Discourse-No-Onebox;",
+        "proxy_hide_header Discourse-Rate-Limit-Error-Code;",
+        "proxy_hide_header Discourse-Xhr-Redirect;",
+        "proxy_hide_header Discourse-Actions-Remaining;",
+        "proxy_hide_header Discourse-Actions-Max;",
+        "proxy_hide_header Discourse-Logged-Out;",
+        "proxy_hide_header X-Discourse-TrackView;",
+        "proxy_hide_header X-Discourse-BrowserPageView;",
+        "proxy_hide_header X-Discourse-Cached;",
+        "sub_filter_once off;",
+        "sub_filter '<meta name=\"generator\" content=\"Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac\">' '<meta name=\"generator\" content=\"Mochirii Forums\">';",
+        "sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';",
+        "sub_filter_types application/xml;",
+    }
+    if len(outlet_directives) != len(outlet_required) or set(outlet_directives) != outlet_required:
+        fail("Discourse outlet source directives differ from the exact reviewed contract.")
+
+    markers = (
+        "        location ~* ^/session/sso_login(?:\\.[A-Za-z0-9]+)?/?$ {\n",
+        '        location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {\n',
+    )
+    blocks: list[tuple[str, ...]] = []
+    for marker in markers:
+        if app.count(marker) != 1:
+            fail("Sensitive identity location is absent or duplicated.")
+        start = app.index(marker)
+        end = app.find("\n        }", start)
+        if end < 0:
+            fail("Sensitive identity location is unterminated.")
+        if any(
+            contains_unquoted_block_delimiter(line)
+            for line in app[start + len(marker):end].splitlines()
+        ):
+            fail("Sensitive identity location contains a nested block.")
+        directives = nginx_directives(app[start + len(marker):end])
+        blocks.append(directives)
+    exact_headers = {
+        "Cache-Control": 'add_header Cache-Control "private, no-store, max-age=0" always;',
+        "Pragma": 'add_header Pragma "no-cache" always;',
+        "Expires": 'add_header Expires "0" always;',
+        "Referrer-Policy": 'add_header Referrer-Policy "no-referrer" always;',
+    }
+    exact_response_directives = {
+        *(f"proxy_hide_header {name};" for name in exact_headers),
+        *exact_headers.values(),
+    }
+    exact_location_directives = {
+        "access_log off;",
+        "log_not_found off;",
+        "error_log /dev/null emerg;",
+        *exact_response_directives,
+        "expires off;",
+        "include conf.d/outlets/discourse/*.conf;",
+        "proxy_set_header Host $http_host;",
+        'proxy_set_header X-Request-Start "t=${msec}";',
+        "proxy_set_header X-Forwarded-For $remote_addr;",
+        "proxy_set_header X-Forwarded-Proto $thescheme;",
+        'proxy_set_header X-Sendfile-Type "";',
+        'proxy_set_header X-Accel-Mapping "";',
+        'proxy_set_header Client-Ip "";',
+        "proxy_pass http://discourse;",
+    }
+    for index, directives in enumerate(blocks):
+        allowed = set(exact_location_directives)
+        if index == 1:
+            allowed.add('add_header X-Content-Type-Options "nosniff" always;')
+        if len(directives) != len(allowed) or set(directives) != allowed:
+            fail("Sensitive identity route directives differ from the exact private proxy contract.")
+    for name, replacement in exact_headers.items():
+        hide = f"proxy_hide_header {name};"
+        if (
+            app.count(hide) != len(markers)
+            or any(
+                directives.count(hide) != 1
+                or directives.count(replacement) != 1
+                or directives.index(hide) > directives.index(replacement)
+                or any(
+                    directive not in {hide, replacement, "expires off;"}
+                    and name.lower() in directive.lower()
+                    for directive in directives
+                )
+                for directives in blocks
+            )
+        ):
+            fail(f"Sensitive identity routes do not exactly replace upstream {name} metadata.")
+    file_start_marker = (
+        "timeout --signal=TERM --kill-after=5s 60s docker exec -i app python3 -B - "
+        "<<'PY_NGINX_FILES' >/dev/null || fail \"Active nginx configuration files differ "
+        "from the exact reviewed inventory.\"\n"
+    )
+    if host_verify.count(file_start_marker) != 1:
+        fail("Hosted nginx file verifier is absent or duplicated.")
+    file_start = host_verify.index(file_start_marker) + len(file_start_marker)
+    file_end = host_verify.find("\nPY_NGINX_FILES\n", file_start)
+    if file_end < 0:
+        fail("Hosted nginx file verifier is unterminated.")
+    try:
+        file_source = host_verify[file_start:file_end]
+        file_tree = ast.parse(file_source)
+    except SyntaxError as error:
+        fail(f"Hosted nginx file verifier is not valid Python: {error}")
+
+    def literal_assignment(name: str) -> object:
+        assignments = [
+            node
+            for node in file_tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        ]
+        if len(assignments) != 1:
+            fail(f"Hosted nginx file verifier assignment differs: {name}.")
+        try:
+            return ast.literal_eval(assignments[0].value)
+        except (TypeError, ValueError) as error:
+            fail(f"Hosted nginx file verifier assignment is not literal: {name}: {error}")
+
+    expected_directories = {
+        "/etc/nginx/conf.d": ("discourse.conf", "outlets"),
+        "/etc/nginx/conf.d/outlets": ("before-server", "discourse", "server"),
+        "/etc/nginx/conf.d/outlets/before-server": (
+            "20-redirect-http-to-https.conf",
+            "30-ratelimited.conf",
+        ),
+        "/etc/nginx/conf.d/outlets/discourse": (
+            "20-https.conf",
+            "30-ratelimited.conf",
+            "40-mochirii-public-metadata.conf",
+        ),
+        "/etc/nginx/conf.d/outlets/server": (
+            "10-http.conf",
+            "20-https.conf",
+            "30-offline-page.conf",
+            "40-mochirii-feed-denial.conf",
+        ),
+        "/etc/nginx/modules-enabled": (),
+        "/etc/nginx/sites-enabled": (),
+    }
+    expected_files = {
+        "/etc/nginx/nginx.conf": (
+            "942f01a5cce65339d54ef67df4427768473f26b89e348926c8e65929b7863952",
+        ),
+        "/etc/nginx/mime.types": (
+            "d2404914bf644ebde13c987081c3259bdd40e2e31985b90a77c08e42f64efe4e",
+        ),
+        "/etc/nginx/conf.d/discourse.conf": (
+            "be465ea2349ea9b858d3216d4178ac84145d1bbf2c6faa0e39776321778b7a52",
+        ),
+        "/etc/nginx/conf.d/outlets/before-server/20-redirect-http-to-https.conf": (
+            "7bb5588965b9122d7dba2a9cf7ff1c5fd9e933b278eacaf0f88176aa8fd72312",
+        ),
+        "/etc/nginx/conf.d/outlets/before-server/30-ratelimited.conf": (
+            "13a8adb310d300c3e1a4525421c0d28c218617316014baabd583394e10cafd52",
+        ),
+        "/etc/nginx/conf.d/outlets/discourse/20-https.conf": (
+            "cfc7898c735f0ca38c2acaeab9165bcceebe3519db1a19593628d368f5fbba09",
+        ),
+        "/etc/nginx/conf.d/outlets/discourse/30-ratelimited.conf": (
+            "855b446d8b3d803097b970fd14f5696f0395e01464d8518dba152a200d51bfa2",
+        ),
+        "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf": (
+            "1110e9e3080aa91f89e4010a3ddfcab6a56e508b4a6ab27c3ee5333e04de8a78",
+        ),
+        "/etc/nginx/conf.d/outlets/server/10-http.conf": (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        "/etc/nginx/conf.d/outlets/server/20-https.conf": (
+            *EXPECTED_SERVER_TLS_SHA256,
+        ),
+        "/etc/nginx/conf.d/outlets/server/30-offline-page.conf": (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        "/etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf": (
+            "c82653d574f1747c7ed0822d1423833af8acc982e8d01df96b9072d2bd8b0c87",
+        ),
+    }
+    if (
+        hashlib.sha256(file_source.encode("utf-8")).hexdigest()
+        != HOST_NGINX_FILE_VERIFIER_SHA256
+        or hashlib.sha256(host_verify[:file_start].encode("utf-8")).hexdigest()
+        != HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256
+        or literal_assignment("MAX_CONFIG_BYTES") != 1_048_576
+        or literal_assignment("MAX_DIRECTORY_ENTRIES") != 32
+        or literal_assignment("EXPECTED_DIRECTORY_CHILDREN") != expected_directories
+        or literal_assignment("EXPECTED_FILE_SHA256") != expected_files
+        or file_start > host_verify.index('nginx_log="$(mktemp ')
+    ):
+        fail("Hosted verification does not bind the exact active nginx file inventory.")
+    host_start_marker = 'python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\n'
+    if host_verify.count(host_start_marker) != 1:
+        fail("Hosted sensitive-location verifier is absent or duplicated.")
+    host_start = host_verify.index(host_start_marker) + len(host_start_marker)
+    host_end = host_verify.find("\nPY\n", host_start)
+    if host_end < 0:
+        fail("Hosted sensitive-location verifier is unterminated.")
+    try:
+        host_source = host_verify[host_start:host_end]
+        host_tree = ast.parse(host_source)
+    except SyntaxError as error:
+        fail(f"Hosted sensitive-location verifier is not valid Python: {error}")
+    required_assignments = [
+        node
+        for node in host_tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "required"
+    ]
+    expected_required = {
+        "access_log off;",
+        "log_not_found off;",
+        "error_log /dev/null emerg;",
+        *(f"proxy_hide_header {name};" for name in exact_headers),
+        *exact_headers.values(),
+        "expires off;",
+        "include conf.d/outlets/discourse/*.conf;",
+        "proxy_pass http://discourse;",
+        "proxy_set_header Host $http_host;",
+        'proxy_set_header X-Request-Start "t=${msec}";',
+        "proxy_set_header X-Forwarded-For $remote_addr;",
+        "proxy_set_header X-Forwarded-Proto $thescheme;",
+        'proxy_set_header X-Sendfile-Type "";',
+        'proxy_set_header X-Accel-Mapping "";',
+        'proxy_set_header Client-Ip "";',
+    }
+    expected_calls = ast.parse(
+        'verify_sensitive_location(location_body(callback_marker, "sensitive callback"), "sensitive callback")\n'
+        'verify_sensitive_location(\n'
+        '    location_body(email_marker, "administrator recovery privacy"),\n'
+        '    "administrator recovery",\n'
+        '    {\'add_header X-Content-Type-Options "nosniff" always;\'},\n'
+        ')\n'
+    ).body
+    actual_calls = [
+        node
+        for node in host_tree.body
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "verify_sensitive_location"
+    ]
+    if (
+        hashlib.sha256(host_source.encode("utf-8")).hexdigest()
+        != HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256
+        or len(required_assignments) != 1
+        or not isinstance(required_assignments[0].value, ast.Set)
+        or ast.literal_eval(required_assignments[0].value) != expected_required
+        or [ast.dump(node, include_attributes=False) for node in actual_calls]
+        != [ast.dump(node, include_attributes=False) for node in expected_calls]
+    ):
+        fail("Hosted verification does not reach both exact sensitive response-header contracts.")
+
+
 def validate_https_consumer_fixture_contract(verifier: str) -> None:
     required = (
         "import atexit",
@@ -1865,6 +2242,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
 def validate_template() -> None:
     app = read("config/app.yml.example")
     validate_html_denial_types_contract(app)
+    validate_sensitive_response_header_contract(app, read("scripts/verify-host.sh"))
     require_text(
         app,
         [
@@ -1986,6 +2364,14 @@ def validate_template() -> None:
             fail(f"Forbidden storage or provider configuration matched: {pattern}")
 
     tls = read("config/immutable-letsencrypt.fragment.yml")
+    expected_tls_outlet_rewrite = r'''        sed -Ei "s/ssl_certificate .+/ssl_certificate \/shared\/ssl\/${DISCOURSE_HOSTNAME}.cer;\
+          ssl_certificate \/shared\/ssl\/${DISCOURSE_HOSTNAME}_ecc.cer;/" \
+          /etc/nginx/conf.d/outlets/server/20-https.conf
+        sed -Ei "s/ssl_certificate_key .+/ssl_certificate_key \/shared\/ssl\/${DISCOURSE_HOSTNAME}.key; \
+          ssl_certificate_key \/shared\/ssl\/${DISCOURSE_HOSTNAME}_ecc.key;/" \
+          /etc/nginx/conf.d/outlets/server/20-https.conf'''
+    if tls.count(expected_tls_outlet_rewrite) != 1:
+        fail("Immutable TLS certificate rewrites differ from the exact reviewed outlet states.")
     require_text(
         tls,
         [
