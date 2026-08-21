@@ -199,7 +199,7 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
             ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
-BRANDING_EMAIL_RENDERER_SHA256 = "278d1ebb78f51825b2322f0442d6471f0e99a442369cadc8352244ef6775cda0"
+BRANDING_EMAIL_RENDERER_SHA256 = "80d8ff8a52018314f806d9b70c97cadb81bd0e91482bb22725a6e180216436b2"
 PINNED_SOURCE_VERIFIER_SHA256 = "90dbe4bbaa2b2afea2a6ef95247595ba28d567f170b356e8159a519d69fb0bfa"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "898ffe7bd732bdacccd4981c0148b9407960a0b4a246eac2457224e0bf426669"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
@@ -547,6 +547,28 @@ def validate_branding_email_renderer(source: str) -> None:
         fail("Branding email renderer contains an unreviewed email extraction call.")
     if source.count('puts "Mochirii mail presentation passed."') != 1:
         fail("Branding email renderer success output changed.")
+    digest_fixture_contract = (
+        "def materialize(delivery, label:)\n",
+        "  unless mail.is_a?(Mail::Message)\n",
+        '    raise "#{label} mail path did not render a Mail::Message"\n',
+        "def render_stage4_digest!(user:, topic:)\n",
+        "  if topic.id != SiteSetting.welcome_topic_id || topic.archetype != Archetype.default || topic.closed? ||\n",
+        "      topic.archived? || Category.exists?(topic_id: topic.id)\n",
+        '    raise "Digest fixture topic is not an ordinary visible topic"\n',
+        "  original_created_at = topic.created_at\n",
+        "  Topic.transaction(requires_new: true) do\n",
+        "    topic.update_columns(created_at: 2.days.ago)\n",
+        "    delivery = UserNotifications.digest(user, since: 3.days.ago, skip_unsubscribe_links: true)\n",
+        '    mail = materialize(delivery, label: "digest")\n',
+        "    raise ActiveRecord::Rollback\n",
+        "  topic.reload\n",
+        '    raise "Digest fixture topic age leaked beyond rollback"\n',
+        '  deliveries["digest"] = render_stage4_digest!(user: bot, topic: post.topic)\n',
+        "  mail = materialize(delivery, label: label)\n",
+        '  digest = materialize(deliveries.fetch("digest"), label: "digest")\n',
+    )
+    if any(source.count(value) != 1 for value in digest_fixture_contract):
+        fail("Branding email renderer lost its rollback-only real-digest fixture contract.")
     admin_login_contract = (
         "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\n",
         '  stage4_fixture == "true" &&\n',
@@ -594,6 +616,8 @@ def validate_branding_email_renderer(source: str) -> None:
             "non-fixture verification requires HTTPS",
             "route-valid deterministic administrator-confirmation fixture token",
             "pinned `site_digest_logo_url` accessor",
+            "rollback-only age adjustment of the ordinary welcome topic",
+            "real `Mail::Message`",
         ],
         "mode-bound administrator recovery-mail validation contract",
     )

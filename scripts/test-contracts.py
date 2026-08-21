@@ -783,6 +783,17 @@ def test_branding_email_renderer_contract() -> None:
             '      "fixture-token",',
         ),
         ("SiteSetting.site_digest_logo_url", "SiteSetting.digest_logo_url"),
+        ("def materialize(delivery, label:)", "def materialize(delivery)"),
+        ("mail.is_a?(Mail::Message)", "mail.respond_to?(:header)"),
+        ("topic.id != SiteSetting.welcome_topic_id", "false"),
+        ("Topic.transaction(requires_new: true)", "Topic.transaction"),
+        ("topic.update_columns(created_at: 2.days.ago)", "topic.update_columns(created_at: 2.minutes.ago)"),
+        ("since: 3.days.ago", "since: 1.day.ago"),
+        ("raise ActiveRecord::Rollback", "next"),
+        (
+            'deliveries["digest"] = render_stage4_digest!(user: bot, topic: post.topic)',
+            'deliveries["digest"] = UserNotifications.digest(bot, since: 30.days.ago, skip_unsubscribe_links: true)',
+        ),
     )
     for current, stale in hostile_replacements:
         hostile = renderer.replace(current, stale, 1)

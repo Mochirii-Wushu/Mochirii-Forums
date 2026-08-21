@@ -42,13 +42,42 @@ if (remaining_fixture_names & MochiriiEmailMetadata::APPLICATION_HEADER_NAMES).a
   raise "Mail metadata interceptor retained an exact application identity header"
 end
 
-def materialize(delivery)
-  delivery.respond_to?(:message) ? delivery.message : delivery
+def materialize(delivery, label:)
+  mail = delivery.respond_to?(:message) ? delivery.message : delivery
+  unless mail.is_a?(Mail::Message)
+    raise "#{label} mail path did not render a Mail::Message"
+  end
+  mail
 end
 
 def render_parts(mail)
   text, html = Email.extract_parts(mail.encoded)
   [text, html]
+end
+
+def render_stage4_digest!(user:, topic:)
+  if topic.id != SiteSetting.welcome_topic_id || topic.archetype != Archetype.default || topic.closed? ||
+      topic.archived? || Category.exists?(topic_id: topic.id)
+    raise "Digest fixture topic is not an ordinary visible topic"
+  end
+
+  original_created_at = topic.created_at
+  mail = nil
+  Topic.transaction(requires_new: true) do
+    # The fresh bootstrap topic is still inside Discourse's editing-grace
+    # exclusion. Age only that row inside a savepoint so the real digest query
+    # and templates run without creating or retaining fixture content.
+    topic.update_columns(created_at: 2.days.ago)
+    delivery = UserNotifications.digest(user, since: 3.days.ago, skip_unsubscribe_links: true)
+    mail = materialize(delivery, label: "digest")
+    mail.encoded
+    raise ActiveRecord::Rollback
+  end
+  topic.reload
+  unless topic.created_at == original_created_at
+    raise "Digest fixture topic age leaked beyond rollback"
+  end
+  mail
 end
 
 def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)
@@ -152,12 +181,12 @@ if ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"
       notification_type: Notification.types[:posted],
       notification_data_hash: notification_data,
     )
-  deliveries["digest"] = UserNotifications.digest(bot, since: 30.days.ago, skip_unsubscribe_links: true)
+  deliveries["digest"] = render_stage4_digest!(user: bot, topic: post.topic)
 end
 
 deliveries.each do |label, delivery|
   raise "#{label} mail path did not render" if delivery.nil?
-  mail = materialize(delivery)
+  mail = materialize(delivery, label: label)
   pre_interceptor_names = mail.header.fields.map { |field| field.name.to_s }
   if ENV["MOCHIRII_STAGE4_FIXTURE"] == "true" && %w[notification digest].include?(label)
     unless pre_interceptor_names.any? { |name| name.match?(/\ADiscourse-|\AX-Discourse-/i) }
@@ -214,7 +243,7 @@ deliveries.each do |label, delivery|
 end
 
 if ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"
-  digest = materialize(deliveries.fetch("digest"))
+  digest = materialize(deliveries.fetch("digest"), label: "digest")
   _digest_text, digest_html = Email.extract_parts(digest.encoded)
   raise "Digest HTML did not render" if digest_html.blank?
   raise "Digest HTML title is not Mochirii-branded" unless digest_html.include?("Mochirii Forums")

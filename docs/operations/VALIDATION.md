@@ -98,8 +98,10 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
   loopback fixture, while non-fixture verification requires HTTPS; and the
   separate administrator-confirmation presentation uses a
   route-valid deterministic administrator-confirmation fixture token
-  rather than a real Redis-backed privilege token; and the digest uses the
-  pinned `site_digest_logo_url` accessor;
+  rather than a real Redis-backed privilege token; the digest uses the pinned `site_digest_logo_url` accessor
+  and a rollback-only age adjustment of the ordinary welcome topic so
+  Discourse's real digest query produces a real `Mail::Message` without
+  retaining fixture content;
 - one local application backup is created in the fixture, a protected marker is
   changed, the exact local backup is destructively restored with
   `--location local`, and the restored marker is verified; and
