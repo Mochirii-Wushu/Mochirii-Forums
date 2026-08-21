@@ -57,13 +57,14 @@ updates, and requires a separate compatibility review to change any byte or
 revision.
 
 The 2026-08-20 bounded observation records official `main` at
-`ccb3ea007204c683f7177258f1f509e2fb36f82b`, ten commits ahead of the
+`00595119c368c0aef7d7019ec66ffc8fa51cce79`, eleven commits ahead of the
 selected revision with no commits behind it. The manifest binds the exact main
 tree, commit signatures, comparison counts, ordered range, and complete changed
 path inventory. That range includes deployment launcher/template, PostgreSQL,
 Redis, Debian base, browser-key, mutable base-image, development-image
-PostgreSQL 15, and web-template ownership-optimization changes across the same
-20 paths. None of those ten commits is selected for this runtime, and
+PostgreSQL 15, web-template ownership optimization, and base-image Fontconfig
+cache-refresh changes across the same 20 paths. None of those eleven commits is
+selected for this runtime, and
 compatibility review remains a separate incomplete change. The monthly/manual
 inspection fails closed if the official reference or any recorded comparison
 evidence moves; it never advances the selected revision.

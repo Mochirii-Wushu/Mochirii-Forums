@@ -128,7 +128,9 @@ The exact runtime must prove:
 - the shared secret is exactly 64 lowercase hexadecimal characters, server
   only, and absent while the consumer is disabled;
 - the recovery administrator is available through host-console procedure, not
-  a standing public local-login form; and
+  a standing public local-login form; its one-time link is bound to the exact
+  Forums origin and token path, with HTTP permitted only in the explicit
+  loopback fixture and HTTPS required for every non-fixture runtime; and
 - public/member HTML, metadata, PWA assets, emails, errors, logos, footer, and
   upload notice are Mochirii-branded while required legal notices remain
   preserved internally; the narrative system user retains the exact Mochirii

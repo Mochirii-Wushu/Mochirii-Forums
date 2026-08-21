@@ -48,7 +48,54 @@ end
 
 def render_parts(mail)
   text, html = Email.extract_parts(mail.encoded)
-  [text, html].compact.join("\n")
+  [text, html]
+end
+
+def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)
+  stage4_fixture == "true" &&
+    connect_fixture == "true" &&
+    expected_address == "notifications@fixture.invalid"
+end
+
+def verify_admin_login_link!(text_part:, html_part:, expected_base_url:, allow_fixture_http:)
+  begin
+    expected = URI.parse(expected_base_url)
+  rescue URI::InvalidURIError
+    raise RuntimeError, "Administrator recovery mail link is malformed", cause: nil
+  end
+
+  expected_scheme = allow_fixture_http ? "http" : "https"
+  expected_port = allow_fixture_http ? 80 : 443
+  expected_path = "/session/email-login/mochirii-fixture-admin-login-token"
+  expected_link = "#{expected_scheme}://forums.mochirii.com#{expected_path}"
+  expected_text =
+    <<~TEXT.strip
+      Somebody asked to log in to your account on [Mochirii Forums](#{expected_base_url}).
+
+      If you did not make this request, you can safely ignore this email.
+
+      Click the following link to log in:
+      #{expected_link}
+    TEXT
+  expected_origin_exact =
+    expected.scheme == expected_scheme &&
+      expected.host == "forums.mochirii.com" &&
+      expected.port == expected_port &&
+      expected.userinfo.nil? &&
+      expected.path.to_s.empty? &&
+      expected.query.nil? &&
+      expected.fragment.nil?
+  normalized_text = text_part.to_s.gsub("\r\n", "\n").strip
+  unless expected_origin_exact
+    raise "Administrator recovery mail link escaped the exact Forums origin"
+  end
+  unless normalized_text.include?(expected_link)
+    raise "Administrator recovery mail omitted its one-time login link"
+  end
+  unless html_part.nil? &&
+      normalized_text == expected_text
+    raise "Administrator recovery mail link escaped the exact Forums origin"
+  end
 end
 
 bot = User.find_by(id: -2)
@@ -121,7 +168,8 @@ deliveries.each do |label, delivery|
   raise "#{label} mail From address changed" unless from.addresses == [expected_address]
 
   subject = mail.subject.to_s
-  body = render_parts(mail)
+  text_part, html_part = render_parts(mail)
+  body = [text_part, html_part].compact.join("\n")
   visible_headers = [subject, from.to_s, mail[:reply_to]&.to_s].compact.join("\n")
   visible = [visible_headers, body].join("\n")
   raise "#{label} mail subject is not Mochirii-branded" unless subject.include?("Mochirii")
@@ -146,12 +194,18 @@ deliveries.each do |label, delivery|
     raise "#{label} mail contains prohibited recipient-visible metadata"
   end
   if label == "admin-login"
-    link = body[%r{https://[^\s<>"]+/session/email-login/[^\s<>"]+}]
-    raise "Administrator recovery mail omitted its one-time login link" if link.blank?
-    uri = URI.parse(link)
-    unless uri.scheme == "https" && uri.host == "forums.mochirii.com" && uri.port == 443 && uri.userinfo.nil?
-      raise "Administrator recovery mail link escaped the exact Forums origin"
-    end
+    allow_fixture_http =
+      allow_fixture_admin_login_http?(
+        stage4_fixture: ENV["MOCHIRII_STAGE4_FIXTURE"],
+        connect_fixture: ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"],
+        expected_address: expected_address,
+      )
+    verify_admin_login_link!(
+      text_part: text_part,
+      html_part: html_part,
+      expected_base_url: Discourse.base_url,
+      allow_fixture_http: allow_fixture_http,
+    )
   end
 end
 
@@ -160,7 +214,7 @@ if ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"
   _digest_text, digest_html = Email.extract_parts(digest.encoded)
   raise "Digest HTML did not render" if digest_html.blank?
   raise "Digest HTML title is not Mochirii-branded" unless digest_html.include?("Mochirii Forums")
-  digest_logo = SiteSetting.digest_logo_url.to_s
+  digest_logo = SiteSetting.site_digest_logo_url.to_s
   raise "Digest logo URL is absent" if digest_logo.blank?
   uri = URI.parse(digest_logo)
   if uri.host.present? && !["forums.mochirii.com", "media-forums.mochirii.com"].include?(uri.host)

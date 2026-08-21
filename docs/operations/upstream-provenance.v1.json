@@ -59,14 +59,14 @@
   ],
   "driftObservation": {
     "observedAt": "2026-08-20",
-    "mainRevision": "ccb3ea007204c683f7177258f1f509e2fb36f82b",
-    "mainTree": "74c8d88910e156d45e319a97ca884892fcca75d1",
+    "mainRevision": "00595119c368c0aef7d7019ec66ffc8fa51cce79",
+    "mainTree": "d5b846bf4e59784c5220c48839d7eb1b45671aae",
     "mainCommitSignatureVerified": true,
     "mainCommitSignatureReason": "valid",
     "comparisonStatus": "ahead",
-    "commitsAheadOfPin": 10,
+    "commitsAheadOfPin": 11,
     "commitsBehindPin": 0,
-    "totalCommits": 10,
+    "totalCommits": 11,
     "baseRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
     "mergeBaseRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
     "pinIsAncestor": true,
@@ -147,6 +147,11 @@
         "revision": "ccb3ea007204c683f7177258f1f509e2fb36f82b",
         "classification": "web-template-ownership-optimization",
         "selectedForRuntime": false
+      },
+      {
+        "revision": "00595119c368c0aef7d7019ec66ffc8fa51cce79",
+        "classification": "base-image-fontconfig-cache-refresh",
+        "selectedForRuntime": false
       }
     ],
     "rangeCommits": [
@@ -219,6 +224,13 @@
         "signatureVerified": true,
         "signatureReason": "valid",
         "subject": "PERF: Skip chown for files that already have the right ownership (#1115)"
+      },
+      {
+        "revision": "00595119c368c0aef7d7019ec66ffc8fa51cce79",
+        "tree": "d5b846bf4e59784c5220c48839d7eb1b45671aae",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "PERF: Refresh Fontconfig cache after package installation (#1117)"
       }
     ]
   },

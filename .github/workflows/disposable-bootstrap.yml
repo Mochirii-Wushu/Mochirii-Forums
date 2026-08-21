@@ -152,6 +152,8 @@ jobs:
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-admin-login-link.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             python3 -B /repo/scripts/test-backup-transaction.py >/dev/null
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             python3 -B /repo/scripts/test-deployment-mutation.py >/dev/null

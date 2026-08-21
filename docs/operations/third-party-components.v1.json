@@ -101,6 +101,36 @@
         "sha256": "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2"
       },
       {
+        "path": "app/mailers/user_notifications.rb",
+        "bytes": 28133,
+        "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4"
+      },
+      {
+        "path": "lib/email/message_builder.rb",
+        "bytes": 13752,
+        "sha256": "6238ba3ecdb9a4003e0cce29938fc481c7c657bf07f392b00c1a2147db2f3502"
+      },
+      {
+        "path": "lib/email/build_email_helper.rb",
+        "bytes": 393,
+        "sha256": "bb537c8d6dcce21ef12184de53ec32bab64b807e34c6a872f3243686be0c8f7a"
+      },
+      {
+        "path": "lib/discourse.rb",
+        "bytes": 39279,
+        "sha256": "351e1170f79acb9b321746df618339de5412c95b1ce4c13db2c17e96bf1d0678"
+      },
+      {
+        "path": "config/locales/server.en.yml",
+        "bytes": 420250,
+        "sha256": "0ff18443abac07e496e27142f21b33e8935242ca3d55fd33531c1ace43a92f50"
+      },
+      {
+        "path": "app/helpers/user_notifications_helper.rb",
+        "bytes": 3229,
+        "sha256": "8916b4cf739dd589a2d6f8131332b9b59b2de20b9981b210c1bea0b189803aa5"
+      },
+      {
         "path": "lib/file_store/s3_store.rb",
         "bytes": 18151,
         "sha256": "eb37d7a6555f3b4e9df99c7535e5866614b2a6672d7087ebdf07d446ecfb65d0"

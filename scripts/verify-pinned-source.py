@@ -42,6 +42,135 @@ PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)
   end
 
 '''
+PINNED_MAIL_SEMANTIC_EVIDENCE = {
+    "app/mailers/user_notifications.rb": (
+        28133,
+        "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
+    ),
+    "lib/email/message_builder.rb": (
+        13752,
+        "6238ba3ecdb9a4003e0cce29938fc481c7c657bf07f392b00c1a2147db2f3502",
+    ),
+    "lib/email/build_email_helper.rb": (
+        393,
+        "bb537c8d6dcce21ef12184de53ec32bab64b807e34c6a872f3243686be0c8f7a",
+    ),
+    "lib/discourse.rb": (
+        39279,
+        "351e1170f79acb9b321746df618339de5412c95b1ce4c13db2c17e96bf1d0678",
+    ),
+    "config/locales/server.en.yml": (
+        420250,
+        "0ff18443abac07e496e27142f21b33e8935242ca3d55fd33531c1ace43a92f50",
+    ),
+    "app/helpers/user_notifications_helper.rb": (
+        3229,
+        "8916b4cf739dd589a2d6f8131332b9b59b2de20b9981b210c1bea0b189803aa5",
+    ),
+}
+PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''  def admin_login(user, opts = {})
+    build_user_email_token_by_template("user_notifications.admin_login", user, opts[:email_token])
+  end
+
+'''
+PINNED_EMAIL_LOGIN_HELPER_BLOCK = b'''  def build_user_email_token_by_template(template, user, email_token)
+    build_email(
+      user.email,
+      template: template,
+      locale: user_locale(user),
+      email_token: email_token,
+      recipient_user: user,
+    )
+  end
+
+'''
+PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX = b'''    def initialize(to, opts = nil)
+      @to = to
+      @opts = opts || {}
+      @template_args = {
+        site_name: SiteSetting.title,
+        email_prefix: SiteSetting.email_prefix.presence || SiteSetting.title,
+        base_url: Discourse.base_url,
+        user_preferences_url: "#{Discourse.base_url}/my/preferences",
+        hostname: Discourse.current_hostname,
+      }.merge!(@opts)
+
+'''
+PINNED_MESSAGE_BUILDER_BODY_BLOCK = b'''    def body
+      body = nil
+
+      if @opts[:template]
+        %i[topic_title inviter_name].each do |key|
+          @template_args[key] = escaped_template_arg(key) if @template_args.key?(key)
+        end
+
+        augmented_template_args =
+          @template_args.merge(
+            optional_re: "",
+            optional_pm: "",
+            optional_cat: format_category,
+            optional_tags: format_tags,
+          )
+
+        body = I18n.t("#{@opts[:template]}.text_body_template", augmented_template_args).dup
+      else
+        body = @opts[:body].dup
+      end
+
+      if @template_args[:unsubscribe_instructions].present?
+        body << "\\n"
+        body << @template_args[:unsubscribe_instructions]
+      end
+      DiscoursePluginRegistry.apply_modifier(:message_builder_body, body, @opts, @to)
+    end
+
+'''
+PINNED_MESSAGE_BUILDER_HTML_PART_PREFIX = b'''    def html_part
+      return unless html_override = @opts[:html_override]
+'''
+PINNED_BUILD_EMAIL_HELPER_SOURCE = b'''# frozen_string_literal: true
+
+module Email
+  module BuildEmailHelper
+    def build_email(*builder_args)
+      builder = Email::MessageBuilder.new(*builder_args)
+      headers(builder.header_args) if builder.header_args.present?
+      mail(builder.build_args).tap do |message|
+        if message && h = builder.html_part
+          message.html_part = h
+        end
+      end
+    end
+  end
+end
+'''
+PINNED_BASE_PROTOCOL_BLOCK = b'''  def self.base_protocol
+    SiteSetting.force_https? ? "https" : "http"
+  end
+
+'''
+PINNED_ADMIN_LOGIN_LOCALE_BLOCK = b'''    admin_login:
+      title: "Admin Login"
+      preview: "Admin login requested."
+      subject_template: "[%{email_prefix}] Login"
+      subject_template_improved: "Login"
+      text_body_template: |
+        Somebody asked to log in to your account on [%{site_name}](%{base_url}).
+
+        If you did not make this request, you can safely ignore this email.
+
+        Click the following link to log in:
+        %{base_url}/session/email-login/%{email_token}
+
+'''
+PINNED_DIGEST_LOGO_METHOD_BLOCK = b'''  def logo_url
+    logo_url = SiteSetting.site_digest_logo_url
+    logo_url = SiteSetting.site_logo_url if logo_url.blank? || logo_url =~ /\\.svg\\z/i
+    return nil if logo_url.blank? || logo_url =~ /\\.svg\\z/i
+    logo_url
+  end
+
+'''
 PINNED_GRAVATAR_EVIDENCE = {
     "app/models/user.rb": (
         73523,
@@ -247,7 +376,7 @@ def verify_current_main(provenance: dict) -> None:
         observation.get("commitsBehindPin"),
         observation.get("totalCommits"),
     )
-    if any(type(value) is not int or value < 0 for value in counts) or counts != (10, 0, 10):
+    if any(type(value) is not int or value < 0 for value in counts) or counts != (11, 0, 11):
         raise RuntimeError("Recorded deployment-source comparison counts changed.")
 
     commits = observation.get("rangeCommits")
@@ -409,6 +538,34 @@ def require(source: dict[str, bytes], path: str, snippets: tuple[bytes, ...]) ->
             raise RuntimeError(f"Pinned semantic contract changed: {path}: {snippet!r}")
 
 
+def verify_exact_region(source: bytes, start: bytes, end: bytes, expected: bytes, label: str) -> None:
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise RuntimeError(f"The pinned {label} boundary changed.")
+    start_offset = source.index(start)
+    end_offset = source.find(end, start_offset + len(start))
+    if end_offset < 0 or source[start_offset:end_offset] != expected:
+        raise RuntimeError(f"The pinned {label} changed.")
+
+
+def verify_mail_evidence_manifest(components: dict) -> None:
+    entries = components.get("application", {}).get("semanticEvidenceFiles")
+    if not isinstance(entries, list):
+        raise RuntimeError("Pinned mail semantic evidence inventory is absent.")
+    for path, (expected_bytes, expected_sha256) in PINNED_MAIL_SEMANTIC_EVIDENCE.items():
+        matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("path") == path]
+        if len(matches) != 1:
+            raise RuntimeError(f"Pinned mail semantic evidence is not unique: {path}")
+        entry = matches[0]
+        if (
+            set(entry) != {"path", "bytes", "sha256"}
+            or type(entry["bytes"]) is not int
+            or entry["bytes"] != expected_bytes
+            or not isinstance(entry["sha256"], str)
+            or entry["sha256"] != expected_sha256
+        ):
+            raise RuntimeError(f"Pinned mail semantic evidence changed: {path}")
+
+
 def verify_email_extract_parts_method(source: bytes) -> None:
     start = b"  def self.extract_parts(raw)\n"
     end = b"  def self.site_title\n"
@@ -425,6 +582,77 @@ def verify_email_semantics(source: bytes) -> None:
     if len(source) != PINNED_EMAIL_BYTES or hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256:
         raise RuntimeError("The pinned email source bytes changed.")
     verify_email_extract_parts_method(source)
+
+
+def verify_mail_semantics(core: dict[str, bytes]) -> None:
+    for path, (expected_bytes, expected_sha256) in PINNED_MAIL_SEMANTIC_EVIDENCE.items():
+        source = core.get(path)
+        if source is None:
+            raise RuntimeError(f"Pinned mail semantic source is absent: {path}")
+        if len(source) != expected_bytes or hashlib.sha256(source).hexdigest() != expected_sha256:
+            raise RuntimeError(f"Pinned mail semantic source changed: {path}")
+
+    notifications = core["app/mailers/user_notifications.rb"]
+    verify_exact_region(
+        notifications,
+        b"  def admin_login(user, opts = {})\n",
+        b"  def account_created(user, opts = {})\n",
+        PINNED_ADMIN_LOGIN_METHOD_BLOCK,
+        "administrator-login mailer method",
+    )
+    verify_exact_region(
+        notifications,
+        b"  def build_user_email_token_by_template(template, user, email_token)\n",
+        b"  def build_summary_for(user)\n",
+        PINNED_EMAIL_LOGIN_HELPER_BLOCK,
+        "email-token template helper",
+    )
+
+    message_builder = core["lib/email/message_builder.rb"]
+    verify_exact_region(
+        message_builder,
+        b"    def initialize(to, opts = nil)\n",
+        b"      if @opts[:recipient_user].present?\n",
+        PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX,
+        "message-builder template arguments",
+    )
+    verify_exact_region(
+        message_builder,
+        b"    def body\n",
+        b"    def build_args\n",
+        PINNED_MESSAGE_BUILDER_BODY_BLOCK,
+        "message-builder template interpolation",
+    )
+    if message_builder.count(PINNED_MESSAGE_BUILDER_HTML_PART_PREFIX) != 1:
+        raise RuntimeError("The pinned message-builder optional HTML boundary changed.")
+    if core["lib/email/build_email_helper.rb"] != PINNED_BUILD_EMAIL_HELPER_SOURCE:
+        raise RuntimeError("The pinned build-email helper changed.")
+
+    verify_exact_region(
+        core["lib/discourse.rb"],
+        b"  def self.base_protocol\n",
+        b"  def self.current_hostname_with_port\n",
+        PINNED_BASE_PROTOCOL_BLOCK,
+        "force-HTTPS base protocol",
+    )
+    verify_exact_region(
+        core["config/locales/server.en.yml"],
+        b"    admin_login:\n",
+        b"    account_created:\n",
+        PINNED_ADMIN_LOGIN_LOCALE_BLOCK,
+        "administrator-login locale template",
+    )
+
+    helper = core["app/helpers/user_notifications_helper.rb"]
+    if b"SiteSetting.digest_logo_url" in helper:
+        raise RuntimeError("The stale digest-logo site setting returned.")
+    verify_exact_region(
+        helper,
+        b"  def logo_url\n",
+        b"  def html_site_link\n",
+        PINNED_DIGEST_LOGO_METHOD_BLOCK,
+        "digest-logo helper method",
+    )
 
 
 def verify_gravatar_semantics(core: dict[str, bytes]) -> None:
@@ -511,6 +739,7 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
     )
     require(core, "app/views/metadata/opensearch.xml.erb", (b"<Tags>discourse forum</Tags>",))
     verify_email_semantics(core["lib/email.rb"])
+    verify_mail_semantics(core)
     verify_gravatar_semantics(core)
     require(
         core,
@@ -590,6 +819,7 @@ def main() -> int:
     provenance = load("docs/operations/upstream-provenance.v1.json")
     components = load("docs/operations/third-party-components.v1.json")
     identity = load("docs/operations/forum-central-identity.consumer.v1.json")
+    verify_mail_evidence_manifest(components)
     if not args.online:
         print("Pinned-source manifest structure passed; online bytes were not requested.")
         return 0

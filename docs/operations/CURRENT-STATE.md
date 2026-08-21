@@ -33,7 +33,7 @@ evidence because its one-core Bundler command resolves to zero jobs. The
 selected replacement includes reviewed Ruby, base-image, PostgreSQL 18, disk,
 and one-core changes and is valid only for this new empty installation.
 Official deployment-source `main` was separately observed on 2026-08-20 at
-`ccb3ea007204c683f7177258f1f509e2fb36f82b`, ten commits ahead of the pin.
+`00595119c368c0aef7d7019ec66ffc8fa51cce79`, eleven commits ahead of the pin.
 That drift is recorded but not selected; its compatibility review remains
 incomplete, and the monthly/manual read-only gate stops when the observation
 moves.

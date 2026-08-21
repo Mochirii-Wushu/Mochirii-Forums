@@ -743,6 +743,34 @@ def test_branding_email_renderer_contract() -> None:
             'puts "Mochirii mail presentation passed."',
             'warn expected_address\nputs "Mochirii mail presentation passed."',
         ),
+        ('stage4_fixture == "true" &&', 'stage4_fixture == "true" ||'),
+        (
+            'expected_scheme = allow_fixture_http ? "http" : "https"',
+            'expected_scheme = "http"',
+        ),
+        (
+            'expected_path = "/session/email-login/mochirii-fixture-admin-login-token"',
+            'expected_path = "/session/email-login/wrong-token"',
+        ),
+        (
+            "Somebody asked to log in to your account on [Mochirii Forums](#{expected_base_url}).",
+            "Somebody asked to log in to your account on a different site.",
+        ),
+        (
+            'normalized_text = text_part.to_s.gsub("\\r\\n", "\\n").strip',
+            "normalized_text = text_part.to_s.strip",
+        ),
+        (
+            "  unless html_part.nil? &&",
+            "  unless true &&",
+        ),
+        (
+            "      normalized_text == expected_text",
+            "      normalized_text.include?(expected_link)",
+        ),
+        ("      expected.query.nil? &&", "      true &&"),
+        ("      expected.fragment.nil?", "      true"),
+        ("SiteSetting.site_digest_logo_url", "SiteSetting.digest_logo_url"),
     )
     for current, stale in hostile_replacements:
         hostile = renderer.replace(current, stale, 1)
@@ -765,14 +793,67 @@ def test_branding_email_renderer_contract() -> None:
     ]
     if email_evidence != [VALIDATOR.PINNED_EMAIL_EVIDENCE]:
         raise RuntimeError("Pinned email extraction API evidence differs.")
+    mail_rendering_paths = {entry["path"] for entry in VALIDATOR.PINNED_MAIL_RENDERING_EVIDENCE}
+    mail_rendering_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in mail_rendering_paths
+    ]
+    if mail_rendering_evidence != VALIDATOR.PINNED_MAIL_RENDERING_EVIDENCE:
+        raise RuntimeError("Pinned administrator-mail and digest-logo evidence differs.")
+
+    fixture = (ROOT / "scripts/test-admin-login-link.rb").read_text(encoding="utf-8")
+    VALIDATOR.validate_admin_login_link_fixture(fixture)
+    fixture_hostiles = (
+        fixture.replace('fixture_base = "http://forums.mochirii.com"', 'fixture_base = "https://forums.mochirii.com"', 1),
+        fixture.replace('"production HTTP mode",', '"production HTTP mode removed",', 1),
+        fixture.replace('"foreign host" =>', '"foreign host removed" =>', 1),
+        fixture.replace('"wrong token" =>', '"wrong token removed" =>', 1),
+        fixture.replace('"query" =>', '"query removed" =>', 1),
+        fixture.replace('"mixed-case foreign URL" =>', '"mixed-case foreign URL removed" =>', 1),
+        fixture.replace('"duplicate recovery link" =>', '"duplicate recovery link removed" =>', 1),
+        fixture.replace('"entity-encoded HTML anchor" =>', '"entity-encoded HTML anchor removed" =>', 1),
+        fixture.replace('"entity-encoded Markdown link" =>', '"entity-encoded Markdown link removed" =>', 1),
+        fixture.replace(
+            '"transport CRLF normalization changed the exact mail"',
+            '"transport CRLF normalization case removed"',
+            1,
+        ),
+        fixture.replace(
+            '"unexpected pre-delivery HTML part",',
+            '"unexpected pre-delivery HTML part removed",',
+            1,
+        ),
+        fixture.replace('assert_fixture(error.cause.nil?, "#{label} retained an exception cause")', '', 1),
+        fixture.replace('source.scan("SiteSetting.site_digest_logo_url").length == 1', 'true', 1),
+    )
+    for hostile_fixture in fixture_hostiles:
+        if hostile_fixture == fixture:
+            raise RuntimeError("Administrator recovery-link fixture hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_admin_login_link_fixture(hostile_fixture)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Administrator recovery-link fixture hostile mutation was accepted.")
     upstream = (ROOT / "scripts/verify-pinned-source.py").read_text(encoding="utf-8")
     VALIDATOR.validate_pinned_source_verifier(upstream)
     for canary in (
         "PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)",
+        "PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''",
+        "PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX = b'''",
+        "PINNED_MESSAGE_BUILDER_HTML_PART_PREFIX = b'''",
+        "PINNED_BUILD_EMAIL_HELPER_SOURCE = b'''",
+        "PINNED_BASE_PROTOCOL_BLOCK = b'''",
+        "PINNED_ADMIN_LOGIN_LOCALE_BLOCK = b'''",
+        "PINNED_DIGEST_LOGO_METHOD_BLOCK = b'''",
         "def verify_email_extract_parts_method(source: bytes) -> None:",
         "def verify_email_semantics(source: bytes) -> None:",
+        "def verify_mail_evidence_manifest(components: dict) -> None:",
+        "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
         'hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256',
         'verify_email_semantics(core["lib/email.rb"])',
+        "verify_mail_evidence_manifest(components)",
+        "verify_mail_semantics(core)",
     ):
         if upstream.count(canary) != 1:
             raise RuntimeError("Pinned email extraction semantic gate differs.")
@@ -806,6 +887,102 @@ def test_branding_email_renderer_contract() -> None:
         else:
             raise RuntimeError("Pinned email semantic gate accepted a wrong implementation.")
 
+    synthetic_mail_core = {
+        "app/mailers/user_notifications.rb":
+            UPSTREAM.PINNED_ADMIN_LOGIN_METHOD_BLOCK
+            + b"  def account_created(user, opts = {})\n  end\n\n"
+            + UPSTREAM.PINNED_EMAIL_LOGIN_HELPER_BLOCK
+            + b"  def build_summary_for(user)\n  end\n",
+        "lib/email/message_builder.rb":
+            UPSTREAM.PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX
+            + b"      if @opts[:recipient_user].present?\n      end\n"
+            + UPSTREAM.PINNED_MESSAGE_BUILDER_HTML_PART_PREFIX
+            + b"      if @template_args[:unsubscribe_instructions].present?\n      end\n"
+            + UPSTREAM.PINNED_MESSAGE_BUILDER_BODY_BLOCK
+            + b"    def build_args\n    end\n",
+        "lib/email/build_email_helper.rb": UPSTREAM.PINNED_BUILD_EMAIL_HELPER_SOURCE,
+        "lib/discourse.rb":
+            UPSTREAM.PINNED_BASE_PROTOCOL_BLOCK
+            + b"  def self.current_hostname_with_port\n  end\n",
+        "config/locales/server.en.yml":
+            UPSTREAM.PINNED_ADMIN_LOGIN_LOCALE_BLOCK
+            + b"    account_created:\n      title: fixture\n",
+        "app/helpers/user_notifications_helper.rb":
+            UPSTREAM.PINNED_DIGEST_LOGO_METHOD_BLOCK
+            + b"  def html_site_link\n  end\n",
+    }
+
+    def synthetic_evidence(core: dict[str, bytes]) -> dict[str, tuple[int, str]]:
+        return {
+            path: (len(body), hashlib.sha256(body).hexdigest())
+            for path, body in core.items()
+        }
+
+    original_mail_evidence = UPSTREAM.PINNED_MAIL_SEMANTIC_EVIDENCE
+    try:
+        UPSTREAM.PINNED_MAIL_SEMANTIC_EVIDENCE = synthetic_evidence(synthetic_mail_core)
+        UPSTREAM.verify_mail_semantics(synthetic_mail_core)
+        mail_hostiles = (
+            (
+                "app/mailers/user_notifications.rb",
+                b"opts[:email_token]",
+                b"nil",
+            ),
+            (
+                "app/mailers/user_notifications.rb",
+                b"email_token: email_token",
+                b"email_token: nil",
+            ),
+            (
+                "lib/email/message_builder.rb",
+                b"base_url: Discourse.base_url",
+                b'base_url: "http://fixture.invalid"',
+            ),
+            (
+                "lib/email/message_builder.rb",
+                b'.text_body_template", augmented_template_args)',
+                b'.html_body_template", augmented_template_args)',
+            ),
+            (
+                "lib/email/message_builder.rb",
+                b"return unless html_override = @opts[:html_override]",
+                b"html_override = @opts[:html_override]",
+            ),
+            (
+                "lib/email/build_email_helper.rb",
+                b"if message && h = builder.html_part",
+                b"if message && h = builder.body",
+            ),
+            (
+                "lib/discourse.rb",
+                b'SiteSetting.force_https? ? "https" : "http"',
+                b'"https"',
+            ),
+            (
+                "config/locales/server.en.yml",
+                b"%{base_url}/session/email-login/%{email_token}",
+                b"%{base_url}/session/email-login/fixed-token",
+            ),
+            (
+                "app/helpers/user_notifications_helper.rb",
+                b"SiteSetting.site_digest_logo_url",
+                b"SiteSetting.digest_logo_url",
+            ),
+        )
+        for path, current, stale in mail_hostiles:
+            hostile_core = dict(synthetic_mail_core)
+            hostile_core[path] = hostile_core[path].replace(current, stale, 1)
+            if hostile_core[path] == synthetic_mail_core[path]:
+                raise RuntimeError("Pinned mail semantic hostile mutation anchor is absent.")
+            UPSTREAM.PINNED_MAIL_SEMANTIC_EVIDENCE = synthetic_evidence(hostile_core)
+            try:
+                UPSTREAM.verify_mail_semantics(hostile_core)
+            except RuntimeError:
+                continue
+            raise RuntimeError("Pinned mail semantic gate accepted a hostile implementation.")
+    finally:
+        UPSTREAM.PINNED_MAIL_SEMANTIC_EVIDENCE = original_mail_evidence
+
     verifier_hostiles = (
         upstream.replace(
             '    verify_email_semantics(core["lib/email.rb"])\n',
@@ -815,6 +992,16 @@ def test_branding_email_renderer_contract() -> None:
         upstream.replace(
             '    verify_email_semantics(core["lib/email.rb"])\n',
             '    # verify_email_semantics(core["lib/email.rb"])\n',
+            1,
+        ),
+        upstream.replace(
+            "    verify_mail_semantics(core)\n",
+            "    if False:\n        verify_mail_semantics(core)\n",
+            1,
+        ),
+        upstream.replace(
+            "    verify_mail_evidence_manifest(components)\n",
+            "    if False:\n        verify_mail_evidence_manifest(components)\n",
             1,
         ),
     )
@@ -1581,6 +1768,7 @@ def test_storage_response_boundary() -> None:
         "test-storage-response-boundary.rb",
         "test-backup-url-boundary.rb",
         "test-normal-upload-inventory.rb",
+        "test-admin-login-link.rb",
         "test-narrative-avatar.rb",
         "test-sidekiq-processing-probe.rb",
     ):
@@ -1803,16 +1991,27 @@ def test_current_main_observation() -> None:
             "signatureReason": "valid",
             "subject": "PERF: Skip chown for files that already have the right ownership (#1115)",
         },
+        {
+            "revision": "00595119c368c0aef7d7019ec66ffc8fa51cce79",
+            "tree": "d5b846bf4e59784c5220c48839d7eb1b45671aae",
+            "signatureVerified": True,
+            "signatureReason": "valid",
+            "subject": "PERF: Refresh Fontconfig cache after package installation (#1117)",
+        },
     ]
     if (
         observation["observedAt"] != "2026-08-20"
-        or observation["commitsAheadOfPin"] != 10
+        or observation["commitsAheadOfPin"] != 11
         or observation["commitsBehindPin"] != 0
-        or observation["totalCommits"] != 10
+        or observation["totalCommits"] != 11
         or len(observation["changedPaths"]) != 20
-        or observation["rangeCommits"][-2:] != expected_new_commits
-        or [entry["classification"] for entry in observation["materialChangeScope"][-2:]]
-        != ["dev-image-postgresql-15", "web-template-ownership-optimization"]
+        or observation["rangeCommits"][-3:] != expected_new_commits
+        or [entry["classification"] for entry in observation["materialChangeScope"][-3:]]
+        != [
+            "dev-image-postgresql-15",
+            "web-template-ownership-optimization",
+            "base-image-fontconfig-cache-refresh",
+        ]
     ):
         raise RuntimeError("The refreshed bounded deployment-source observation changed.")
 
@@ -1933,7 +2132,7 @@ def expect_validation_failure(action, label: str) -> None:
 
 def test_repository_governance() -> None:
     allowed = sorted(VALIDATOR.ALLOWED_FILES)
-    if len(allowed) != 161:
+    if len(allowed) != 162:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")

@@ -19,8 +19,8 @@ pins, theme archive determinism, hostile renderer inputs, upload policy,
 branding source, and credential-like material. It must not render production
 configuration or contact a runtime/provider account.
 
-The offline Python contract has no host Ruby dependency. The five standalone
-Ruby hostile fixtures and six Python fault/recovery fixtures run only in the
+The offline Python contract has no host Ruby dependency. The eight standalone
+Ruby hostile fixtures and seven Python fault/recovery fixtures run only in the
 exact pinned
 `discourse/base@sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48`
 container after that digest is pulled explicitly. Their container uses
@@ -93,6 +93,10 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
   use Mochirii branding; automatic external Gravatar downloads are disabled
   before the narrative system user is saved, and fixed identity, profile,
   active-avatar, and no-Gravatar subchecks remain true after Sidekiq processing;
+- the administrator recovery mail contains only the exact fixture-token path
+  at the mode-bound Forums origin: HTTP is accepted solely for the explicit
+  loopback fixture, while non-fixture verification requires HTTPS; and the
+  digest uses the pinned `site_digest_logo_url` accessor;
 - one local application backup is created in the fixture, a protected marker is
   changed, the exact local backup is destructively restored with
   `--location local`, and the restored marker is verified; and

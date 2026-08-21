@@ -502,8 +502,10 @@ From the distinct operator SSH session or provider console:
    ```
 
 4. Open only the one-time link delivered to the protected recovery mailbox.
-   The link targets `/session/email-login/<token>`; the public initiation form
-   remains blocked. After access is recovered, rerun step 1. It must prove the
+   Production requires the exact HTTPS Forums origin and
+   `/session/email-login/<token>` path; HTTP is accepted only by the explicit
+   loopback-only disposable fixture. The public initiation form remains
+   blocked. After access is recovered, rerun step 1. It must prove the
    exact current release, read-only runtime assets, protected evidence,
    DiscourseConnect state, disabled local/alternate login settings, and full
    hosted verifier before the incident is considered closed.

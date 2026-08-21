@@ -24,8 +24,8 @@ BASE_DIGEST = "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759
 ACME_REVISION = "b7caf7a0165d80dd1556b16057a06bb32025066d"
 ACME_SOURCE_SHA256 = "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
 ACME_COMPRESSED_SHA256 = "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
-OBSERVED_MAIN_REVISION = "ccb3ea007204c683f7177258f1f509e2fb36f82b"
-OBSERVED_MAIN_TREE = "74c8d88910e156d45e319a97ca884892fcca75d1"
+OBSERVED_MAIN_REVISION = "00595119c368c0aef7d7019ec66ffc8fa51cce79"
+OBSERVED_MAIN_TREE = "d5b846bf4e59784c5220c48839d7eb1b45671aae"
 OBSERVED_RANGE = [
     "e071c2c8ebf8a93c1fba4e16fbb7168a2a9201bd",
     "9a064388b76beb41527b7c7b650566a5f94075aa",
@@ -36,6 +36,7 @@ OBSERVED_RANGE = [
     "a68d4b8707fd653697e8b6b27b336d093dbed5e4",
     "9c35fe8f6f4eb66d399f756e3bae773292e34db2",
     "3cdefc992290e6d1376a11c72bada098f7b3cf6a",
+    "ccb3ea007204c683f7177258f1f509e2fb36f82b",
     OBSERVED_MAIN_REVISION,
 ]
 OBSERVED_MATERIAL_CLASSIFICATIONS = [
@@ -49,6 +50,7 @@ OBSERVED_MATERIAL_CLASSIFICATIONS = [
     "mutable-base-image-default",
     "dev-image-postgresql-15",
     "web-template-ownership-optimization",
+    "base-image-fontconfig-cache-refresh",
 ]
 OBSERVED_CHANGED_PATHS = [
     "image/base/Dockerfile",
@@ -196,14 +198,50 @@ NARRATIVE_AVATAR_FIXTURE_SHA256 = "4c3d3945c022ee9c344787f3331367b85bd5602dc0714
 NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
 '''
-NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "99d00d20611e37bc41f8c1aa72c0e408a4c82a2765c295491f80ab245748152c"
-BRANDING_EMAIL_RENDERER_SHA256 = "aab3658def25b73b046025d9703b414b7bbeb7ae6e75ecfc9033189b3527f39f"
-PINNED_SOURCE_VERIFIER_SHA256 = "5c949e9a85f3bff3283fb3b71701e75ac9e2b29f67e5886248f0f54c53221350"
+NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
+BRANDING_EMAIL_RENDERER_SHA256 = "9e419fddcdd8f75d657348b7c43bb05fb3404dfd5f77aa04d69840d0ea7616b6"
+PINNED_SOURCE_VERIFIER_SHA256 = "cd30e6ba17ab37669f88c995248d3620b947b34d6f4cdec8f58e651e03c4d77b"
+ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "575f1a3b6b7f044999a5fac9f9f62e3ec378fb001d928b9f24962867d83ada0c"
+ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
+            ruby /repo/scripts/test-admin-login-link.rb >/dev/null
+'''
 PINNED_EMAIL_EVIDENCE = {
     "path": "lib/email.rb",
     "bytes": 1549,
     "sha256": "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2",
 }
+PINNED_MAIL_RENDERING_EVIDENCE = [
+    {
+        "path": "app/mailers/user_notifications.rb",
+        "bytes": 28133,
+        "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
+    },
+    {
+        "path": "lib/email/message_builder.rb",
+        "bytes": 13752,
+        "sha256": "6238ba3ecdb9a4003e0cce29938fc481c7c657bf07f392b00c1a2147db2f3502",
+    },
+    {
+        "path": "lib/email/build_email_helper.rb",
+        "bytes": 393,
+        "sha256": "bb537c8d6dcce21ef12184de53ec32bab64b807e34c6a872f3243686be0c8f7a",
+    },
+    {
+        "path": "lib/discourse.rb",
+        "bytes": 39279,
+        "sha256": "351e1170f79acb9b321746df618339de5412c95b1ce4c13db2c17e96bf1d0678",
+    },
+    {
+        "path": "config/locales/server.en.yml",
+        "bytes": 420250,
+        "sha256": "0ff18443abac07e496e27142f21b33e8935242ca3d55fd33531c1ace43a92f50",
+    },
+    {
+        "path": "app/helpers/user_notifications_helper.rb",
+        "bytes": 3229,
+        "sha256": "8916b4cf739dd589a2d6f8131332b9b59b2de20b9981b210c1bea0b189803aa5",
+    },
+]
 PINNED_GRAVATAR_EVIDENCE = [
     {
         "path": "app/models/user.rb",
@@ -334,6 +372,7 @@ ALLOWED_FILES = frozenset(
     "scripts/ssh-deploy-dispatch.py",
     "scripts/storage-response-boundary.rb",
     "scripts/test-backup-url-boundary.rb",
+    "scripts/test-admin-login-link.rb",
     "scripts/test-backup-transaction.py",
     "scripts/test-normal-upload-inventory.rb",
     "scripts/test-narrative-avatar.rb",
@@ -403,8 +442,8 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "5f626b8ab08d8a1770fdbf9a254cbb9cd2fd351130f81fe07698f5315be866f2",
-    "docs/operations/upstream-provenance.v1.json": "d5937dfc541fd627fa0ef5e2448e9d7f990a7442aa2b9ca874dab028d9bf8975",
+    "docs/operations/third-party-components.v1.json": "8fb8ae6b4c9527689831547bb19a0caa76d607383a128f8fbb2a9ee101d38322",
+    "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
 
@@ -493,8 +532,126 @@ def validate_branding_email_renderer(source: str) -> None:
         fail("Branding email renderer contains an unreviewed email extraction call.")
     if source.count('puts "Mochirii mail presentation passed."') != 1:
         fail("Branding email renderer success output changed.")
+    admin_login_contract = (
+        "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\n",
+        '  stage4_fixture == "true" &&\n',
+        '    connect_fixture == "true" &&\n',
+        '    expected_address == "notifications@fixture.invalid"\n',
+        "def verify_admin_login_link!(text_part:, html_part:, expected_base_url:, allow_fixture_http:)\n",
+        '  expected_scheme = allow_fixture_http ? "http" : "https"\n',
+        "  expected_port = allow_fixture_http ? 80 : 443\n",
+        '  expected_path = "/session/email-login/mochirii-fixture-admin-login-token"\n',
+        "  expected_text =\n",
+        "    <<~TEXT.strip\n",
+        "      Somebody asked to log in to your account on [Mochirii Forums](#{expected_base_url}).\n",
+        "      If you did not make this request, you can safely ignore this email.\n",
+        "      Click the following link to log in:\n",
+        "      #{expected_link}\n",
+        '  normalized_text = text_part.to_s.gsub("\\r\\n", "\\n").strip\n',
+        "  unless expected_origin_exact\n",
+        "  unless normalized_text.include?(expected_link)\n",
+        "  unless html_part.nil? &&\n",
+        "      normalized_text == expected_text\n",
+        "      allow_fixture_admin_login_http?(\n",
+        '        stage4_fixture: ENV["MOCHIRII_STAGE4_FIXTURE"],\n',
+        '        connect_fixture: ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"],\n',
+        "    verify_admin_login_link!(\n",
+        "      text_part: text_part,\n",
+        "      html_part: html_part,\n",
+        "      expected_base_url: Discourse.base_url,\n",
+        "      allow_fixture_http: allow_fixture_http,\n",
+        "  digest_logo = SiteSetting.site_digest_logo_url.to_s\n",
+    )
+    if any(source.count(value) != 1 for value in admin_login_contract):
+        fail("Branding email renderer lost its mode-bound recovery-link or digest-logo contract.")
+    if "SiteSetting.digest_logo_url" in source:
+        fail("Branding email renderer retained the stale digest-logo API.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != BRANDING_EMAIL_RENDERER_SHA256:
         fail("Branding email renderer differs from the exact reviewed source digest.")
+    require_text(
+        read("docs/operations/VALIDATION.md"),
+        [
+            "HTTP is accepted solely for the explicit",
+            "non-fixture verification requires HTTPS",
+            "pinned `site_digest_logo_url` accessor",
+        ],
+        "mode-bound administrator recovery-mail validation contract",
+    )
+    require_text(
+        read("docs/operations/RUNTIME-READINESS.md"),
+        [
+            "HTTP permitted only in the explicit",
+            "HTTPS required for every non-fixture runtime",
+        ],
+        "administrator recovery-mail runtime-readiness contract",
+    )
+    require_text(
+        read("docs/operations/RECOVERY.md"),
+        [
+            "Production requires the exact HTTPS Forums origin",
+            "HTTP is accepted only by the explicit",
+        ],
+        "administrator recovery-mail operator contract",
+    )
+
+
+def validate_admin_login_link_fixture(source: str) -> None:
+    required = (
+        'method_marker = "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\\n"',
+        '"partial fixture HTTP authorization was accepted"',
+        'fixture_base = "http://forums.mochirii.com"',
+        'production_base = "https://forums.mochirii.com"',
+        '"exact fixture HTTP mail was rejected"',
+        '"exact production HTTPS mail was rejected"',
+        '"transport CRLF normalization changed the exact mail"',
+        '"duplicate recovery link" =>',
+        '"duplicate base link" =>',
+        '"production HTTP mode",',
+        '"fixture HTTPS mode",',
+        '"missing recovery link",',
+        '"malformed expected origin",',
+        '"foreign host" =>',
+        '"nondefault port" =>',
+        '"userinfo" =>',
+        '"wrong token" =>',
+        '"wrong path" =>',
+        '"query" =>',
+        '"fragment" =>',
+        '"unrelated foreign URL" =>',
+        '"mixed-case foreign URL" =>',
+        '"relative wrong-token path" =>',
+        '"uppercase relative path" =>',
+        '"uppercase scheme-relative path" =>',
+        '"dot-segment relative path" =>',
+        '"doubled-separator relative path" =>',
+        '"encoded mixed-case relative path" =>',
+        '"encoded uppercase relative path" =>',
+        '"script-prefixed exact URL" =>',
+        '"token suffix after punctuation" =>',
+        '"foreign query wrapper" =>',
+        '"encoded terminal slash" =>',
+        '"encoded route slashes" =>',
+        '"encoded route hyphen" =>',
+        '"fully encoded route" =>',
+        '"fully encoded uppercase route" =>',
+        '"overencoded recovery route" =>',
+        '"raw HTML scheme-relative anchor" =>',
+        '"raw HTML relative anchor" =>',
+        '"entity-encoded HTML anchor" =>',
+        '"Markdown scheme-relative link" =>',
+        '"Markdown relative link" =>',
+        '"entity-encoded Markdown link" =>',
+        '"site-name drift" =>',
+        '"unexpected pre-delivery HTML part",',
+        'source.scan("SiteSetting.site_digest_logo_url").length == 1',
+        'source.scan("SiteSetting.digest_logo_url").empty?',
+        'assert_fixture(error.cause.nil?, "#{label} retained an exception cause")',
+        'puts "Administrator recovery mail link hostile fixture passed."',
+    )
+    if any(source.count(value) != 1 for value in required):
+        fail("Administrator recovery-link hostile fixture inventory differs.")
+    if hashlib.sha256(source.encode("utf-8")).hexdigest() != ADMIN_LOGIN_LINK_FIXTURE_SHA256:
+        fail("Administrator recovery-link hostile fixture differs from the exact reviewed source digest.")
 
 
 def validate_narrative_avatar_fixture(source: str) -> None:
@@ -530,15 +687,34 @@ def validate_narrative_avatar_workflow(source: str) -> None:
     if (
         source.count(NARRATIVE_AVATAR_WORKFLOW_CALL) != 1
         or step.count(NARRATIVE_AVATAR_WORKFLOW_CALL) != 1
+        or source.count(ADMIN_LOGIN_LINK_WORKFLOW_CALL) != 1
+        or step.count(ADMIN_LOGIN_LINK_WORKFLOW_CALL) != 1
     ):
-        fail("Narrative avatar fixture is not executed exactly once in the required preflight step.")
+        fail("Narrative avatar or administrator-link fixture is not executed exactly once in the required preflight step.")
     if hashlib.sha256(step.encode("utf-8")).hexdigest() != NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256:
         fail("Disposable preflight step differs from the exact reviewed executable body.")
 
 
 def validate_pinned_source_verifier(source: str) -> None:
-    if source.count('verify_email_semantics(core["lib/email.rb"])') != 1:
-        fail("Pinned-source verifier does not execute the email semantic gate exactly once.")
+    required = (
+        'verify_email_semantics(core["lib/email.rb"])',
+        "verify_mail_evidence_manifest(components)",
+        "verify_mail_semantics(core)",
+        "def verify_mail_evidence_manifest(components: dict) -> None:",
+        "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
+        "PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''",
+        "PINNED_EMAIL_LOGIN_HELPER_BLOCK = b'''",
+        "PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX = b'''",
+        "PINNED_MESSAGE_BUILDER_BODY_BLOCK = b'''",
+        "PINNED_MESSAGE_BUILDER_HTML_PART_PREFIX = b'''",
+        "PINNED_BUILD_EMAIL_HELPER_SOURCE = b'''",
+        "PINNED_BASE_PROTOCOL_BLOCK = b'''",
+        "PINNED_ADMIN_LOGIN_LOCALE_BLOCK = b'''",
+        "PINNED_DIGEST_LOGO_METHOD_BLOCK = b'''",
+        'if b"SiteSetting.digest_logo_url" in helper:',
+    )
+    if any(source.count(value) != 1 for value in required):
+        fail("Pinned-source verifier does not execute the exact mail semantic gates once.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != PINNED_SOURCE_VERIFIER_SHA256:
         fail("Pinned-source verifier differs from the exact reviewed source digest.")
 
@@ -837,9 +1013,9 @@ def validate_manifests() -> None:
         or observation.get("mainCommitSignatureVerified") is not True
         or observation.get("mainCommitSignatureReason") != "valid"
         or observation.get("comparisonStatus") != "ahead"
-        or observation.get("commitsAheadOfPin") != 10
+        or observation.get("commitsAheadOfPin") != 11
         or observation.get("commitsBehindPin") != 0
-        or observation.get("totalCommits") != 10
+        or observation.get("totalCommits") != 11
         or observation.get("baseRevision") != DOCKER_REVISION
         or observation.get("mergeBaseRevision") != DOCKER_REVISION
         or observation.get("pinIsAncestor") is not True
@@ -880,6 +1056,14 @@ def validate_manifests() -> None:
     ]
     if email_evidence != [PINNED_EMAIL_EVIDENCE]:
         fail("Pinned email extraction API evidence changed.")
+    mail_rendering_paths = {expected["path"] for expected in PINNED_MAIL_RENDERING_EVIDENCE}
+    mail_rendering_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in mail_rendering_paths
+    ]
+    if mail_rendering_evidence != PINNED_MAIL_RENDERING_EVIDENCE:
+        fail("Pinned administrator-mail and digest-logo rendering evidence changed.")
     gravatar_evidence = [
         entry
         for entry in components["application"]["semanticEvidenceFiles"]
@@ -1165,6 +1349,7 @@ def validate_theme_and_public_source() -> None:
         fail("The mandatory public-upload notice changed.")
     validate_theme_runtime_verifier(read("scripts/verify-site.rb"))
     validate_branding_email_renderer(read("scripts/render-branding-email.rb"))
+    validate_admin_login_link_fixture(read("scripts/test-admin-login-link.rb"))
     for relative in (
         "theme/mochirii/common/head_tag.html",
         "theme/mochirii/common/footer.html",
@@ -1652,6 +1837,7 @@ def validate_secrets_and_workflows() -> None:
             "test-backup-transaction.py",
             "test-deployment-mutation.py",
             "test-normal-upload-inventory.rb",
+            "test-admin-login-link.rb",
             "test-narrative-avatar.rb",
             "test-operation-survivor.rb",
             "test-sidekiq-processing-probe.rb",
@@ -1708,10 +1894,12 @@ def validate_secrets_and_workflows() -> None:
         "disposable launcher terminal image-equality and Nginx syntax hostile fixture",
     )
     validate_narrative_avatar_fixture(read("scripts/test-narrative-avatar.rb"))
+    validate_admin_login_link_fixture(read("scripts/test-admin-login-link.rb"))
     for fixture in (
         "test-storage-response-boundary.rb",
         "test-backup-url-boundary.rb",
         "test-normal-upload-inventory.rb",
+        "test-admin-login-link.rb",
         "test-narrative-avatar.rb",
         "test-operation-survivor.rb",
         "test-sidekiq-processing-probe.rb",
