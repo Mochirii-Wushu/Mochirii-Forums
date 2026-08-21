@@ -106,6 +106,16 @@
         "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4"
       },
       {
+        "path": "app/mailers/admin_confirmation_mailer.rb",
+        "bytes": 438,
+        "sha256": "409f849e00ee2d001c2106e5c2aacdb15c448a9aee246005381b735194347849"
+      },
+      {
+        "path": "lib/admin_confirmation.rb",
+        "bytes": 1699,
+        "sha256": "d095168b0c36efabf5a74e6e7685865a8c39b4520d444e86470874113b963566"
+      },
+      {
         "path": "lib/email/message_builder.rb",
         "bytes": 13752,
         "sha256": "6238ba3ecdb9a4003e0cce29938fc481c7c657bf07f392b00c1a2147db2f3502"

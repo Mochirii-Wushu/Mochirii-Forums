@@ -47,6 +47,14 @@ PINNED_MAIL_SEMANTIC_EVIDENCE = {
         28133,
         "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
     ),
+    "app/mailers/admin_confirmation_mailer.rb": (
+        438,
+        "409f849e00ee2d001c2106e5c2aacdb15c448a9aee246005381b735194347849",
+    ),
+    "lib/admin_confirmation.rb": (
+        1699,
+        "d095168b0c36efabf5a74e6e7685865a8c39b4520d444e86470874113b963566",
+    ),
     "lib/email/message_builder.rb": (
         13752,
         "6238ba3ecdb9a4003e0cce29938fc481c7c657bf07f392b00c1a2147db2f3502",
@@ -67,11 +75,64 @@ PINNED_MAIL_SEMANTIC_EVIDENCE = {
         3229,
         "8916b4cf739dd589a2d6f8131332b9b59b2de20b9981b210c1bea0b189803aa5",
     ),
+    "config/routes.rb": (
+        81601,
+        "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b",
+    ),
 }
 PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''  def admin_login(user, opts = {})
     build_user_email_token_by_template("user_notifications.admin_login", user, opts[:email_token])
   end
 
+'''
+PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE = b'''# frozen_string_literal: true
+
+class AdminConfirmationMailer < ActionMailer::Base
+  include Email::BuildEmailHelper
+
+  def send_email(to_address, target_email, target_username, token)
+    build_email(
+      to_address,
+      template: "admin_confirmation_mailer",
+      target_email: target_email,
+      target_username: target_username,
+      admin_confirm_url: confirm_admin_url(token: token, host: Discourse.base_url),
+    )
+  end
+end
+'''
+PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK = b'''  def create_confirmation
+    guardian = Guardian.new(@performed_by)
+    guardian.ensure_can_grant_admin!(@target_user)
+
+    @token = SecureRandom.hex
+    Discourse.redis.setex("admin-confirmation:#{@target_user.id}", 3.hours.to_i, @token)
+
+    payload = { target_user_id: @target_user.id, performed_by: @performed_by.id }
+    Discourse.redis.setex("admin-confirmation-token:#{@token}", 3.hours.to_i, payload.to_json)
+
+    Jobs.enqueue(
+      :admin_confirmation_email,
+      to_address: @performed_by.email,
+      target_email: @target_user.email,
+      target_username: @target_user.username,
+      token: @token,
+    )
+  end
+
+'''
+PINNED_ADMIN_CONFIRMATION_ROUTE_BLOCK = b'''      get(
+        {
+          "#{root_path}/confirm-admin/:token" => "users#confirm_admin",
+          :constraints => {
+            token: /[0-9a-f]+/,
+          },
+        }.merge(index == 1 ? { as: "confirm_admin" } : {}),
+      )
+      post "#{root_path}/confirm-admin/:token" => "users#confirm_admin",
+           :constraints => {
+             token: /[0-9a-f]+/,
+           }
 '''
 PINNED_EMAIL_LOGIN_HELPER_BLOCK = b'''  def build_user_email_token_by_template(template, user, email_token)
     build_email(
@@ -607,6 +668,18 @@ def verify_mail_semantics(core: dict[str, bytes]) -> None:
         PINNED_EMAIL_LOGIN_HELPER_BLOCK,
         "email-token template helper",
     )
+
+    if core["app/mailers/admin_confirmation_mailer.rb"] != PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE:
+        raise RuntimeError("The pinned administrator-confirmation mailer changed.")
+    verify_exact_region(
+        core["lib/admin_confirmation.rb"],
+        b"  def create_confirmation\n",
+        b"  def email_confirmed!\n",
+        PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK,
+        "administrator-confirmation token generator",
+    )
+    if core["config/routes.rb"].count(PINNED_ADMIN_CONFIRMATION_ROUTE_BLOCK) != 1:
+        raise RuntimeError("The pinned administrator-confirmation route constraint changed.")
 
     message_builder = core["lib/email/message_builder.rb"]
     verify_exact_region(

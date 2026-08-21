@@ -116,6 +116,10 @@ invite = Invite.new(
   invite_key: "mochirii-fixture",
   email_token: "mochirii-fixture-token",
 )
+admin_confirmation_fixture_token = "0123456789abcdef" * 2
+unless admin_confirmation_fixture_token.match?(/\A[0-9a-f]+\z/) && admin_confirmation_fixture_token.length == 32
+  raise "Administrator confirmation fixture token changed"
+end
 
 deliveries = {
   "test" => TestMailer.send_test("fixture@example.invalid"),
@@ -128,7 +132,7 @@ deliveries = {
       "fixture@example.invalid",
       "fixture@example.invalid",
       "mochirii-fixture",
-      "fixture-token",
+      admin_confirmation_fixture_token,
     ),
   "backup" => DownloadBackupMailer.send_email("fixture@example.invalid", "mochirii-forums-fixture.tar.gz"),
   "rejection" =>

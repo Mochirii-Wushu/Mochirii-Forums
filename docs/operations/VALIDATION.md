@@ -96,7 +96,10 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
 - the administrator recovery mail contains only the exact fixture-token path
   at the mode-bound Forums origin: HTTP is accepted solely for the explicit
   loopback fixture, while non-fixture verification requires HTTPS; and the
-  digest uses the pinned `site_digest_logo_url` accessor;
+  separate administrator-confirmation presentation uses a
+  route-valid deterministic administrator-confirmation fixture token
+  rather than a real Redis-backed privilege token; and the digest uses the
+  pinned `site_digest_logo_url` accessor;
 - one local application backup is created in the fixture, a protected marker is
   changed, the exact local backup is destructively restored with
   `--location local`, and the restored marker is verified; and

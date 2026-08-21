@@ -199,9 +199,9 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
             ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
-BRANDING_EMAIL_RENDERER_SHA256 = "9e419fddcdd8f75d657348b7c43bb05fb3404dfd5f77aa04d69840d0ea7616b6"
-PINNED_SOURCE_VERIFIER_SHA256 = "cd30e6ba17ab37669f88c995248d3620b947b34d6f4cdec8f58e651e03c4d77b"
-ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "575f1a3b6b7f044999a5fac9f9f62e3ec378fb001d928b9f24962867d83ada0c"
+BRANDING_EMAIL_RENDERER_SHA256 = "278d1ebb78f51825b2322f0442d6471f0e99a442369cadc8352244ef6775cda0"
+PINNED_SOURCE_VERIFIER_SHA256 = "90dbe4bbaa2b2afea2a6ef95247595ba28d567f170b356e8159a519d69fb0bfa"
+ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "898ffe7bd732bdacccd4981c0148b9407960a0b4a246eac2457224e0bf426669"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
 '''
@@ -215,6 +215,16 @@ PINNED_MAIL_RENDERING_EVIDENCE = [
         "path": "app/mailers/user_notifications.rb",
         "bytes": 28133,
         "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
+    },
+    {
+        "path": "app/mailers/admin_confirmation_mailer.rb",
+        "bytes": 438,
+        "sha256": "409f849e00ee2d001c2106e5c2aacdb15c448a9aee246005381b735194347849",
+    },
+    {
+        "path": "lib/admin_confirmation.rb",
+        "bytes": 1699,
+        "sha256": "d095168b0c36efabf5a74e6e7685865a8c39b4520d444e86470874113b963566",
     },
     {
         "path": "lib/email/message_builder.rb",
@@ -240,6 +250,11 @@ PINNED_MAIL_RENDERING_EVIDENCE = [
         "path": "app/helpers/user_notifications_helper.rb",
         "bytes": 3229,
         "sha256": "8916b4cf739dd589a2d6f8131332b9b59b2de20b9981b210c1bea0b189803aa5",
+    },
+    {
+        "path": "config/routes.rb",
+        "bytes": 81601,
+        "sha256": "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b",
     },
 ]
 PINNED_GRAVATAR_EVIDENCE = [
@@ -442,7 +457,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "8fb8ae6b4c9527689831547bb19a0caa76d607383a128f8fbb2a9ee101d38322",
+    "docs/operations/third-party-components.v1.json": "265fdf222acb47449bef4744ed667e5fa33a3a57b406ca06159ee2b8941359e0",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -560,12 +575,16 @@ def validate_branding_email_renderer(source: str) -> None:
         "      html_part: html_part,\n",
         "      expected_base_url: Discourse.base_url,\n",
         "      allow_fixture_http: allow_fixture_http,\n",
+        'admin_confirmation_fixture_token = "0123456789abcdef" * 2\n',
+        "unless admin_confirmation_fixture_token.match?(/\\A[0-9a-f]+\\z/) && admin_confirmation_fixture_token.length == 32\n",
+        '  raise "Administrator confirmation fixture token changed"\n',
+        "      admin_confirmation_fixture_token,\n",
         "  digest_logo = SiteSetting.site_digest_logo_url.to_s\n",
     )
     if any(source.count(value) != 1 for value in admin_login_contract):
-        fail("Branding email renderer lost its mode-bound recovery-link or digest-logo contract.")
-    if "SiteSetting.digest_logo_url" in source:
-        fail("Branding email renderer retained the stale digest-logo API.")
+        fail("Branding email renderer lost its mode-bound recovery-link, confirmation-token, or digest-logo contract.")
+    if "SiteSetting.digest_logo_url" in source or "SecureRandom" in source:
+        fail("Branding email renderer retained a stale digest API or generated a real confirmation token.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != BRANDING_EMAIL_RENDERER_SHA256:
         fail("Branding email renderer differs from the exact reviewed source digest.")
     require_text(
@@ -573,6 +592,7 @@ def validate_branding_email_renderer(source: str) -> None:
         [
             "HTTP is accepted solely for the explicit",
             "non-fixture verification requires HTTPS",
+            "route-valid deterministic administrator-confirmation fixture token",
             "pinned `site_digest_logo_url` accessor",
         ],
         "mode-bound administrator recovery-mail validation contract",
@@ -645,6 +665,21 @@ def validate_admin_login_link_fixture(source: str) -> None:
         '"unexpected pre-delivery HTML part",',
         'source.scan("SiteSetting.site_digest_logo_url").length == 1',
         'source.scan("SiteSetting.digest_logo_url").empty?',
+        'source.scan(\'admin_confirmation_fixture_token = "0123456789abcdef" * 2\').length == 1',
+        'source.scan("SecureRandom").empty?',
+        'admin_confirmation_route_token = /\\A[0-9a-f]+\\z/',
+        '    admin_confirmation_fixture_token.length == 32,\n',
+        '"one-character pinned-route token was rejected"',
+        '"long pinned-route token was rejected"',
+        '"empty administrator confirmation token" =>',
+        '"uppercase administrator confirmation token" =>',
+        '"hyphenated administrator confirmation token" =>',
+        '"nonhex administrator confirmation token" =>',
+        '"short administrator confirmation token" =>',
+        '"long administrator confirmation token" =>',
+        '"slash administrator confirmation token" =>',
+        '"encoded-separator administrator confirmation token" =>',
+        '"newline administrator confirmation token" =>',
         'assert_fixture(error.cause.nil?, "#{label} retained an exception cause")',
         'puts "Administrator recovery mail link hostile fixture passed."',
     )
@@ -703,6 +738,9 @@ def validate_pinned_source_verifier(source: str) -> None:
         "def verify_mail_evidence_manifest(components: dict) -> None:",
         "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
         "PINNED_ADMIN_LOGIN_METHOD_BLOCK = b'''",
+        "PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE = b'''",
+        "PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK = b'''",
+        "PINNED_ADMIN_CONFIRMATION_ROUTE_BLOCK = b'''",
         "PINNED_EMAIL_LOGIN_HELPER_BLOCK = b'''",
         "PINNED_MESSAGE_BUILDER_INITIALIZER_PREFIX = b'''",
         "PINNED_MESSAGE_BUILDER_BODY_BLOCK = b'''",
@@ -711,6 +749,8 @@ def validate_pinned_source_verifier(source: str) -> None:
         "PINNED_BASE_PROTOCOL_BLOCK = b'''",
         "PINNED_ADMIN_LOGIN_LOCALE_BLOCK = b'''",
         "PINNED_DIGEST_LOGO_METHOD_BLOCK = b'''",
+        'if core["app/mailers/admin_confirmation_mailer.rb"] != PINNED_ADMIN_CONFIRMATION_MAILER_SOURCE:',
+        'if core["config/routes.rb"].count(PINNED_ADMIN_CONFIRMATION_ROUTE_BLOCK) != 1:',
         'if b"SiteSetting.digest_logo_url" in helper:',
     )
     if any(source.count(value) != 1 for value in required):
