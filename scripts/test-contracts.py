@@ -449,6 +449,33 @@ def test_html_denial_types_contract() -> None:
         raise RuntimeError(f"HTML denial accepted inherited extension MIME mappings: {name}.")
 
 
+def test_login_code_denial_contract() -> None:
+    verifier = (ROOT / "scripts/verify-discourse-connect.py").read_text(encoding="utf-8")
+    VALIDATOR.validate_login_code_denial_contract(verifier)
+    hostile = verifier.replace("local_status != 404", "local_status != 403", 1)
+    if hostile == verifier:
+        raise RuntimeError("Local email-code denial hostile mutation anchor is absent.")
+    try:
+        VALIDATOR.validate_login_code_denial_contract(hostile)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Local email-code denial accepted a status that contradicts pinned core.")
+
+    source = b"class SessionController\n" + UPSTREAM.PINNED_LOGIN_CODE_DENIAL_METHOD + b"end\n"
+    UPSTREAM.verify_login_code_denial_semantics(source)
+    for current, stale in (
+        (b"raise Discourse::NotFound", b"raise Discourse::InvalidAccess"),
+        (b"check_local_login_allowed(check_login_via_email: true)", b"check_local_login_allowed"),
+    ):
+        hostile_source = source.replace(current, stale, 1)
+        try:
+            UPSTREAM.verify_login_code_denial_semantics(hostile_source)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Pinned local email-code denial accepted a hostile controller mutation.")
+
+
 def test_theme_archive() -> None:
     with tempfile.TemporaryDirectory(prefix="mochirii-theme-test-") as directory:
         first = Path(directory) / "one.zip"
@@ -5654,6 +5681,7 @@ def main() -> int:
     test_renderer()
     test_opensearch_filter_contract()
     test_html_denial_types_contract()
+    test_login_code_denial_contract()
     test_theme_archive()
     test_narrative_avatar_contract()
     test_branding_email_renderer_contract()

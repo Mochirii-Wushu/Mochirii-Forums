@@ -207,7 +207,7 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
 BRANDING_EMAIL_RENDERER_SHA256 = "80d8ff8a52018314f806d9b70c97cadb81bd0e91482bb22725a6e180216436b2"
-PINNED_SOURCE_VERIFIER_SHA256 = "4651050d754daf53553c659102e5bc5e07ea2a28881d79aa353f90a209495ed1"
+PINNED_SOURCE_VERIFIER_SHA256 = "20fb64bc0cddbd77a74cc291b103b2f8555e512d84fa54ee523aa09c3846747b"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
@@ -812,6 +812,7 @@ def validate_pinned_source_verifier(source: str) -> None:
         "verify_mail_evidence_manifest(components)",
         "verify_opensearch_evidence_manifest(components)",
         "verify_opensearch_semantics(core)",
+        "verify_login_code_denial_semantics(session_controller)",
         "verify_mail_semantics(core)",
         "def verify_mail_evidence_manifest(components: dict) -> None:",
         "def verify_opensearch_evidence_manifest(components: dict) -> None:",
@@ -1338,6 +1339,16 @@ def validate_html_denial_types_contract(app: str) -> None:
         expected = start_marker + "          types { }\n          default_type text/html;"
         if not block.startswith(expected) or block.count("types { }") != 1:
             fail(f"Named HTML denial location does not reset inherited MIME mappings: {name}.")
+
+
+def validate_login_code_denial_contract(verifier: str) -> None:
+    expected = (
+        '    if local_status != 404 or any(pattern.search(local_body) for pattern in FORBIDDEN) '
+        'or VISIBLE_UPSTREAM.search(local_body):\n'
+        '        raise RuntimeError("Disabled local email-code login was not hidden by the pinned not-found boundary.")'
+    )
+    if verifier.count(expected) != 1 or "local_status != 403" in verifier:
+        fail("Local email-code denial does not match the pinned not-found controller boundary.")
 
 
 def validate_template() -> None:
@@ -2134,6 +2145,7 @@ def validate_secrets_and_workflows() -> None:
     authentication_state = read("scripts/authentication-state.py")
     producer_probe = read("scripts/probe-website-forums-producer.py")
     connect_fixture = read("scripts/verify-discourse-connect.py")
+    validate_login_code_denial_contract(connect_fixture)
     sensitive_log_verifier = read("scripts/verify-sensitive-log-redaction.rb")
     finalizer = read("scripts/finalize-member-rollout.sh")
     require_text(

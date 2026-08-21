@@ -358,6 +358,17 @@ class AdminConfirmationMailer < ActionMailer::Base
   end
 end
 '''
+PINNED_LOGIN_CODE_DENIAL_METHOD = b'''  def ensure_login_code_allowed
+    if !UpcomingChanges.enabled_for_user?(:enable_local_logins_via_code, current_user)
+      raise Discourse::NotFound
+    end
+    # Code login is a delivery variant of email login, so it also requires
+    # `enable_local_logins_via_email` (checked via `check_login_via_email`).
+    check_local_login_allowed(check_login_via_email: true)
+    redirect_to path("/") if current_user
+  end
+
+'''
 PINNED_ADMIN_CONFIRMATION_CREATE_BLOCK = b'''  def create_confirmation
     guardian = Guardian.new(@performed_by)
     guardian.ensure_can_grant_admin!(@target_user)
@@ -913,6 +924,11 @@ def verify_opensearch_controller_method(source: bytes) -> None:
     )
 
 
+def verify_login_code_denial_semantics(source: bytes) -> None:
+    if source.count(PINNED_LOGIN_CODE_DENIAL_METHOD) != 1:
+        raise RuntimeError("Pinned local email-code denial semantics changed.")
+
+
 def verify_opensearch_semantics(core: dict[str, bytes]) -> None:
     for path, (expected_bytes, expected_sha256) in PINNED_OPENSEARCH_EVIDENCE.items():
         source = core.get(path)
@@ -1155,10 +1171,13 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
             b"Jobs.enqueue(:critical_user_email, type: \"admin_login\"",
         ),
     )
+    session_controller = core["app/controllers/session_controller.rb"]
+    verify_login_code_denial_semantics(session_controller)
     require(
         core,
         "app/controllers/session_controller.rb",
         (
+            b"before_action :ensure_login_code_allowed, only: %i[create_login_code verify_login_code]",
             b"def email_login_info",
             b"def email_login",
             b"check_local_login_allowed(user: user, check_login_via_email: true)",

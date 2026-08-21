@@ -630,8 +630,8 @@ def main() -> int:
         {"email": "stage4-fixture@forums.mochirii.com"},
         csrf,
     )
-    if local_status != 403 or any(pattern.search(local_body) for pattern in FORBIDDEN) or VISIBLE_UPSTREAM.search(local_body):
-        raise RuntimeError("Local email login was not explicitly denied.")
+    if local_status != 404 or any(pattern.search(local_body) for pattern in FORBIDDEN) or VISIBLE_UPSTREAM.search(local_body):
+        raise RuntimeError("Disabled local email-code login was not hidden by the pinned not-found boundary.")
     current_status, _current_headers, _current_body = signed_out.get("/session/current.json")
     if current_status != 404:
         raise RuntimeError("The denied local-login session unexpectedly authenticated.")
