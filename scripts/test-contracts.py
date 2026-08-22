@@ -1351,6 +1351,69 @@ def test_https_consumer_fixture_contract() -> None:
     finally:
         VALIDATOR.read = original_read
 
+    contained_activation = (ROOT / "scripts/verify-contained-activation.sh").read_text(
+        encoding="utf-8"
+    )
+    exact_outcome_mutations = (
+        (
+            "scripts/verify-discourse-connect.py",
+            verifier,
+            "    assert_branded_error(status, headers, body, 500)\n",
+            "    # assert_branded_error(status, headers, body, 500)\n"
+            "    assert_branded_error(status, headers, body, 422)\n",
+        ),
+        (
+            "scripts/verify-contained-activation.sh",
+            contained_activation,
+            '("/session/sso_login?sso=Zm9v&sso=YmFy&sig=" + "0" * 64, 500),\n',
+            '# ("/session/sso_login?sso=Zm9v&sso=YmFy&sig=" + "0" * 64, 500),\n'
+            '("/session/sso_login?sso=Zm9v&sso=YmFy&sig=" + "0" * 64, 422),\n',
+        ),
+    )
+    for relative, source, current, hostile in exact_outcome_mutations:
+        candidate = source.replace(current, hostile, 1)
+        if candidate == source:
+            raise RuntimeError("Pinned consumer outcome hostile mutation anchor is absent.")
+        if relative == "scripts/verify-discourse-connect.py":
+            try:
+                VALIDATOR.validate_https_consumer_fixture_contract(candidate)
+            except RuntimeError:
+                continue
+            raise RuntimeError("Fixture validator accepted a decoy-backed consumer outcome mutation.")
+        original_read = VALIDATOR.read
+        try:
+            VALIDATOR.read = (
+                lambda path, relative=relative, candidate=candidate: candidate
+                if path == relative
+                else original_read(path)
+            )
+            try:
+                VALIDATOR.validate_secrets_and_workflows()
+            except RuntimeError:
+                continue
+            raise RuntimeError("Repository validator accepted a decoy-backed consumer outcome mutation.")
+        finally:
+            VALIDATOR.read = original_read
+
+    private_headers = {
+        "cache-control": ["private, no-store, max-age=0"],
+        "expires": ["0"],
+        "pragma": ["no-cache"],
+        "referrer-policy": ["no-referrer"],
+    }
+    branded_body = b"<html><body>Mochirii Forums</body></html>"
+    CONNECT_FIXTURE.assert_branded_error(500, private_headers, branded_body, 500)
+    for status, headers, body, expected in (
+        (422, private_headers, branded_body, 500),
+        (500, {**private_headers, "cache-control": ["public"]}, branded_body, 500),
+        (500, private_headers, b"<html><body>Request unavailable</body></html>", 500),
+    ):
+        try:
+            CONNECT_FIXTURE.assert_branded_error(status, headers, body, expected)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Hostile consumer response assertion accepted a wrong status or public response.")
+
     member_session = json.dumps(
         {"current_user": {"username": "mochirii-s4-test", "admin": False}},
         separators=(",", ":"),

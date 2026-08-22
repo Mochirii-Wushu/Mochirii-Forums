@@ -92,16 +92,36 @@ completed = subprocess.run(
 if completed.returncode != 0:
     raise RuntimeError("contained consumer signature verification failed")
 cookie = cookie_header.split(";", 1)[0]
-for hostile in (
-    "/session/sso_login?sso=Zm9v&sig=" + "0" * 64,
-    "/session/sso_login?sso=Zm9v&sso=YmFy&sig=" + "0" * 64,
-    "/session/sso_login?sso=%25&sig=malformed",
+# These statuses are the exact pinned built-in consumer contract. In
+# particular, Rack represents two valued sso fields as an Array and the pinned
+# consumer fails closed with its branded 500 response; no authentication parser
+# override is installed.
+for hostile, expected_status in (
+    ("/session/sso_login?sso=Zm9v&sig=" + "0" * 64, 422),
+    ("/session/sso_login?sso=Zm9v&sso=YmFy&sig=" + "0" * 64, 500),
+    ("/session/sso_login?sso=Zm9v&sig=" + "0" * 64 + "&sig=" + "1" * 64, 422),
+    ("/session/sso_login?sso=%25&sig=malformed", 422),
 ):
     hostile_status, hostile_headers, hostile_body = request(hostile, cookie)
     cache = (hostile_headers.get("Cache-Control") or hostile_headers.get("cache-control") or "").lower()
     referrer = (hostile_headers.get("Referrer-Policy") or hostile_headers.get("referrer-policy") or "").lower()
-    if hostile_status != 419 or "no-store" not in cache or referrer != "no-referrer" or b"Mochirii" not in hostile_body or FORBIDDEN.search(hostile_body):
+    pragma = (hostile_headers.get("Pragma") or hostile_headers.get("pragma") or "").lower()
+    expires = (hostile_headers.get("Expires") or hostile_headers.get("expires") or "").strip()
+    if (
+        hostile_status != expected_status
+        or "private" not in cache
+        or "no-store" not in cache
+        or "max-age=0" not in cache
+        or referrer != "no-referrer"
+        or pragma != "no-cache"
+        or expires != "0"
+        or b"Mochirii" not in hostile_body
+        or FORBIDDEN.search(hostile_body)
+    ):
         raise RuntimeError("contained consumer hostile response escaped its private Mochirii boundary")
+current_status, _current_headers, _current_body = request("/session/current.json", cookie)
+if current_status != 404:
+    raise RuntimeError("contained hostile consumer requests unexpectedly authenticated")
 PY
 
 bash "${release_dir}/scripts/verify-runtime-assets.sh" "${commit}" --require-container >/dev/null 2>&1 || fail "Contained activation assets changed during verification."

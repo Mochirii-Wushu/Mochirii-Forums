@@ -198,7 +198,8 @@ CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78a
 APP_TEMPLATE_SHA256 = "be18aec37434153d19a05d3a59ab5372d43eab4fa87ab57761637140fc599f8e"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "15e587a43c7d3c8a0cd149e86bce653907c1708430180364ded1a430f23e0322"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "be6068509232958fafe35fa77b24ce2220676b903fad16a0e89635291e6055b7"
+CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "f5080a2b9cae3cf493383334a05390bd70d62ad31f7bfe3f13befff4e7c33024"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
 HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "b6563cada14a3996586b06409a20a38f4f30cd69a842954afcf1cbdd8066d23a"
@@ -2229,8 +2230,8 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         "Assign,Assign,If,Assign,Expr,If,Expr,Expr,Assign,Assign,If,Assign,If,Assign,If,"
         "Assign,Assign,Assign,Assign,Assign,Assign,If,Assign,Expr,Expr,Expr,Assign,Expr,"
         "Assign,Assign,Assign,Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,Assign,Assign,"
-        "Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,"
-        "Assign,Assign,Assign,If,Expr,Expr"
+        "Expr,Assign,Assign,Assign,Expr,Assign,Expr,Assign,If,Assign,Assign,Assign,Expr,Assign,Expr,"
+        "Assign,Assign,Assign,Assign,If,Expr,Expr"
     ).split(",")
     if len(verify_functions) != 1:
         fail("DiscourseConnect fixture verification function differs.")
@@ -2309,6 +2310,23 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         "verify_admin_email_recovery(args.port, valid)\n"
         "assert_callback_logs_redacted()\n"
     ).body
+    expected_duplicate_callback_block = ast.parse(
+        '''duplicated = Session(args.port)
+duplicate_encoded, duplicate_signature = callback(request_nonce(duplicated, secret), secret)
+duplicate_query = (
+    "/session/sso_login?"
+    + urlencode({"sso": duplicate_encoded})
+    + "&sso=%3C&"
+    + urlencode({"sig": duplicate_signature})
+)
+callback_path(duplicate_encoded, duplicate_signature)
+status, headers, body = duplicated.get(duplicate_query)
+assert_branded_error(status, headers, body, 500)
+current_status, _current_headers, _current_body = duplicated.get("/session/current.json")
+if current_status != 404:
+    raise RuntimeError("The denied duplicate consumer callback unexpectedly authenticated.")
+'''
+    ).body
     member_session_blocks = [
         verify_function.body[index:index + len(expected_member_session_block)]
         for index in range(len(verify_function.body) - len(expected_member_session_block) + 1)
@@ -2327,7 +2345,20 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         ]
         == [ast.dump(node, include_attributes=False) for node in expected_admin_recovery_call_block]
     ]
-    if len(member_session_blocks) != 1 or len(admin_recovery_call_blocks) != 1:
+    duplicate_callback_blocks = [
+        verify_function.body[index:index + len(expected_duplicate_callback_block)]
+        for index in range(len(verify_function.body) - len(expected_duplicate_callback_block) + 1)
+        if [
+            ast.dump(node, include_attributes=False)
+            for node in verify_function.body[index:index + len(expected_duplicate_callback_block)]
+        ]
+        == [ast.dump(node, include_attributes=False) for node in expected_duplicate_callback_block]
+    ]
+    if (
+        len(member_session_blocks) != 1
+        or len(admin_recovery_call_blocks) != 1
+        or len(duplicate_callback_blocks) != 1
+    ):
         fail("DiscourseConnect fixture session-envelope call-site contract differs.")
     verify_symbol_tables = [
         table
@@ -2408,7 +2439,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         )
         or name_call_counts
         != {
-            "RuntimeError": 7,
+            "RuntimeError": 8,
             "Session": 10,
             "VisibleText": 1,
             "any": 2,
@@ -2437,7 +2468,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
             "decode": 2,
             "encode": 4,
             "feed": 1,
-            "get": 16,
+            "get": 17,
             "hexdigest": 2,
             "issubset": 1,
             "join": 4,
@@ -3394,6 +3425,12 @@ def validate_secrets_and_workflows() -> None:
         fail("DiscourseConnect fixture verifier differs from the exact reviewed source digest.")
     validate_login_code_denial_contract(connect_fixture)
     validate_https_consumer_fixture_contract(connect_fixture)
+    contained_activation_fixture = read("scripts/verify-contained-activation.sh")
+    if (
+        hashlib.sha256(contained_activation_fixture.encode("utf-8")).hexdigest()
+        != CONTAINED_ACTIVATION_VERIFIER_SHA256
+    ):
+        fail("Contained activation fixture differs from the exact reviewed source digest.")
     admin_recovery_fixture = read("scripts/prepare-admin-recovery-fixture.rb")
     sensitive_log_verifier = read("scripts/verify-sensitive-log-redaction.rb")
     if hashlib.sha256(admin_recovery_fixture.encode("utf-8")).hexdigest() != ADMIN_RECOVERY_FIXTURE_SHA256:

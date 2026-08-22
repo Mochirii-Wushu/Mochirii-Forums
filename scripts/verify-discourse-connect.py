@@ -222,9 +222,26 @@ def callback_path(encoded: str, signature: str) -> str:
     return "/session/sso_login?" + urlencode({"sso": encoded, "sig": signature})
 
 
-def assert_branded_error(status: int, body: bytes, expected: int) -> None:
+def assert_branded_error(
+    status: int,
+    headers: dict[str, list[str]],
+    body: bytes,
+    expected: int,
+) -> None:
     if status != expected:
         raise RuntimeError(f"Hostile consumer fixture returned HTTP {status}, expected {expected}.")
+    cache_control = {
+        token.strip().lower()
+        for value in headers.get("cache-control", [])
+        for token in value.split(",")
+    }
+    if (
+        ",".join(headers.get("referrer-policy", [])).lower() != "no-referrer"
+        or not {"private", "no-store", "max-age=0"}.issubset(cache_control)
+        or ",".join(headers.get("pragma", [])).lower() != "no-cache"
+        or ",".join(headers.get("expires", [])).strip() != "0"
+    ):
+        raise RuntimeError("Hostile consumer response escaped its private response-header boundary.")
     if b"Mochirii" not in body:
         raise RuntimeError("Hostile consumer response is not Mochirii-branded.")
     if any(pattern.search(body) for pattern in FORBIDDEN):
@@ -751,25 +768,25 @@ def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:
     )
     verify_fixture_user()
     verify_member_branding(valid)
-    status, _headers, body = valid.get(callback_path(encoded, signature))
-    assert_branded_error(status, body, 419)
+    status, headers, body = valid.get(callback_path(encoded, signature))
+    assert_branded_error(status, headers, body, 419)
 
     cross_source = Session(args.port)
     cross_encoded, cross_signature = callback(request_nonce(cross_source, secret), secret)
-    status, _headers, body = Session(args.port).get(callback_path(cross_encoded, cross_signature))
-    assert_branded_error(status, body, 419)
+    status, headers, body = Session(args.port).get(callback_path(cross_encoded, cross_signature))
+    assert_branded_error(status, headers, body, 419)
 
     invalid = Session(args.port)
     invalid_encoded, _valid_signature = callback(request_nonce(invalid, secret), secret)
-    status, _headers, body = invalid.get(callback_path(invalid_encoded, "0" * 64))
-    assert_branded_error(status, body, 422)
+    status, headers, body = invalid.get(callback_path(invalid_encoded, "0" * 64))
+    assert_branded_error(status, headers, body, 422)
 
     malformed = Session(args.port)
     request_nonce(malformed, secret)
     malformed_value = "<"
     malformed_signature = hmac.new(secret, malformed_value.encode("ascii"), hashlib.sha256).hexdigest()
-    status, _headers, body = malformed.get(callback_path(malformed_value, malformed_signature))
-    assert_branded_error(status, body, 422)
+    status, headers, body = malformed.get(callback_path(malformed_value, malformed_signature))
+    assert_branded_error(status, headers, body, 422)
 
     duplicated = Session(args.port)
     duplicate_encoded, duplicate_signature = callback(request_nonce(duplicated, secret), secret)
@@ -780,15 +797,21 @@ def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:
         + urlencode({"sig": duplicate_signature})
     )
     callback_path(duplicate_encoded, duplicate_signature)
-    status, _headers, body = duplicated.get(duplicate_query)
-    assert_branded_error(status, body, 422)
+    status, headers, body = duplicated.get(duplicate_query)
+    # The pinned Rack parser turns two valued sso fields into an Array. The
+    # pinned consumer fails closed with its branded 500 response before it can
+    # authenticate; no custom parser or authentication override is installed.
+    assert_branded_error(status, headers, body, 500)
+    current_status, _current_headers, _current_body = duplicated.get("/session/current.json")
+    if current_status != 404:
+        raise RuntimeError("The denied duplicate consumer callback unexpectedly authenticated.")
 
     expired = Session(args.port)
     expired_nonce = request_nonce(expired, secret)
     expired_encoded, expired_signature = callback(expired_nonce, secret)
     expire_nonce(expired_nonce)
-    status, _headers, body = expired.get(callback_path(expired_encoded, expired_signature))
-    assert_branded_error(status, body, 419)
+    status, headers, body = expired.get(callback_path(expired_encoded, expired_signature))
+    assert_branded_error(status, headers, body, 419)
 
     unexpected_payload = base64.b64encode(("mochirii-stage4-unexpected-error-" + secrets.token_hex(16)).encode("ascii")).decode("ascii")
     unexpected_signature = hmac.new(secret, unexpected_payload.encode("ascii"), hashlib.sha256).hexdigest()
