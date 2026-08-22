@@ -1471,6 +1471,8 @@ def test_https_consumer_fixture_contract() -> None:
         else:
             raise RuntimeError("Nonce status diagnostic accepted a non-redirect consumer response.")
 
+    pacing_events: list[tuple[str, float | None]] = []
+
     class MetadataResponse:
         def __init__(self, headers: list[tuple[str, str]]) -> None:
             self.status = 404
@@ -1488,6 +1490,7 @@ def test_https_consumer_fixture_contract() -> None:
         def __init__(self, host: str, port: int, *, timeout: int) -> None:
             if host != "127.0.0.1" or port != 18080 or timeout != 20:
                 raise RuntimeError("Consumer response-metadata connection fixture changed.")
+            pacing_events.append(("connect", None))
 
         def request(self, method: str, path: str, *, body, headers: dict[str, str]) -> None:
             if method != "GET" or path != "/metadata-fixture" or body is not None or not headers:
@@ -1500,8 +1503,10 @@ def test_https_consumer_fixture_contract() -> None:
             return None
 
     original_connection = CONNECT_FIXTURE.http.client.HTTPConnection
+    original_sleep = CONNECT_FIXTURE.time.sleep
     try:
         CONNECT_FIXTURE.http.client.HTTPConnection = MetadataConnection
+        CONNECT_FIXTURE.time.sleep = lambda seconds: pacing_events.append(("sleep", seconds))
         metadata_cases = (
             (
                 [("X-Discourse-Route", "fixture")],
@@ -1529,8 +1534,110 @@ def test_https_consumer_fixture_contract() -> None:
                     raise RuntimeError("Consumer response-metadata diagnostic is not fixed and redacted.") from error
             else:
                 raise RuntimeError("Consumer response-metadata diagnostic accepted prohibited identity.")
+        expected_pacing = [
+            event
+            for _case in metadata_cases
+            for event in (
+                ("sleep", CONNECT_FIXTURE.REQUEST_INTERVAL_SECONDS),
+                ("connect", None),
+            )
+        ]
+        if (
+            CONNECT_FIXTURE.REQUEST_INTERVAL_SECONDS != 0.350
+            or pacing_events != expected_pacing
+        ):
+            raise RuntimeError("Consumer fixture requests are not deterministically paced before connection.")
     finally:
         CONNECT_FIXTURE.http.client.HTTPConnection = original_connection
+        CONNECT_FIXTURE.time.sleep = original_sleep
+
+    class PacingResponse:
+        status = 204
+        headers: list[tuple[str, str]] = []
+
+        def getheaders(self) -> list[tuple[str, str]]:
+            return self.headers
+
+        def read(self, _maximum: int) -> bytes:
+            return b""
+
+    pacing_events = []
+    pacing_requests: list[tuple[str, str]] = []
+
+    class PacingConnection:
+        def __init__(self, host: str, port: int, *, timeout: int) -> None:
+            if host != "127.0.0.1" or port != 18080 or timeout != 20:
+                raise RuntimeError("Consumer pacing connection fixture changed.")
+            pacing_events.append(("connect", None))
+
+        def request(self, method: str, path: str, *, body, headers: dict[str, str]) -> None:
+            if not headers:
+                raise RuntimeError("Consumer pacing request headers were absent.")
+            pacing_events.append(("request", None))
+            pacing_requests.append((method, path))
+
+        def getresponse(self) -> PacingResponse:
+            return PacingResponse()
+
+        def close(self) -> None:
+            return None
+
+    original_connection = CONNECT_FIXTURE.http.client.HTTPConnection
+    original_sleep = CONNECT_FIXTURE.time.sleep
+    try:
+        CONNECT_FIXTURE.http.client.HTTPConnection = PacingConnection
+        CONNECT_FIXTURE.time.sleep = lambda seconds: pacing_events.append(("sleep", seconds))
+        CONNECT_FIXTURE.Session(18080).get("/paced-get")
+        CONNECT_FIXTURE.Session(18080).post_form(
+            "/paced-post",
+            {"email": "fixture@forums.mochirii.com"},
+            "a" * 32,
+        )
+        CONNECT_FIXTURE.Session(18080).request("PUT", "/paced-direct")
+        if pacing_requests != [
+            ("GET", "/paced-get"),
+            ("POST", "/paced-post"),
+            ("PUT", "/paced-direct"),
+        ]:
+            raise RuntimeError("Consumer fixture pacing does not cover every request entrypoint.")
+        expected_pacing = [
+            event
+            for _request in pacing_requests
+            for event in (
+                ("sleep", CONNECT_FIXTURE.REQUEST_INTERVAL_SECONDS),
+                ("connect", None),
+                ("request", None),
+            )
+        ]
+        if pacing_events != expected_pacing:
+            raise RuntimeError("Consumer fixture pacing is not immediately before every connection.")
+
+        PacingResponse.status = 429
+        pacing_events.clear()
+        pacing_requests.clear()
+        try:
+            CONNECT_FIXTURE.request_nonce(CONNECT_FIXTURE.Session(18080), b"0" * 64)
+        except RuntimeError as error:
+            if str(error) != (
+                "Built-in consumer did not issue its signed producer request "
+                "[response=rate-limited; retry-after=absent]."
+            ):
+                raise RuntimeError("Paced rate-limit diagnostic changed.") from error
+        else:
+            raise RuntimeError("Paced consumer request retried or accepted a rate-limit denial.")
+        if (
+            pacing_requests != [("GET", "/session/sso?return_path=%2Flatest")]
+            or pacing_events != [
+                ("sleep", CONNECT_FIXTURE.REQUEST_INTERVAL_SECONDS),
+                ("connect", None),
+                ("request", None),
+            ]
+        ):
+            raise RuntimeError("Rate-limit denial was not one exactly paced consumer request.")
+    finally:
+        PacingResponse.status = 204
+        CONNECT_FIXTURE.http.client.HTTPConnection = original_connection
+        CONNECT_FIXTURE.time.sleep = original_sleep
 
     member_session = json.dumps(
         {"current_user": {"username": "mochirii-s4-test", "admin": False}},

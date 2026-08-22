@@ -16,6 +16,7 @@ import secrets
 import signal
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable
 from http.cookies import SimpleCookie
 from html.parser import HTMLParser
@@ -24,6 +25,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 
 MAX_BYTES = 2 * 1024 * 1024
+REQUEST_INTERVAL_SECONDS = 0.350
 FORBIDDEN = (
     re.compile(rb'<meta\s+name=["\']generator["\']\s+content=["\']Discourse', re.I),
     re.compile(rb'>\s*Powered by Discourse\s*<', re.I),
@@ -114,6 +116,10 @@ class Session:
             headers["Cookie"] = "; ".join(f"{name}={value}" for name, value in self.cookies.items())
         if extra_headers:
             headers.update(extra_headers)
+        # Exercise the real rate-limited boundary without bypassing it or
+        # retrying a denial. Stay below both pinned 12/second and 200/minute
+        # request rates with margin.
+        time.sleep(REQUEST_INTERVAL_SECONDS)
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=20)
         try:
             connection.request(method, path, body=body, headers=headers)
