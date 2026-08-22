@@ -567,6 +567,38 @@ def assert_local_login_denied(session: Session) -> None:
         raise RuntimeError("Denied ordinary local login unexpectedly authenticated.")
 
 
+def assert_admin_recovery_token_invalid(session: Session, path: str, message: str) -> None:
+    status, headers, _body = session.get(path)
+    if status == 403:
+        return
+    category = {
+        400: "bad-request",
+        401: "unauthorized",
+        404: "not-found",
+        408: "request-timeout",
+        419: "private-denial",
+        422: "unprocessable",
+        429: "rate-limited",
+        500: "internal-error",
+        502: "bad-gateway",
+        503: "unavailable",
+        504: "gateway-timeout",
+    }.get(status)
+    if category is None:
+        if 200 <= status < 300:
+            category = "unexpected-success"
+        elif 300 <= status < 400:
+            category = "unexpected-redirect"
+        elif 400 <= status < 500:
+            category = "other-client-error"
+        elif 500 <= status < 600:
+            category = "other-server-error"
+        else:
+            category = "invalid-status"
+    retry_after = "present" if "retry-after" in headers else "absent"
+    raise RuntimeError(f"{message} [response={category}; retry-after={retry_after}]")
+
+
 def verify_admin_email_recovery(port: int, member_session: Session) -> None:
     superseded_token = b""
     token = b""
@@ -583,9 +615,11 @@ def verify_admin_email_recovery(port: int, member_session: Session) -> None:
         register_admin_recovery_markers((superseded_token, token))
         superseded_path = "/session/email-login/" + quote(superseded_token.decode("ascii"), safe="")
         obsolete = Session(port)
-        obsolete_status, _obsolete_headers, _obsolete_body = obsolete.get(superseded_path)
-        if obsolete_status not in {403, 404}:
-            raise RuntimeError("A superseded administrator recovery token remained valid.")
+        assert_admin_recovery_token_invalid(
+            obsolete,
+            superseded_path,
+            "A superseded administrator recovery token remained valid.",
+        )
         path = "/session/email-login/" + quote(token.decode("ascii"), safe="")
         csrf_status, _csrf_headers, csrf_body = recovered.get("/session/csrf.json")
         csrf = json_object(csrf_body, "admin recovery CSRF").get("csrf") if csrf_status == 200 else None
@@ -607,9 +641,11 @@ def verify_admin_email_recovery(port: int, member_session: Session) -> None:
             require_admin=True,
         )
         replay = Session(port)
-        replay_status, _replay_headers, _replay_body = replay.get(path)
-        if replay_status not in {403, 404}:
-            raise RuntimeError("Consumed admin recovery token remained reusable.")
+        assert_admin_recovery_token_invalid(
+            replay,
+            path,
+            "Consumed admin recovery token remained reusable.",
+        )
         assert_local_login_denied(Session(port))
         assert_admin_login_form_denied(recovered)
     finally:

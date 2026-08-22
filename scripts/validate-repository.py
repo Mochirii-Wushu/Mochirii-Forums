@@ -198,7 +198,7 @@ CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78a
 APP_TEMPLATE_SHA256 = "068b3e2d0ff9edf5f03a508575706ca4347d39e8af1e8448654198dad67ef62f"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "a723f6030e59d44e1f4e417112deae257d4b34095228011d11982b5b6e1ec625"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "4faf0814055b54931608011f51afaea8e2300ea6a115013d8beba0ccb913fd57"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -2022,6 +2022,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         ("function", "admin_recovery_fixture"),
         ("function", "assert_admin_login_form_denied"),
         ("function", "assert_local_login_denied"),
+        ("function", "assert_admin_recovery_token_invalid"),
         ("function", "verify_admin_email_recovery"),
         ("function", "json_object"),
         ("function", "verify_exact_fixture_session"),
@@ -2230,6 +2231,11 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "verify_admin_email_recovery"
     ]
+    invalid_admin_token_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "assert_admin_recovery_token_invalid"
+    ]
     expected_verify_statement_types = (
         "Assign,Assign,If,Assign,Expr,If,Expr,Expr,Assign,Assign,If,Assign,If,Assign,If,"
         "Assign,Assign,Assign,Assign,Assign,Assign,If,Assign,Expr,Expr,Expr,Assign,Expr,"
@@ -2243,6 +2249,46 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     if len(admin_recovery_functions) != 1:
         fail("DiscourseConnect administrator recovery verification function differs.")
     admin_recovery_function = admin_recovery_functions[0]
+    if len(invalid_admin_token_functions) != 1:
+        fail("DiscourseConnect invalid administrator recovery token verifier differs.")
+    invalid_admin_token_function = invalid_admin_token_functions[0]
+    expected_invalid_admin_token_function = ast.parse(
+        '''def assert_admin_recovery_token_invalid(session: Session, path: str, message: str) -> None:
+    status, headers, _body = session.get(path)
+    if status == 403:
+        return
+    category = {
+        400: "bad-request",
+        401: "unauthorized",
+        404: "not-found",
+        408: "request-timeout",
+        419: "private-denial",
+        422: "unprocessable",
+        429: "rate-limited",
+        500: "internal-error",
+        502: "bad-gateway",
+        503: "unavailable",
+        504: "gateway-timeout",
+    }.get(status)
+    if category is None:
+        if 200 <= status < 300:
+            category = "unexpected-success"
+        elif 300 <= status < 400:
+            category = "unexpected-redirect"
+        elif 400 <= status < 500:
+            category = "other-client-error"
+        elif 500 <= status < 600:
+            category = "other-server-error"
+        else:
+            category = "invalid-status"
+    retry_after = "present" if "retry-after" in headers else "absent"
+    raise RuntimeError(f"{message} [response={category}; retry-after={retry_after}]")
+'''
+    ).body[0]
+    if ast.dump(invalid_admin_token_function, include_attributes=False) != ast.dump(
+        expected_invalid_admin_token_function, include_attributes=False
+    ):
+        fail("DiscourseConnect invalid administrator recovery token control flow differs.")
     expected_admin_recovery_function = ast.parse(
         '''def verify_admin_email_recovery(port: int, member_session: Session) -> None:
     superseded_token = b""
@@ -2260,9 +2306,11 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         register_admin_recovery_markers((superseded_token, token))
         superseded_path = "/session/email-login/" + quote(superseded_token.decode("ascii"), safe="")
         obsolete = Session(port)
-        obsolete_status, _obsolete_headers, _obsolete_body = obsolete.get(superseded_path)
-        if obsolete_status not in {403, 404}:
-            raise RuntimeError("A superseded administrator recovery token remained valid.")
+        assert_admin_recovery_token_invalid(
+            obsolete,
+            superseded_path,
+            "A superseded administrator recovery token remained valid.",
+        )
         path = "/session/email-login/" + quote(token.decode("ascii"), safe="")
         csrf_status, _csrf_headers, csrf_body = recovered.get("/session/csrf.json")
         csrf = json_object(csrf_body, "admin recovery CSRF").get("csrf") if csrf_status == 200 else None
@@ -2284,9 +2332,11 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
             require_admin=True,
         )
         replay = Session(port)
-        replay_status, _replay_headers, _replay_body = replay.get(path)
-        if replay_status not in {403, 404}:
-            raise RuntimeError("Consumed admin recovery token remained reusable.")
+        assert_admin_recovery_token_invalid(
+            replay,
+            path,
+            "Consumed admin recovery token remained reusable.",
+        )
         assert_local_login_denied(Session(port))
         assert_admin_login_form_denied(recovered)
     finally:

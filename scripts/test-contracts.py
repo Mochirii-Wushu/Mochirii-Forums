@@ -1208,6 +1208,16 @@ def test_https_consumer_fixture_contract() -> None:
             "    verify_admin_email_recovery(args.port, valid)\n",
             "    verify_admin_email_recovery(args.port, signed_out)\n",
         ),
+        (
+            "    if status == 403:\n"
+            "        return\n",
+            "    if status in {200, 403}:\n"
+            "        return\n",
+        ),
+        (
+            '    retry_after = "present" if "retry-after" in headers else "absent"\n',
+            '    retry_after = "absent"\n',
+        ),
     )
     for current, hostile in hostile_mutations:
         candidate = verifier.replace(current, hostile, 1)
@@ -1664,6 +1674,82 @@ def test_https_consumer_fixture_contract() -> None:
         PacingResponse.status = 204
         CONNECT_FIXTURE.http.client.HTTPConnection = original_connection
         CONNECT_FIXTURE.time.sleep = original_sleep
+
+    invalid_token_path = "/session/email-login/fixture-invalid-token"
+    invalid_token_message = "A superseded administrator recovery token remained valid."
+
+    class InvalidAdminTokenSession:
+        def __init__(self, status: int, headers: dict[str, list[str]], body: bytes) -> None:
+            self.status = status
+            self.headers = headers
+            self.body = body
+            self.requests: list[str] = []
+
+        def get(self, path: str) -> tuple[int, dict[str, list[str]], bytes]:
+            self.requests.append(path)
+            return self.status, self.headers, self.body
+
+    valid_invalid_token = InvalidAdminTokenSession(
+        403,
+        {},
+        b"MOCHIRII_PRIVATE_FORBIDDEN_BODY_SENTINEL",
+    )
+    CONNECT_FIXTURE.assert_admin_recovery_token_invalid(
+        valid_invalid_token,
+        invalid_token_path,
+        invalid_token_message,
+    )
+    if valid_invalid_token.requests != [invalid_token_path]:
+        raise RuntimeError("Invalid administrator recovery token verifier request count changed.")
+
+    hostile_invalid_token_responses = (
+        (200, {}, "unexpected-success", "absent"),
+        (302, {}, "unexpected-redirect", "absent"),
+        (400, {}, "bad-request", "absent"),
+        (401, {}, "unauthorized", "absent"),
+        (404, {}, "not-found", "absent"),
+        (408, {}, "request-timeout", "absent"),
+        (418, {}, "other-client-error", "absent"),
+        (419, {}, "private-denial", "absent"),
+        (422, {}, "unprocessable", "absent"),
+        (429, {"retry-after": ["MOCHIRII_PRIVATE_RETRY_SENTINEL"]}, "rate-limited", "present"),
+        (500, {}, "internal-error", "absent"),
+        (501, {}, "other-server-error", "absent"),
+        (502, {}, "bad-gateway", "absent"),
+        (503, {}, "unavailable", "absent"),
+        (504, {}, "gateway-timeout", "absent"),
+        (700, {}, "invalid-status", "absent"),
+    )
+    for status, headers, category, retry_after in hostile_invalid_token_responses:
+        hostile_session = InvalidAdminTokenSession(
+            status,
+            headers,
+            b'{"can_login":false,"error":"MOCHIRII_PRIVATE_INVALID_TOKEN_SENTINEL"}',
+        )
+        try:
+            CONNECT_FIXTURE.assert_admin_recovery_token_invalid(
+                hostile_session,
+                invalid_token_path,
+                invalid_token_message,
+            )
+        except RuntimeError as error:
+            expected = (
+                f"{invalid_token_message} "
+                f"[response={category}; retry-after={retry_after}]"
+            )
+            if (
+                str(error) != expected
+                or "PRIVATE" in str(error)
+                or len(str(error)) > 192
+                or hostile_session.requests != [invalid_token_path]
+            ):
+                raise RuntimeError(
+                    "Invalid administrator recovery token diagnostic is not fixed and redacted."
+                ) from error
+        else:
+            raise RuntimeError(
+                "Invalid administrator recovery token verifier accepted a non-forbidden response."
+            )
 
     member_session = json.dumps(
         {"current_user": {"username": "mochirii-s4-test", "admin": False}},
