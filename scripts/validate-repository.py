@@ -198,7 +198,7 @@ CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78a
 APP_TEMPLATE_SHA256 = "068b3e2d0ff9edf5f03a508575706ca4347d39e8af1e8448654198dad67ef62f"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "1e4c4b6e32cbebfa6cf3c4377ccb2679459b724ae1f34c95ef1e6391f7e802ab"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "2feffe78bd228f2197e9eaa7f7ef1a70b6459a4840e6a7e883712498730fdc22"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -2117,6 +2117,36 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         )
     ):
         fail("DiscourseConnect fixture module-level execution shape differs.")
+    session_classes = [
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Session"
+    ]
+    expected_json_get_method = ast.parse(
+        '''def get_json(self, path: str) -> tuple[int, dict[str, list[str]], bytes]:
+    return self.request(
+        "GET",
+        path,
+        extra_headers={
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+    )
+'''
+    ).body[0]
+    json_get_methods = (
+        [
+            node
+            for node in session_classes[0].body
+            if isinstance(node, ast.FunctionDef) and node.name == "get_json"
+        ]
+        if len(session_classes) == 1
+        else []
+    )
+    if (
+        len(json_get_methods) != 1
+        or ast.dump(json_get_methods[0], include_attributes=False)
+        != ast.dump(expected_json_get_method, include_attributes=False)
+    ):
+        fail("DiscourseConnect fixture JSON GET boundary differs.")
     session_functions = [
         node
         for node in tree.body
@@ -2254,7 +2284,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     invalid_admin_token_function = invalid_admin_token_functions[0]
     expected_invalid_admin_token_function = ast.parse(
         '''def assert_admin_recovery_token_invalid(session: Session, path: str, message: str) -> None:
-    status, headers, body = session.get(path)
+    status, headers, body = session.get_json(path)
     if status == 403:
         return
     success_detail = ""
@@ -2376,7 +2406,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         csrf = json_object(csrf_body, "admin recovery CSRF").get("csrf") if csrf_status == 200 else None
         if not isinstance(csrf, str) or len(csrf) < 32:
             raise RuntimeError("Admin recovery fixture did not obtain a CSRF token.")
-        info_status, _info_headers, info_body = recovered.get(path)
+        info_status, _info_headers, info_body = recovered.get_json(path)
         info = json_object(info_body, "admin recovery token") if info_status == 200 else {}
         if info.get("can_login") is not True or info.get("token_email") != "stage4-fixture@forums.mochirii.com":
             raise RuntimeError("Pinned admin email-login bypass did not accept the exact fixture administrator.")

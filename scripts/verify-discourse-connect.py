@@ -193,6 +193,16 @@ class Session:
     def get(self, path: str) -> tuple[int, dict[str, list[str]], bytes]:
         return self.request("GET", path)
 
+    def get_json(self, path: str) -> tuple[int, dict[str, list[str]], bytes]:
+        return self.request(
+            "GET",
+            path,
+            extra_headers={
+                "Accept": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+
     def post_form(
         self, path: str, fields: dict[str, str], csrf: str
     ) -> tuple[int, dict[str, list[str]], bytes]:
@@ -568,7 +578,7 @@ def assert_local_login_denied(session: Session) -> None:
 
 
 def assert_admin_recovery_token_invalid(session: Session, path: str, message: str) -> None:
-    status, headers, body = session.get(path)
+    status, headers, body = session.get_json(path)
     if status == 403:
         return
     success_detail = ""
@@ -685,7 +695,7 @@ def verify_admin_email_recovery(port: int, member_session: Session) -> None:
         csrf = json_object(csrf_body, "admin recovery CSRF").get("csrf") if csrf_status == 200 else None
         if not isinstance(csrf, str) or len(csrf) < 32:
             raise RuntimeError("Admin recovery fixture did not obtain a CSRF token.")
-        info_status, _info_headers, info_body = recovered.get(path)
+        info_status, _info_headers, info_body = recovered.get_json(path)
         info = json_object(info_body, "admin recovery token") if info_status == 200 else {}
         if info.get("can_login") is not True or info.get("token_email") != "stage4-fixture@forums.mochirii.com":
             raise RuntimeError("Pinned admin email-login bypass did not accept the exact fixture administrator.")

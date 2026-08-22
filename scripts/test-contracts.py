@@ -1101,6 +1101,25 @@ def test_https_consumer_fixture_contract() -> None:
     hostile_mutations = (
         ('"X-Forwarded-Proto": "https"', '"X-Forwarded-Proto": "http"'),
         (
+            '                "Accept": "application/json",\n'
+            '                "X-Requested-With": "XMLHttpRequest",\n',
+            '                "Accept": "text/html",\n'
+            '                "X-Requested-With": "XMLHttpRequest",\n',
+        ),
+        (
+            '                "Accept": "application/json",\n'
+            '                "X-Requested-With": "XMLHttpRequest",\n',
+            '                "Accept": "application/json",\n',
+        ),
+        (
+            "    status, headers, body = session.get_json(path)\n",
+            "    status, headers, body = session.get(path)\n",
+        ),
+        (
+            "        info_status, _info_headers, info_body = recovered.get_json(path)\n",
+            "        info_status, _info_headers, info_body = recovered.get(path)\n",
+        ),
+        (
             'ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"',
             'ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"',
         ),
@@ -1609,6 +1628,12 @@ def test_https_consumer_fixture_contract() -> None:
         def request(self, method: str, path: str, *, body, headers: dict[str, str]) -> None:
             if not headers:
                 raise RuntimeError("Consumer pacing request headers were absent.")
+            if path == "/paced-json" and (
+                method != "GET"
+                or headers.get("Accept") != "application/json"
+                or headers.get("X-Requested-With") != "XMLHttpRequest"
+            ):
+                raise RuntimeError("Consumer JSON request metadata changed.")
             pacing_events.append(("request", None))
             pacing_requests.append((method, path))
 
@@ -1624,6 +1649,7 @@ def test_https_consumer_fixture_contract() -> None:
         CONNECT_FIXTURE.http.client.HTTPConnection = PacingConnection
         CONNECT_FIXTURE.time.sleep = lambda seconds: pacing_events.append(("sleep", seconds))
         CONNECT_FIXTURE.Session(18080).get("/paced-get")
+        CONNECT_FIXTURE.Session(18080).get_json("/paced-json")
         CONNECT_FIXTURE.Session(18080).post_form(
             "/paced-post",
             {"email": "fixture@forums.mochirii.com"},
@@ -1632,6 +1658,7 @@ def test_https_consumer_fixture_contract() -> None:
         CONNECT_FIXTURE.Session(18080).request("PUT", "/paced-direct")
         if pacing_requests != [
             ("GET", "/paced-get"),
+            ("GET", "/paced-json"),
             ("POST", "/paced-post"),
             ("PUT", "/paced-direct"),
         ]:
@@ -1685,9 +1712,12 @@ def test_https_consumer_fixture_contract() -> None:
             self.body = body
             self.requests: list[str] = []
 
-        def get(self, path: str) -> tuple[int, dict[str, list[str]], bytes]:
+        def get_json(self, path: str) -> tuple[int, dict[str, list[str]], bytes]:
             self.requests.append(path)
             return self.status, self.headers, self.body
+
+        def get(self, _path: str) -> tuple[int, dict[str, list[str]], bytes]:
+            raise RuntimeError("Administrator recovery token verifier did not request JSON.")
 
     valid_invalid_token = InvalidAdminTokenSession(
         403,
