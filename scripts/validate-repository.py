@@ -195,16 +195,16 @@ checks["narrative_system_user_branded"] =
 '''
 RUNTIME_VERIFIER_SHA256 = "e3af12650a530ba3460fc5dfadda0cbfa2b502d75b40eeb3b6ce847099861017"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "be18aec37434153d19a05d3a59ab5372d43eab4fa87ab57761637140fc599f8e"
+APP_TEMPLATE_SHA256 = "068b3e2d0ff9edf5f03a508575706ca4347d39e8af1e8448654198dad67ef62f"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
 DISCOURSE_CONNECT_VERIFIER_SHA256 = "a723f6030e59d44e1f4e417112deae257d4b34095228011d11982b5b6e1ec625"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
-HOST_NGINX_FILE_VERIFIER_SHA256 = "f5080a2b9cae3cf493383334a05390bd70d62ad31f7bfe3f13befff4e7c33024"
+HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
 HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "b6563cada14a3996586b06409a20a38f4f30cd69a842954afcf1cbdd8066d23a"
-HOST_VERIFY_SOURCE_SHA256 = "c0f7741543a952cd1b808d42e5358a335e6818ccc3343afe1c1246e9b09f4fd9"
-DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "867576c322cd3ed069f77e3c96056e954e5e35f1a113eae80c80c6452b30c98f"
+HOST_VERIFY_SOURCE_SHA256 = "24257ab5e54d8e310b97a88eeaa5137e162c3098f92e1120244fab1e47c86864"
+DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "9aa1279010aac1a5b7c65b6634053792d15c17f788090456660f1a575aa9b98e"
 # Exact normalized server outlet derived from discourse_docker@ed9f680b0df1de28f062de1769d89d22b2644d1b
 # templates/web.ssl.template.yml (2,111 bytes; SHA-256 7a3b819e65104c9178e004772b487fa809ce6b421668dfa1adf330221dda552b).
 PINNED_WEB_SSL_SERVER_OUTLET = '''listen 443 ssl;
@@ -1558,6 +1558,7 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         "Discourse-Actions-Remaining",
         "Discourse-Actions-Max",
         "Discourse-Logged-Out",
+        "Discourse-Track-View-Session-Id-Placeholder",
         "X-Discourse-TrackView",
         "X-Discourse-BrowserPageView",
         "X-Discourse-Cached",
@@ -1719,7 +1720,7 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
             "fe954577f31a53e71e6dca29eea779e00744969834d1b5301873cddee77295dc",
         ),
         "/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc": (
-            "efff4b424cc29b3a0a20ffcef8d6bf67f9bb8c51db55d124012dbdc0cd69d53b",
+            "27d523e877de6bf78fe392fefa47d9f37efe5586716c745848c6c4e9cb880fd4",
         ),
         "/etc/nginx/conf.d/outlets/before-server/20-redirect-http-to-https.conf": (
             "7bb5588965b9122d7dba2a9cf7ff1c5fd9e933b278eacaf0f88176aa8fd72312",

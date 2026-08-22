@@ -905,7 +905,7 @@ EXPECTED_FILE_SHA256 = {
         "fe954577f31a53e71e6dca29eea779e00744969834d1b5301873cddee77295dc",
     ),
     "/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc": (
-        "efff4b424cc29b3a0a20ffcef8d6bf67f9bb8c51db55d124012dbdc0cd69d53b",
+        "27d523e877de6bf78fe392fefa47d9f37efe5586716c745848c6c4e9cb880fd4",
     ),
     "/etc/nginx/conf.d/outlets/before-server/20-redirect-http-to-https.conf": (
         "7bb5588965b9122d7dba2a9cf7ff1c5fd9e933b278eacaf0f88176aa8fd72312",
@@ -1166,7 +1166,7 @@ avatar_required = {
 if len(avatar_directives) != len(avatar_required) or set(avatar_directives) != avatar_required:
     raise SystemExit("cache-accelerated asset response-header boundary differs")
 PY
-for hidden_header in X-Discourse-Route X-Discourse-Username X-Discourse-Crawler-View Discourse-No-Onebox Discourse-Rate-Limit-Error-Code Discourse-Xhr-Redirect Discourse-Actions-Remaining Discourse-Actions-Max Discourse-Logged-Out X-Discourse-TrackView X-Discourse-BrowserPageView X-Discourse-Cached; do
+for hidden_header in X-Discourse-Route X-Discourse-Username X-Discourse-Crawler-View Discourse-No-Onebox Discourse-Rate-Limit-Error-Code Discourse-Xhr-Redirect Discourse-Actions-Remaining Discourse-Actions-Max Discourse-Logged-Out Discourse-Track-View-Session-Id-Placeholder X-Discourse-TrackView X-Discourse-BrowserPageView X-Discourse-Cached; do
   grep -F "proxy_hide_header ${hidden_header};" "${nginx_log}" >/dev/null
 done
 timeout --signal=TERM --kill-after=10s 120s docker exec app bash -lc '

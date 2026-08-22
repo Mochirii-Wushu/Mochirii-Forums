@@ -842,6 +842,7 @@ def test_sensitive_response_header_contract() -> None:
         "Discourse-Actions-Remaining",
         "Discourse-Actions-Max",
         "Discourse-Logged-Out",
+        "Discourse-Track-View-Session-Id-Placeholder",
         "X-Discourse-TrackView",
         "X-Discourse-BrowserPageView",
         "X-Discourse-Cached",

@@ -228,6 +228,7 @@ __MOCHIRII_TLS_RUN__
         proxy_hide_header Discourse-Actions-Remaining;
         proxy_hide_header Discourse-Actions-Max;
         proxy_hide_header Discourse-Logged-Out;
+        proxy_hide_header Discourse-Track-View-Session-Id-Placeholder;
         proxy_hide_header X-Discourse-TrackView;
         proxy_hide_header X-Discourse-BrowserPageView;
         proxy_hide_header X-Discourse-Cached;

@@ -303,6 +303,7 @@ jobs:
               "X-Discourse-Route", "X-Discourse-Username", "X-Discourse-Crawler-View",
               "Discourse-No-Onebox", "Discourse-Rate-Limit-Error-Code", "Discourse-Xhr-Redirect",
               "Discourse-Actions-Remaining", "Discourse-Actions-Max", "Discourse-Logged-Out",
+              "Discourse-Track-View-Session-Id-Placeholder",
               "X-Discourse-TrackView", "X-Discourse-BrowserPageView", "X-Discourse-Cached",
           }
           shared_required = {f"proxy_hide_header {name};" for name in headers}
@@ -372,6 +373,7 @@ jobs:
               b"x-discourse-route", b"x-discourse-username", b"x-discourse-crawler-view",
               b"discourse-no-onebox", b"discourse-rate-limit-error-code", b"discourse-xhr-redirect",
               b"discourse-actions-remaining", b"discourse-actions-max", b"discourse-logged-out",
+              b"discourse-track-view-session-id-placeholder",
               b"x-discourse-trackview", b"x-discourse-browserpageview", b"x-discourse-cached",
           }
           names = set()
