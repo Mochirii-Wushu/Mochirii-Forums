@@ -482,7 +482,9 @@ def test_login_code_denial_contract() -> None:
 def test_sensitive_response_header_contract() -> None:
     app = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
     host_verify = (ROOT / "scripts/verify-host.sh").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/disposable-bootstrap.yml").read_text(encoding="utf-8")
     VALIDATOR.validate_sensitive_response_header_contract(app, host_verify)
+    VALIDATOR.validate_disposable_nginx_response_header_proof(workflow)
     file_start_marker = (
         "timeout --signal=TERM --kill-after=5s 60s docker exec -i app python3 -B - "
         "<<'PY_NGINX_FILES' >/dev/null || fail \"Active nginx configuration files differ "
@@ -675,12 +677,28 @@ def test_sensitive_response_header_contract() -> None:
         "        location ~* ^/session/sso_login(?:\\.[A-Za-z0-9]+)?/?$ {\n",
         '        location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {\n',
     )
+    shared_start_marker = (
+        "      path: /etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc\n"
+        "      contents: |\n"
+    )
+    shared_end_marker = (
+        "  - file:\n"
+        "      path: /etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf\n"
+    )
+    server_scope_start_marker = (
+        "      path: /etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf\n"
+        "      contents: |\n"
+    )
+    server_scope_end_marker = (
+        "  - file:\n"
+        "      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
+    )
     outlet_start_marker = (
         "      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
         "      contents: |\n"
     )
     outlet_start = app.index(outlet_start_marker) + len(outlet_start_marker)
-    outlet_end_marker = "  - file:\n      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
+    outlet_end_marker = "  # Pups replace is a silent no-op when its source is absent, so bind the exact\n"
     outlet_end = app.index(outlet_end_marker, outlet_start)
     server_outlet_start_marker = (
         "      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
@@ -689,6 +707,18 @@ def test_sensitive_response_header_contract() -> None:
     server_outlet_end_marker = "  - file:\n      path: /var/www/discourse/public/403.html\n"
 
     def rendered_nginx(source: str, extra: str = "") -> str:
+        current_shared_start = source.index(shared_start_marker) + len(shared_start_marker)
+        current_shared_end = source.index(shared_end_marker, current_shared_start)
+        current_shared_body = "\n".join(
+            line[8:] if line.startswith("        ") else line
+            for line in source[current_shared_start:current_shared_end].splitlines()
+        )
+        current_server_scope_start = source.index(server_scope_start_marker) + len(server_scope_start_marker)
+        current_server_scope_end = source.index(server_scope_end_marker, current_server_scope_start)
+        current_server_scope_body = "\n".join(
+            line[8:] if line.startswith("        ") else line
+            for line in source[current_server_scope_start:current_server_scope_end].splitlines()
+        )
         current_outlet_start = source.index(outlet_start_marker) + len(outlet_start_marker)
         current_outlet_end = source.index(outlet_end_marker, current_outlet_start)
         current_outlet_body = "\n".join(
@@ -702,12 +732,32 @@ def test_sensitive_response_header_contract() -> None:
             for line in source[current_server_start:current_server_end].splitlines()
         )
         return (
-            "# configuration file /etc/nginx/conf.d/outlets/discourse/20-https.conf:\n"
+            "# configuration file /etc/nginx/conf.d/discourse.conf:\n"
+            + "server {\n"
+            + "  location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|highlight-js|stylesheets|theme-javascripts|favicon/proxied|service-worker|extra-locales/) {\n"
+            + "    brotli_comp_level 6;\n"
+            + '    proxy_ignore_headers "Set-Cookie";\n'
+            + '    proxy_hide_header "Set-Cookie";\n'
+            + '    proxy_hide_header "X-Discourse-Username";\n'
+            + '    proxy_hide_header "X-Runtime";\n'
+            + "    include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\n"
+            + "    proxy_cache one;\n"
+            + '    proxy_cache_key "$scheme,$host,$request_uri";\n'
+            + "    proxy_cache_valid 200 301 302 7d;\n"
+            + "    proxy_cache_bypass $bypass_cache;\n"
+            + "    proxy_pass http://discourse;\n"
+            + "    break;\n"
+            + "  }\n"
+            + "}\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/discourse/20-https.conf:\n"
             + "add_header Strict-Transport-Security 'max-age=31536000';\n"
             + "# configuration file /etc/nginx/conf.d/outlets/discourse/30-ratelimited.conf:\n"
             + "limit_conn connperip 20;\n"
             + "limit_req zone=flood burst=12 nodelay;\n"
             + "limit_req zone=bot burst=100 nodelay;\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc:\n"
+            + current_shared_body
+            + "\n"
             + "\n# configuration file /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf:\n"
             + current_outlet_body
             + "\n"
@@ -729,6 +779,9 @@ def test_sensitive_response_header_contract() -> None:
             + "rewrite (.*) https://forums.mochirii.com$1 permanent;\n"
             + "}\n"
             + "# configuration file /etc/nginx/conf.d/outlets/server/30-offline-page.conf:\n"
+            + "# configuration file /etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf:\n"
+            + current_server_scope_body
+            + "\n"
             + "# configuration file /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf:\n"
             + current_server_body
             + "\n"
@@ -777,6 +830,126 @@ def test_sensitive_response_header_contract() -> None:
                 continue
             raise RuntimeError(f"Sensitive identity route accepted hostile {name} response-header composition.")
 
+    shared_start = app.index(shared_start_marker) + len(shared_start_marker)
+    shared_end = app.index(shared_end_marker, shared_start)
+    public_response_headers = (
+        "X-Discourse-Route",
+        "X-Discourse-Username",
+        "X-Discourse-Crawler-View",
+        "Discourse-No-Onebox",
+        "Discourse-Rate-Limit-Error-Code",
+        "Discourse-Xhr-Redirect",
+        "Discourse-Actions-Remaining",
+        "Discourse-Actions-Max",
+        "Discourse-Logged-Out",
+        "X-Discourse-TrackView",
+        "X-Discourse-BrowserPageView",
+        "X-Discourse-Cached",
+    )
+    shared_hostiles = []
+    for header in public_response_headers:
+        directive = f"        proxy_hide_header {header};\n"
+        position = app.index(directive, shared_start, shared_end)
+        shared_hostiles.extend(
+            (
+                app[:position] + app[position + len(directive):],
+                app[:position] + directive + app[position:],
+                app[:position] + f"        proxy_pass_header {header};\n" + app[position + len(directive):],
+            )
+        )
+    shared_include = "        include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\n"
+    server_scope_start = app.index(server_scope_start_marker) + len(server_scope_start_marker)
+    server_scope_end = app.index(server_scope_end_marker, server_scope_start)
+    server_include_position = app.index(shared_include, server_scope_start, server_scope_end)
+    outlet_include_position = app.index(shared_include, outlet_start, outlet_end)
+    replacement_filename = "      filename: /etc/nginx/conf.d/discourse.conf\n"
+    build_assertion = (
+        "        - >-\n"
+        "          test \"$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'\n"
+        "          /etc/nginx/conf.d/discourse.conf)\" -eq 1\n"
+    )
+    shared_hostiles.extend(
+        (
+            app[:shared_end] + "        sub_filter_once off;\n" + app[shared_end:],
+            app[:shared_end] + "        include /tmp/hostile.inc;\n" + app[shared_end:],
+            app[:shared_end] + "        proxy_hide_header $hostile_header;\n" + app[shared_end:],
+            app[:server_include_position] + app[server_include_position + len(shared_include):],
+            app[:server_include_position] + shared_include + app[server_include_position:],
+            app[:outlet_include_position] + app[outlet_include_position + len(shared_include):],
+            app.replace("35-mochirii-public-response-headers.inc", "35-mochirii-public-response-headers.conf"),
+            app.replace(replacement_filename, replacement_filename + "      global: true\n", 1),
+            app.replace('              proxy_hide_header "X-Runtime";\n      to:', '              proxy_hide_header "X-Other";\n      to:', 1),
+            app.replace(build_assertion, "", 1),
+        )
+    )
+    for candidate_app in shared_hostiles:
+        if candidate_app == app:
+            raise RuntimeError("Shared response-header hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_sensitive_response_header_contract(candidate_app, host_verify)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Shared response-header source accepted a hostile composition.")
+
+    owner_probe_line = (
+        "          sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; "
+        "raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; "
+        "raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; "
+        "ActiveRecord::Base.connection.execute(\"SELECT 1\"); "
+        "raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"
+    )
+    moved_owner_probe = workflow.replace(owner_probe_line + "\n", "", 1).replace(
+        "          transcript=",
+        owner_probe_line + "\n          transcript=",
+        1,
+    )
+    target_step_prefix = (
+        "      - name: Verify imported theme, settings, metadata, and mail\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        "          set -euo pipefail"
+    )
+    workflow_hostiles = (
+        workflow.replace(
+            target_step_prefix,
+            target_step_prefix.replace("set -euo pipefail", "set -uo pipefail"),
+            1,
+        ),
+        workflow.replace(owner_probe_line, "          # " + owner_probe_line.strip(), 1),
+        moved_owner_probe,
+        workflow.replace("sudo docker exec app nginx -T", "true || sudo docker exec app nginx -T", 1),
+        workflow.replace(
+            'avatar_marker = r"location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|',
+            'avatar_marker = r"location ~ ^/(user_avatar|',
+            1,
+        ),
+        workflow.replace(
+            'raise SystemExit("rendered nginx cache-accelerated response-header boundary differs")',
+            "raise SystemExit(0)",
+            1,
+        ),
+        workflow.replace(
+            'sections("/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf")',
+            'sections("/tmp/hostile.conf")',
+            1,
+        ),
+        workflow.replace(
+            'Upload.exists?(sha1: "0000000000000000000000000000000000000000")',
+            'Upload.exists?(sha1: "1111111111111111111111111111111111111111")',
+            1,
+        ),
+        workflow.replace('routes != ["uploads/show_short"]', 'routes != ["uploads/show"]', 1),
+        workflow.replace('[[ "$proxied_status" == "404" ]]', "true", 1),
+    )
+    for candidate_workflow in workflow_hostiles:
+        if candidate_workflow == workflow:
+            raise RuntimeError("Disposable rendered nginx hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_disposable_nginx_response_header_proof(candidate_workflow)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Disposable rendered nginx proof accepted a hostile mutation.")
+
     early_success = host_verify.replace(
         'python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\nimport pathlib\nimport re\n',
         'python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\nimport pathlib\nimport re\nraise SystemExit(0)\n',
@@ -788,6 +961,20 @@ def test_sensitive_response_header_contract() -> None:
         pass
     else:
         raise RuntimeError("Hosted sensitive response-header verifier accepted an early successful exit.")
+
+    skipped_host_verifier = host_verify.replace(
+        'python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\n',
+        'true || python3 -B - "${nginx_log}" <<\'PY\' >/dev/null\n',
+        1,
+    )
+    if skipped_host_verifier == host_verify:
+        raise RuntimeError("Hosted sensitive response-header invocation anchor is absent.")
+    try:
+        VALIDATOR.validate_sensitive_response_header_contract(app, skipped_host_verifier)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Hosted sensitive response-header verifier accepted a skipped invocation.")
 
     callback_end = app.index("\n        }", app.index(markers[0])) + len("\n        }")
     parent_pass = app[:callback_end] + "\n        proxy_pass_header Referrer-Policy;" + app[callback_end:]
@@ -821,6 +1008,23 @@ def test_sensitive_response_header_contract() -> None:
     host_python = host_verify[host_start:host_verify.index("\nPY\n", host_start)]
     rendered_app = rendered_nginx(app)
     runtime_cases = [(rendered_app, True)]
+    avatar_include = "    include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\n"
+    avatar_marker = "  location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|highlight-js|stylesheets|theme-javascripts|favicon/proxied|service-worker|extra-locales/) {\n"
+    avatar_username_hide = '    proxy_hide_header "X-Discourse-Username";\n'
+    avatar_runtime_hostiles = (
+        rendered_app.replace(avatar_include, "", 1),
+        rendered_app.replace(avatar_include, "    # include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\n", 1),
+        rendered_app.replace(avatar_include, avatar_include + avatar_include, 1),
+        rendered_app.replace(avatar_include, "    include conf.d/outlets/discourse/*.conf;\n", 1),
+        rendered_app.replace(avatar_include, "    include $hostile_path;\n", 1),
+        rendered_app.replace(avatar_include, avatar_include + "    sub_filter_once off;\n", 1),
+        rendered_app.replace(avatar_include, avatar_include + "    proxy_pass_header X-Discourse-Route;\n", 1),
+        rendered_app.replace(avatar_username_hide, "", 1),
+        rendered_app.replace(avatar_include, "", 1).replace(avatar_marker, avatar_include + avatar_marker, 1),
+    )
+    if any(candidate == rendered_app for candidate in avatar_runtime_hostiles):
+        raise RuntimeError("Cache-accelerated response-header hostile mutation anchor is absent.")
+    runtime_cases.extend((candidate, False) for candidate in avatar_runtime_hostiles)
     runtime_cases.extend(
         (
             (
@@ -6599,7 +6803,7 @@ def test_runtime_rails_execution_contract() -> None:
     template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
     owner_scoped_build_runner = """su discourse -c 'bundle exec rails runner
           \"$MOCHIRII_RELEASE_ASSET_ROOT/configure-site.rb\"'"""
-    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\")'"""
+    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
 
     def assert_contract(candidate_sources: dict[str, str], candidate_template: str) -> None:
         for relative, expected in expected_wrappers.items():

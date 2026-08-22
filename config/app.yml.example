@@ -215,10 +215,10 @@ __MOCHIRII_TLS_RUN__
         end
         Rails.application.config.filter_parameters |= %i[sso sig token]
   - file:
-      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf
+      path: /etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc
       contents: |
-        # These replacements bind to the exact selected core revision. A core
-        # change must update and revalidate them before release.
+        # One denylist is included by the ordinary Discourse proxy outlet and
+        # by the pinned cache-accelerated asset location below.
         proxy_hide_header X-Discourse-Route;
         proxy_hide_header X-Discourse-Username;
         proxy_hide_header X-Discourse-Crawler-View;
@@ -231,12 +231,63 @@ __MOCHIRII_TLS_RUN__
         proxy_hide_header X-Discourse-TrackView;
         proxy_hide_header X-Discourse-BrowserPageView;
         proxy_hide_header X-Discourse-Cached;
+  - file:
+      path: /etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf
+      contents: |
+        # Direct Rails proxy locations inherit this exact denylist. Locations
+        # with their own proxy_hide_header directives include it explicitly.
+        include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;
+  - file:
+      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf
+      contents: |
+        # These replacements bind to the exact selected core revision. A core
+        # change must update and revalidate them before release.
+        include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;
         sub_filter_once off;
         sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
         sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
         # The pinned metadata controller renders formats: [:xml], which Rails
         # serves as application/xml. Bind the replacement to that exact type.
         sub_filter_types application/xml;
+  # Pups replace is a silent no-op when its source is absent, so bind the exact
+  # pinned core anchor before applying the one reviewed insertion.
+  - exec:
+      cmd:
+        - |-
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
+          anchor = '''      proxy_hide_header "Set-Cookie";
+                proxy_hide_header "X-Discourse-Username";
+                proxy_hide_header "X-Runtime";'''
+          if source.count(anchor) != 1:
+              raise SystemExit("Pinned cache response-header anchor differs.")
+          PY
+  - replace:
+      filename: /etc/nginx/conf.d/discourse.conf
+      from: |2-
+              proxy_hide_header "Set-Cookie";
+              proxy_hide_header "X-Discourse-Username";
+              proxy_hide_header "X-Runtime";
+      to: |2-
+              proxy_hide_header "Set-Cookie";
+              proxy_hide_header "X-Discourse-Username";
+              proxy_hide_header "X-Runtime";
+              include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;
+  # Prove the replacement took effect before any later run item can continue.
+  - exec:
+      cmd:
+        - |-
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
+          anchor = '''      proxy_hide_header "Set-Cookie";
+                proxy_hide_header "X-Discourse-Username";
+                proxy_hide_header "X-Runtime";
+                include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'''
+          if source.count(anchor) != 1:
+              raise SystemExit("Pinned cache response-header replacement differs.")
+          PY
   - file:
       path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf
       contents: |
@@ -400,6 +451,9 @@ __MOCHIRII_TLS_RUN__
         - >-
           grep -Fq 'include conf.d/outlets/discourse/*.conf;'
           /etc/nginx/conf.d/discourse.conf
+        - >-
+          test "$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'
+          /etc/nginx/conf.d/discourse.conf)" -eq 1
         - >-
           grep -R -Fq 'include conf.d/outlets/server/*.conf;'
           /etc/nginx

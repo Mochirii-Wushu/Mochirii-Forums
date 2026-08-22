@@ -208,10 +208,182 @@ jobs:
             fi
             sleep 2
           done
-          sudo docker exec app /usr/local/bin/rails runner 'require "etc"; raise unless Process.euid == Etc.getpwnam("discourse").uid; raise unless GitUtils.git_version == "cbf996f65aae3da1843224aa624bcd9a225931ac"; ActiveRecord::Base.connection.execute("SELECT 1")'
+          sudo docker exec app /usr/local/bin/rails runner 'require "etc"; raise unless Process.euid == Etc.getpwnam("discourse").uid; raise unless GitUtils.git_version == "cbf996f65aae3da1843224aa624bcd9a225931ac"; ActiveRecord::Base.connection.execute("SELECT 1"); raise if Upload.exists?(sha1: "0000000000000000000000000000000000000000")'
           sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
           sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
-          sudo bash -c 'umask 077; transcript=$(mktemp /tmp/mochirii-nginx.XXXXXXXX); trap '\''rm -f -- "$transcript"'\'' EXIT; docker exec app nginx -T >"$transcript" 2>&1; grep -F '\''include conf.d/outlets/discourse/*.conf;'\'' "$transcript" >/dev/null; grep -F '\''include conf.d/outlets/server/*.conf;'\'' "$transcript" >/dev/null; grep -F '\''<meta name="generator" content="Mochirii Forums">'\'' "$transcript" >/dev/null; grep -F '\''location ~* \.(?:rss|atom)$'\'' "$transcript" >/dev/null; grep -F '\''location ~ ^/(?:u|users)/admin-login(?:\.[A-Za-z0-9]+)?/?$ { return 419; }'\'' "$transcript" >/dev/null; grep -F '\''location ~* ^/session/sso_login(?:\.[A-Za-z0-9]+)?/?$ {'\'' "$transcript" >/dev/null; grep -F '\''error_log /dev/null emerg;'\'' "$transcript" >/dev/null; grep -F '\''add_header Referrer-Policy "no-referrer" always;'\'' "$transcript" >/dev/null; for header in X-Discourse-Route X-Discourse-Username X-Discourse-Crawler-View Discourse-No-Onebox Discourse-Rate-Limit-Error-Code Discourse-Xhr-Redirect Discourse-Actions-Remaining Discourse-Actions-Max Discourse-Logged-Out X-Discourse-TrackView X-Discourse-BrowserPageView X-Discourse-Cached; do grep -F "proxy_hide_header ${header};" "$transcript" >/dev/null; done'
+          transcript="$(mktemp "${RUNNER_TEMP}/mochirii-nginx.XXXXXXXX")"
+          direct_headers="$(mktemp "${RUNNER_TEMP}/mochirii-direct-headers.XXXXXXXX")"
+          trap 'rm -f -- "$transcript" "$direct_headers"' EXIT
+          chmod 0600 "$transcript" "$direct_headers"
+          sudo docker exec app nginx -T >"$transcript" 2>&1
+          grep -F 'include conf.d/outlets/discourse/*.conf;' "$transcript" >/dev/null
+          grep -F 'include conf.d/outlets/server/*.conf;' "$transcript" >/dev/null
+          grep -F '<meta name="generator" content="Mochirii Forums">' "$transcript" >/dev/null
+          grep -F 'location ~* \.(?:rss|atom)$' "$transcript" >/dev/null
+          grep -F 'location ~ ^/(?:u|users)/admin-login(?:\.[A-Za-z0-9]+)?/?$ { return 419; }' "$transcript" >/dev/null
+          grep -F 'location ~* ^/session/sso_login(?:\.[A-Za-z0-9]+)?/?$ {' "$transcript" >/dev/null
+          grep -F 'error_log /dev/null emerg;' "$transcript" >/dev/null
+          grep -F 'add_header Referrer-Policy "no-referrer" always;' "$transcript" >/dev/null
+          python3 -B - "$transcript" <<'PY_NGINX_HEADERS'
+          import pathlib
+          import re
+          import stat
+          import sys
+
+          MAX_TRANSCRIPT_BYTES = 4_194_304
+          path = pathlib.Path(sys.argv[1])
+          metadata = path.lstat()
+          if not stat.S_ISREG(metadata.st_mode) or path.is_symlink() or metadata.st_size > MAX_TRANSCRIPT_BYTES:
+              raise SystemExit("rendered nginx transcript boundary differs")
+          data = path.read_bytes()
+          if len(data) > MAX_TRANSCRIPT_BYTES:
+              raise SystemExit("rendered nginx transcript exceeds its bound")
+          try:
+              text = data.decode("utf-8", errors="strict")
+          except UnicodeDecodeError as error:
+              raise SystemExit("rendered nginx transcript is not UTF-8") from error
+
+          def nginx_directives(source):
+              directives = []
+              current = []
+              quote = None
+              escaped = False
+              comment = False
+              for character in source:
+                  if comment:
+                      if character in {"\r", "\n"}:
+                          comment = False
+                          current.append(" ")
+                  elif escaped:
+                      current.append(character)
+                      escaped = False
+                  elif character == "\\":
+                      current.append(character)
+                      escaped = True
+                  elif quote is not None:
+                      current.append(character)
+                      if character == quote:
+                          quote = None
+                  elif character in {'"', "'"}:
+                      current.append(character)
+                      quote = character
+                  elif character == "#":
+                      comment = True
+                  elif character == ";":
+                      directive = "".join(current).strip()
+                      if directive:
+                          directives.append(directive + ";")
+                      current = []
+                  elif character in {"{", "}"}:
+                      current = []
+                  else:
+                      current.append(character)
+              return tuple(directives)
+
+          def directive_name(directive):
+              token = directive.split(None, 1)[0]
+              return token.replace('"', "").replace("'", "").replace("\\", "").lower()
+
+          if any(directive_name(item) == "proxy_pass_header" for item in nginx_directives(text)):
+              raise SystemExit("rendered nginx can re-enable an upstream response header")
+
+          def sections(relative):
+              marker = f"# configuration file {relative}:\n"
+              starts = [match.end() for match in re.finditer(re.escape(marker), text)]
+              if not starts or len(starts) > 8:
+                  raise SystemExit("rendered nginx response-header file inclusion differs")
+              bodies = []
+              for start in starts:
+                  end = text.find("\n# configuration file ", start)
+                  bodies.append(text[start:] if end < 0 else text[start:end])
+              return tuple(bodies)
+
+          shared_include = "include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;"
+          headers = {
+              "X-Discourse-Route", "X-Discourse-Username", "X-Discourse-Crawler-View",
+              "Discourse-No-Onebox", "Discourse-Rate-Limit-Error-Code", "Discourse-Xhr-Redirect",
+              "Discourse-Actions-Remaining", "Discourse-Actions-Max", "Discourse-Logged-Out",
+              "X-Discourse-TrackView", "X-Discourse-BrowserPageView", "X-Discourse-Cached",
+          }
+          shared_required = {f"proxy_hide_header {name};" for name in headers}
+          for body in sections("/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc"):
+              directives = nginx_directives(body)
+              if len(directives) != len(shared_required) or set(directives) != shared_required:
+                  raise SystemExit("rendered nginx response-header denylist differs")
+          for body in sections("/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf"):
+              if nginx_directives(body) != (shared_include,):
+                  raise SystemExit("rendered nginx server response-header inheritance differs")
+
+          avatar_marker = r"location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|highlight-js|stylesheets|theme-javascripts|favicon/proxied|service-worker|extra-locales/) {"
+          matches = tuple(re.finditer(re.escape(avatar_marker) + r"(?P<body>.*?)\n\s*\}", text, re.S))
+          if len(matches) != 1:
+              raise SystemExit("rendered nginx cache-accelerated asset location differs")
+          avatar_directives = nginx_directives(matches[0].group("body"))
+          avatar_required = {
+              "brotli_comp_level 6;", 'proxy_ignore_headers "Set-Cookie";',
+              'proxy_hide_header "Set-Cookie";', 'proxy_hide_header "X-Discourse-Username";',
+              'proxy_hide_header "X-Runtime";', shared_include, "proxy_cache one;",
+              'proxy_cache_key "$scheme,$host,$request_uri";', "proxy_cache_valid 200 301 302 7d;",
+              "proxy_cache_bypass $bypass_cache;", "proxy_pass http://discourse;", "break;",
+          }
+          if len(avatar_directives) != len(avatar_required) or set(avatar_directives) != avatar_required:
+              raise SystemExit("rendered nginx cache-accelerated response-header boundary differs")
+          PY_NGINX_HEADERS
+          sudo docker exec -i app python3 -B - <<'PY_UPSTREAM_HEADERS'
+          import http.client
+
+          connection = http.client.HTTPConnection("127.0.0.1", 3000, timeout=10)
+          try:
+              connection.request(
+                  "GET",
+                  "/uploads/short-url/0",
+                  headers={"Host": "forums.mochirii.com", "Connection": "close"},
+              )
+              response = connection.getresponse()
+              routes = [
+                  value
+                  for name, value in response.getheaders()
+                  if name.lower() == "x-discourse-route"
+              ]
+              if response.status != 404 or routes != ["uploads/show_short"]:
+                  raise SystemExit("direct Rails response-header sentinel differs")
+          finally:
+              connection.close()
+          PY_UPSTREAM_HEADERS
+          proxied_status="$(
+            curl --silent --show-error --connect-timeout 10 --max-time 30 \
+              --output /dev/null --dump-header "$direct_headers" --write-out '%{http_code}' \
+              -H 'Host: forums.mochirii.com' http://127.0.0.1:18080/uploads/short-url/0
+          )"
+          [[ "$proxied_status" == "404" ]] || {
+            echo "::error::Direct inherited proxy response status differs from the exact contract."
+            exit 1
+          }
+          python3 -B - "$direct_headers" <<'PY_DIRECT_HEADERS'
+          import pathlib
+          import sys
+
+          MAX_HEADER_BYTES = 65_536
+          path = pathlib.Path(sys.argv[1])
+          data = path.read_bytes()
+          if not data or len(data) > MAX_HEADER_BYTES:
+              raise SystemExit("direct inherited proxy response-header evidence boundary differs")
+          prohibited = {
+              b"x-discourse-route", b"x-discourse-username", b"x-discourse-crawler-view",
+              b"discourse-no-onebox", b"discourse-rate-limit-error-code", b"discourse-xhr-redirect",
+              b"discourse-actions-remaining", b"discourse-actions-max", b"discourse-logged-out",
+              b"x-discourse-trackview", b"x-discourse-browserpageview", b"x-discourse-cached",
+          }
+          names = set()
+          for line in data.replace(b"\r\n", b"\n").split(b"\n"):
+              if b":" not in line:
+                  continue
+              name = line.split(b":", 1)[0].strip().lower()
+              if name:
+                  names.add(name)
+          if names & prohibited:
+              raise SystemExit("direct inherited proxy response exposed prohibited identity metadata")
+          PY_DIRECT_HEADERS
           python3 scripts/verify-public-branding.py --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
           python3 scripts/verify-discourse-connect.py \
             --secret-file "${RUNNER_TEMP}/forums-connect-fixture-key" \

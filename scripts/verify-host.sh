@@ -881,12 +881,14 @@ EXPECTED_DIRECTORY_CHILDREN = {
     "/etc/nginx/conf.d/outlets/discourse": (
         "20-https.conf",
         "30-ratelimited.conf",
+        "35-mochirii-public-response-headers.inc",
         "40-mochirii-public-metadata.conf",
     ),
     "/etc/nginx/conf.d/outlets/server": (
         "10-http.conf",
         "20-https.conf",
         "30-offline-page.conf",
+        "35-mochirii-public-response-headers.conf",
         "40-mochirii-feed-denial.conf",
     ),
     "/etc/nginx/modules-enabled": (),
@@ -900,7 +902,10 @@ EXPECTED_FILE_SHA256 = {
         "d2404914bf644ebde13c987081c3259bdd40e2e31985b90a77c08e42f64efe4e",
     ),
     "/etc/nginx/conf.d/discourse.conf": (
-        "be465ea2349ea9b858d3216d4178ac84145d1bbf2c6faa0e39776321778b7a52",
+        "fe954577f31a53e71e6dca29eea779e00744969834d1b5301873cddee77295dc",
+    ),
+    "/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc": (
+        "efff4b424cc29b3a0a20ffcef8d6bf67f9bb8c51db55d124012dbdc0cd69d53b",
     ),
     "/etc/nginx/conf.d/outlets/before-server/20-redirect-http-to-https.conf": (
         "7bb5588965b9122d7dba2a9cf7ff1c5fd9e933b278eacaf0f88176aa8fd72312",
@@ -915,7 +920,7 @@ EXPECTED_FILE_SHA256 = {
         "855b446d8b3d803097b970fd14f5696f0395e01464d8518dba152a200d51bfa2",
     ),
     "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf": (
-        "1110e9e3080aa91f89e4010a3ddfcab6a56e508b4a6ab27c3ee5333e04de8a78",
+        "12bb9c934b236c6885b02f3dbf59d809ce66a5ea75b8522f76f9f59cc626df2e",
     ),
     "/etc/nginx/conf.d/outlets/server/10-http.conf": (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -926,6 +931,9 @@ EXPECTED_FILE_SHA256 = {
     ),
     "/etc/nginx/conf.d/outlets/server/30-offline-page.conf": (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ),
+    "/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf": (
+        "2c5be5f9dc56632ddd56e6af8ca2f08028f515e41179be90c5cfa31ec8cbc566",
     ),
     "/etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf": (
         "c82653d574f1747c7ed0822d1423833af8acc982e8d01df96b9072d2bd8b0c87",
@@ -1138,6 +1146,25 @@ denial_marker = r"location ~* ^/session/email-login/ {"
 denial_directives = nginx_directives(location_body(denial_marker, "administrator recovery denial"))
 if any(denial_directives.count(value) != 1 for value in ("access_log off;", "error_log /dev/null emerg;", "return 420;")):
     raise SystemExit("noncanonical administrator recovery route does not fail privately")
+
+avatar_marker = r"location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|highlight-js|stylesheets|theme-javascripts|favicon/proxied|service-worker|extra-locales/) {"
+avatar_directives = nginx_directives(location_body(avatar_marker, "cache-accelerated asset"))
+avatar_required = {
+    "brotli_comp_level 6;",
+    'proxy_ignore_headers "Set-Cookie";',
+    'proxy_hide_header "Set-Cookie";',
+    'proxy_hide_header "X-Discourse-Username";',
+    'proxy_hide_header "X-Runtime";',
+    "include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;",
+    "proxy_cache one;",
+    'proxy_cache_key "$scheme,$host,$request_uri";',
+    "proxy_cache_valid 200 301 302 7d;",
+    "proxy_cache_bypass $bypass_cache;",
+    "proxy_pass http://discourse;",
+    "break;",
+}
+if len(avatar_directives) != len(avatar_required) or set(avatar_directives) != avatar_required:
+    raise SystemExit("cache-accelerated asset response-header boundary differs")
 PY
 for hidden_header in X-Discourse-Route X-Discourse-Username X-Discourse-Crawler-View Discourse-No-Onebox Discourse-Rate-Limit-Error-Code Discourse-Xhr-Redirect Discourse-Actions-Remaining Discourse-Actions-Max Discourse-Logged-Out X-Discourse-TrackView X-Discourse-BrowserPageView X-Discourse-Cached; do
   grep -F "proxy_hide_header ${hidden_header};" "${nginx_log}" >/dev/null

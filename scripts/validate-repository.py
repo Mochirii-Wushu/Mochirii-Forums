@@ -195,13 +195,15 @@ checks["narrative_system_user_branded"] =
 '''
 RUNTIME_VERIFIER_SHA256 = "e3af12650a530ba3460fc5dfadda0cbfa2b502d75b40eeb3b6ce847099861017"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "45c1d34ab46ac684a5c688294146670e0e7f4efa36aeaca958ff8e8ed0bc2e68"
+APP_TEMPLATE_SHA256 = "be18aec37434153d19a05d3a59ab5372d43eab4fa87ab57761637140fc599f8e"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
 DISCOURSE_CONNECT_VERIFIER_SHA256 = "15e587a43c7d3c8a0cd149e86bce653907c1708430180364ded1a430f23e0322"
-HOST_NGINX_FILE_VERIFIER_SHA256 = "ef3b0e9bfe2ff73dd74d1fe21f6eea4e5aa3d5b42f19890b8c564300fefb0c5c"
+HOST_NGINX_FILE_VERIFIER_SHA256 = "f5080a2b9cae3cf493383334a05390bd70d62ad31f7bfe3f13befff4e7c33024"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
-HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "ff6ba88a4bc0eba0373f77799de1594dbd69ecee311c863d43f2cae27f1aec9a"
+HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "b6563cada14a3996586b06409a20a38f4f30cd69a842954afcf1cbdd8066d23a"
+HOST_VERIFY_SOURCE_SHA256 = "c0f7741543a952cd1b808d42e5358a335e6818ccc3343afe1c1246e9b09f4fd9"
+DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "867576c322cd3ed069f77e3c96056e954e5e35f1a113eae80c80c6452b30c98f"
 # Exact normalized server outlet derived from discourse_docker@ed9f680b0df1de28f062de1769d89d22b2644d1b
 # templates/web.ssl.template.yml (2,111 bytes; SHA-256 7a3b819e65104c9178e004772b487fa809ce6b421668dfa1adf330221dda552b).
 PINNED_WEB_SSL_SERVER_OUTLET = '''listen 443 ssl;
@@ -1349,7 +1351,7 @@ def validate_manifests() -> None:
 
 def validate_opensearch_filter_contract(app: str) -> None:
     outlet_start = "      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
-    outlet_end = "  - file:\n      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
+    outlet_end = "  # Pups replace is a silent no-op when its source is absent, so bind the exact\n"
     if app.count(outlet_start) != 1 or app.count(outlet_end) != 1:
         fail("Public metadata nginx outlet boundary differs.")
     start = app.index(outlet_start)
@@ -1393,6 +1395,9 @@ def validate_login_code_denial_contract(verifier: str) -> None:
 
 
 def validate_sensitive_response_header_contract(app: str, host_verify: str) -> None:
+    if hashlib.sha256(host_verify.encode("utf-8")).hexdigest() != HOST_VERIFY_SOURCE_SHA256:
+        fail("Hosted verification source differs from the exact reviewed contract.")
+
     def contains_unquoted_block_delimiter(line: str) -> bool:
         quote: str | None = None
         escaped = False
@@ -1465,29 +1470,111 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
     ):
         fail("Application template can re-enable an upstream response header.")
 
+    shared_start_marker = (
+        "      path: /etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc\n"
+        "      contents: |\n"
+    )
+    shared_end_marker = "  - file:\n      path: /etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf\n"
+    server_scope_start_marker = (
+        "      path: /etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf\n"
+        "      contents: |\n"
+    )
+    server_scope_end_marker = "  - file:\n      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
     outlet_start_marker = (
         "      path: /etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf\n"
         "      contents: |\n"
     )
-    outlet_end_marker = "  - file:\n      path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf\n"
-    if app.count(outlet_start_marker) != 1 or app.count(outlet_end_marker) != 1:
-        fail("Discourse outlet source boundary differs.")
+    outlet_end_marker = "  # Pups replace is a silent no-op when its source is absent, so bind the exact\n"
+    avatar_precondition = '''  # Pups replace is a silent no-op when its source is absent, so bind the exact
+  # pinned core anchor before applying the one reviewed insertion.
+  - exec:
+      cmd:
+        - |-
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
+          anchor = \'\'\'      proxy_hide_header "Set-Cookie";
+                proxy_hide_header "X-Discourse-Username";
+                proxy_hide_header "X-Runtime";\'\'\'
+          if source.count(anchor) != 1:
+              raise SystemExit("Pinned cache response-header anchor differs.")
+          PY
+'''
+    avatar_replacement = '''  - replace:
+      filename: /etc/nginx/conf.d/discourse.conf
+      from: |2-
+              proxy_hide_header "Set-Cookie";
+              proxy_hide_header "X-Discourse-Username";
+              proxy_hide_header "X-Runtime";
+      to: |2-
+              proxy_hide_header "Set-Cookie";
+              proxy_hide_header "X-Discourse-Username";
+              proxy_hide_header "X-Runtime";
+              include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;
+'''
+    avatar_postcondition = '''  # Prove the replacement took effect before any later run item can continue.
+  - exec:
+      cmd:
+        - |-
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
+          anchor = \'\'\'      proxy_hide_header "Set-Cookie";
+                proxy_hide_header "X-Discourse-Username";
+                proxy_hide_header "X-Runtime";
+                include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\'\'\'
+          if source.count(anchor) != 1:
+              raise SystemExit("Pinned cache response-header replacement differs.")
+          PY
+'''
+    avatar_build_assertion = '''        - >-
+          test "$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'
+          /etc/nginx/conf.d/discourse.conf)" -eq 1
+'''
+    if (
+        app.count(shared_start_marker) != 1
+        or app.count(shared_end_marker) != 1
+        or app.count(server_scope_start_marker) != 1
+        or app.count(server_scope_end_marker) != 1
+        or app.count(outlet_start_marker) != 1
+        or app.count(outlet_end_marker) != 1
+        or app.count(avatar_precondition) != 1
+        or app.count(avatar_replacement) != 1
+        or app.count(avatar_postcondition) != 1
+        or app.count(avatar_build_assertion) != 1
+    ):
+        fail("Shared response-header source boundary differs.")
+    shared_start = app.index(shared_start_marker) + len(shared_start_marker)
+    shared_end = app.index(shared_end_marker, shared_start)
+    shared_directives = nginx_directives(app[shared_start:shared_end])
+    public_response_headers = {
+        "X-Discourse-Route",
+        "X-Discourse-Username",
+        "X-Discourse-Crawler-View",
+        "Discourse-No-Onebox",
+        "Discourse-Rate-Limit-Error-Code",
+        "Discourse-Xhr-Redirect",
+        "Discourse-Actions-Remaining",
+        "Discourse-Actions-Max",
+        "Discourse-Logged-Out",
+        "X-Discourse-TrackView",
+        "X-Discourse-BrowserPageView",
+        "X-Discourse-Cached",
+    }
+    shared_required = {f"proxy_hide_header {name};" for name in public_response_headers}
+    if len(shared_directives) != len(shared_required) or set(shared_directives) != shared_required:
+        fail("Shared response-header denylist differs from the exact reviewed contract.")
+    server_scope_start = app.index(server_scope_start_marker) + len(server_scope_start_marker)
+    server_scope_end = app.index(server_scope_end_marker, server_scope_start)
+    server_scope_directives = nginx_directives(app[server_scope_start:server_scope_end])
+    shared_include = "include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;"
+    if server_scope_directives != (shared_include,):
+        fail("Server-scope response-header inheritance differs from the exact reviewed contract.")
     outlet_start = app.index(outlet_start_marker) + len(outlet_start_marker)
     outlet_end = app.index(outlet_end_marker, outlet_start)
     outlet_directives = nginx_directives(app[outlet_start:outlet_end])
     outlet_required = {
-        "proxy_hide_header X-Discourse-Route;",
-        "proxy_hide_header X-Discourse-Username;",
-        "proxy_hide_header X-Discourse-Crawler-View;",
-        "proxy_hide_header Discourse-No-Onebox;",
-        "proxy_hide_header Discourse-Rate-Limit-Error-Code;",
-        "proxy_hide_header Discourse-Xhr-Redirect;",
-        "proxy_hide_header Discourse-Actions-Remaining;",
-        "proxy_hide_header Discourse-Actions-Max;",
-        "proxy_hide_header Discourse-Logged-Out;",
-        "proxy_hide_header X-Discourse-TrackView;",
-        "proxy_hide_header X-Discourse-BrowserPageView;",
-        "proxy_hide_header X-Discourse-Cached;",
+        shared_include,
         "sub_filter_once off;",
         "sub_filter '<meta name=\"generator\" content=\"Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac\">' '<meta name=\"generator\" content=\"Mochirii Forums\">';",
         "sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';",
@@ -1607,12 +1694,14 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         "/etc/nginx/conf.d/outlets/discourse": (
             "20-https.conf",
             "30-ratelimited.conf",
+            "35-mochirii-public-response-headers.inc",
             "40-mochirii-public-metadata.conf",
         ),
         "/etc/nginx/conf.d/outlets/server": (
             "10-http.conf",
             "20-https.conf",
             "30-offline-page.conf",
+            "35-mochirii-public-response-headers.conf",
             "40-mochirii-feed-denial.conf",
         ),
         "/etc/nginx/modules-enabled": (),
@@ -1626,7 +1715,10 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
             "d2404914bf644ebde13c987081c3259bdd40e2e31985b90a77c08e42f64efe4e",
         ),
         "/etc/nginx/conf.d/discourse.conf": (
-            "be465ea2349ea9b858d3216d4178ac84145d1bbf2c6faa0e39776321778b7a52",
+            "fe954577f31a53e71e6dca29eea779e00744969834d1b5301873cddee77295dc",
+        ),
+        "/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc": (
+            "efff4b424cc29b3a0a20ffcef8d6bf67f9bb8c51db55d124012dbdc0cd69d53b",
         ),
         "/etc/nginx/conf.d/outlets/before-server/20-redirect-http-to-https.conf": (
             "7bb5588965b9122d7dba2a9cf7ff1c5fd9e933b278eacaf0f88176aa8fd72312",
@@ -1641,7 +1733,7 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
             "855b446d8b3d803097b970fd14f5696f0395e01464d8518dba152a200d51bfa2",
         ),
         "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf": (
-            "1110e9e3080aa91f89e4010a3ddfcab6a56e508b4a6ab27c3ee5333e04de8a78",
+            "12bb9c934b236c6885b02f3dbf59d809ce66a5ea75b8522f76f9f59cc626df2e",
         ),
         "/etc/nginx/conf.d/outlets/server/10-http.conf": (
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -1651,6 +1743,9 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         ),
         "/etc/nginx/conf.d/outlets/server/30-offline-page.conf": (
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        "/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf": (
+            "2c5be5f9dc56632ddd56e6af8ca2f08028f515e41179be90c5cfa31ec8cbc566",
         ),
         "/etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf": (
             "c82653d574f1747c7ed0822d1423833af8acc982e8d01df96b9072d2bd8b0c87",
@@ -1705,6 +1800,28 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         'proxy_set_header X-Accel-Mapping "";',
         'proxy_set_header Client-Ip "";',
     }
+    avatar_assignments = [
+        node
+        for node in host_tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "avatar_required"
+    ]
+    expected_avatar_required = {
+        "brotli_comp_level 6;",
+        'proxy_ignore_headers "Set-Cookie";',
+        'proxy_hide_header "Set-Cookie";',
+        'proxy_hide_header "X-Discourse-Username";',
+        'proxy_hide_header "X-Runtime";',
+        "include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;",
+        "proxy_cache one;",
+        'proxy_cache_key "$scheme,$host,$request_uri";',
+        "proxy_cache_valid 200 301 302 7d;",
+        "proxy_cache_bypass $bypass_cache;",
+        "proxy_pass http://discourse;",
+        "break;",
+    }
     expected_calls = ast.parse(
         'verify_sensitive_location(location_body(callback_marker, "sensitive callback"), "sensitive callback")\n'
         'verify_sensitive_location(\n'
@@ -1727,10 +1844,48 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         or len(required_assignments) != 1
         or not isinstance(required_assignments[0].value, ast.Set)
         or ast.literal_eval(required_assignments[0].value) != expected_required
+        or len(avatar_assignments) != 1
+        or not isinstance(avatar_assignments[0].value, ast.Set)
+        or ast.literal_eval(avatar_assignments[0].value) != expected_avatar_required
         or [ast.dump(node, include_attributes=False) for node in actual_calls]
         != [ast.dump(node, include_attributes=False) for node in expected_calls]
     ):
         fail("Hosted verification does not reach both exact sensitive response-header contracts.")
+
+
+def validate_disposable_nginx_response_header_proof(workflow: str) -> None:
+    start = "      - name: Verify imported theme, settings, metadata, and mail\n"
+    end = "\n      - name: Prove persistent database and supported rebuild\n"
+    if workflow.count(start) != 1 or workflow.count(end) != 1:
+        fail("Disposable rendered nginx response-header proof boundary differs.")
+    proof_start = workflow.index(start)
+    proof_end = workflow.index(end, proof_start)
+    proof = workflow[proof_start:proof_end]
+    required = (
+        "set -euo pipefail",
+        'Upload.exists?(sha1: "0000000000000000000000000000000000000000")',
+        "sudo docker exec app nginx -T",
+        "MAX_TRANSCRIPT_BYTES = 4_194_304",
+        'directive_name(item) == "proxy_pass_header"',
+        'sections("/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc")',
+        'sections("/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf")',
+        'avatar_marker = r"location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|',
+        "len(avatar_directives) != len(avatar_required)",
+        "rendered nginx cache-accelerated response-header boundary differs",
+        "MAX_HEADER_BYTES = 65_536",
+        'http.client.HTTPConnection("127.0.0.1", 3000, timeout=10)',
+        'routes != ["uploads/show_short"]',
+        "--write-out '%{http_code}'",
+        "http://127.0.0.1:18080/uploads/short-url/0",
+        '[[ "$proxied_status" == "404" ]]',
+        "direct inherited proxy response exposed prohibited identity metadata",
+    )
+    if (
+        any(proof.count(value) != 1 for value in required)
+        or hashlib.sha256(proof.encode("utf-8")).hexdigest()
+        != DISPOSABLE_NGINX_HEADER_PROOF_SHA256
+    ):
+        fail("Disposable rendered nginx response-header proof differs from the exact reviewed body.")
 
 
 def validate_https_consumer_fixture_contract(verifier: str) -> None:
@@ -3077,6 +3232,7 @@ def validate_secrets_and_workflows() -> None:
 
     disposable = read(".github/workflows/disposable-bootstrap.yml")
     validate_narrative_avatar_workflow(disposable)
+    validate_disposable_nginx_response_header_proof(disposable)
     require_text(
         disposable,
         [
@@ -3085,6 +3241,7 @@ def validate_secrets_and_workflows() -> None:
             "--cpuset-cpus=0 --memory=2g --memory-swap=4g",
             "DISCOURSE_CONNECT",
             "verify-discourse-connect.py",
+            "include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;",
             "discourse restore --location local",
             "remote set-url --push origin no_push://mochirii-forums-upstream",
             "/usr/local/sbin/mochirii-stage4-launcher",
@@ -5279,7 +5436,7 @@ def validate_runtime_rails_execution_contract() -> None:
         fail("Build-time Rails runner is not explicitly owner-scoped.")
 
     workflow = read(".github/workflows/disposable-bootstrap.yml")
-    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\")'"""
+    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
     if workflow.count(owner_probe) != 1:
         fail("Disposable bootstrap does not prove Rails UID, Git, and database ownership together.")
 
