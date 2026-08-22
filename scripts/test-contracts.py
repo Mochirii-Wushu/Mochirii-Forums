@@ -1414,6 +1414,63 @@ def test_https_consumer_fixture_contract() -> None:
             continue
         raise RuntimeError("Hostile consumer response assertion accepted a wrong status or public response.")
 
+    class NonceFailureSession:
+        def __init__(self, status: int, headers: dict[str, list[str]]) -> None:
+            self.status = status
+            self.headers = headers
+
+        def get(self, path: str) -> tuple[int, dict[str, list[str]], bytes]:
+            if path != "/session/sso?return_path=%2Flatest":
+                raise RuntimeError("Nonce status diagnostic fixture path changed.")
+            return self.status, self.headers, b"MOCHIRII_PRIVATE_NONCE_BODY_SENTINEL"
+
+    for status, headers, expected in (
+        (
+            429,
+            {"retry-after": ["MOCHIRII_PRIVATE_RETRY_SENTINEL"]},
+            "Built-in consumer did not issue its signed producer request "
+            "[response=rate-limited; retry-after=present].",
+        ),
+        (
+            503,
+            {"x-private-sentinel": ["MOCHIRII_PRIVATE_HEADER_SENTINEL"]},
+            "Built-in consumer did not issue its signed producer request "
+            "[response=unavailable; retry-after=absent].",
+        ),
+        (
+            404,
+            {},
+            "Built-in consumer did not issue its signed producer request "
+            "[response=not-found; retry-after=absent].",
+        ),
+        (
+            200,
+            {},
+            "Built-in consumer did not issue its signed producer request "
+            "[response=unexpected-success; retry-after=absent].",
+        ),
+        (
+            301,
+            {},
+            "Built-in consumer did not issue its signed producer request "
+            "[response=unexpected-redirect; retry-after=absent].",
+        ),
+        (
+            0,
+            {},
+            "Built-in consumer did not issue its signed producer request "
+            "[response=invalid-status; retry-after=absent].",
+        ),
+    ):
+        try:
+            CONNECT_FIXTURE.request_nonce(NonceFailureSession(status, headers), b"0" * 64)
+        except RuntimeError as error:
+            message = str(error)
+            if message != expected or "PRIVATE" in message or len(message) > 192:
+                raise RuntimeError("Nonce status diagnostic is not fixed, bounded, and redacted.") from error
+        else:
+            raise RuntimeError("Nonce status diagnostic accepted a non-redirect consumer response.")
+
     class MetadataResponse:
         def __init__(self, headers: list[tuple[str, str]]) -> None:
             self.status = 404

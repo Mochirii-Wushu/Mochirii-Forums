@@ -187,7 +187,36 @@ def exactly_one(values: dict[str, list[str]], name: str) -> str:
 def request_nonce(session: Session, secret: bytes) -> str:
     status, headers, _body = session.get("/session/sso?return_path=%2Flatest")
     if status != 302:
-        raise RuntimeError("Built-in consumer did not issue its signed producer request.")
+        category = {
+            400: "bad-request",
+            401: "unauthorized",
+            403: "forbidden",
+            404: "not-found",
+            408: "request-timeout",
+            419: "private-denial",
+            422: "unprocessable",
+            429: "rate-limited",
+            500: "internal-error",
+            502: "bad-gateway",
+            503: "unavailable",
+            504: "gateway-timeout",
+        }.get(status)
+        if category is None:
+            if 200 <= status < 300:
+                category = "unexpected-success"
+            elif 300 <= status < 400:
+                category = "unexpected-redirect"
+            elif 400 <= status < 500:
+                category = "other-client-error"
+            elif 500 <= status < 600:
+                category = "other-server-error"
+            else:
+                category = "invalid-status"
+        retry_after = "present" if headers.get("retry-after") else "absent"
+        raise RuntimeError(
+            "Built-in consumer did not issue its signed producer request "
+            f"[response={category}; retry-after={retry_after}]."
+        )
     location = exactly_one(headers, "location")
     parsed = urlparse(location)
     if (parsed.scheme, parsed.netloc, parsed.path) != ("https", "mochirii.com", "/forums/connect"):
