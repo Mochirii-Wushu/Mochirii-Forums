@@ -568,9 +568,10 @@ def assert_local_login_denied(session: Session) -> None:
 
 
 def assert_admin_recovery_token_invalid(session: Session, path: str, message: str) -> None:
-    status, headers, _body = session.get(path)
+    status, headers, body = session.get(path)
     if status == 403:
         return
+    success_detail = ""
     category = {
         400: "bad-request",
         401: "unauthorized",
@@ -587,6 +588,63 @@ def assert_admin_recovery_token_invalid(session: Session, path: str, message: st
     if category is None:
         if 200 <= status < 300:
             category = "unexpected-success"
+            status_category = "ok" if status == 200 else "no-content" if status == 204 else "other"
+            content_types = headers.get("content-type", [])
+            media_type = (
+                content_types[0].partition(";")[0].strip(" \t").lower()
+                if len(content_types) == 1
+                else ""
+            )
+            if media_type == "application/json":
+                media_category = "json"
+            elif media_type in {"application/xhtml+xml", "text/html"}:
+                media_category = "html"
+            else:
+                media_category = "other"
+
+            def unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                value: dict[str, object] = {}
+                for key, item in pairs:
+                    if key in value:
+                        raise ValueError
+                    value[key] = item
+                return value
+
+            def reject_json_constant(_value: str) -> None:
+                raise ValueError
+
+            try:
+                document = json.loads(
+                    body,
+                    object_pairs_hook=unique_json_object,
+                    parse_constant=reject_json_constant,
+                )
+            except (UnicodeDecodeError, ValueError, RecursionError):
+                envelope_category = "malformed"
+            else:
+                requested_token = re.fullmatch(
+                    r"/session/email-login/([A-Za-z0-9_-]{20,256})",
+                    path,
+                )
+                if (
+                    isinstance(document, dict)
+                    and requested_token is not None
+                    and document.get("can_login") is True
+                    and document.get("token") == requested_token.group(1)
+                    and document.get("token_email") == "stage4-fixture@forums.mochirii.com"
+                ):
+                    envelope_category = "requested-token-current"
+                elif (
+                    isinstance(document, dict)
+                    and document.get("can_login") is False
+                    and isinstance(document.get("error"), str)
+                ):
+                    envelope_category = "invalid-token"
+                else:
+                    envelope_category = "other"
+            success_detail = (
+                f"; status={status_category}; media={media_category}; envelope={envelope_category}"
+            )
         elif 300 <= status < 400:
             category = "unexpected-redirect"
         elif 400 <= status < 500:
@@ -596,7 +654,9 @@ def assert_admin_recovery_token_invalid(session: Session, path: str, message: st
         else:
             category = "invalid-status"
     retry_after = "present" if "retry-after" in headers else "absent"
-    raise RuntimeError(f"{message} [response={category}; retry-after={retry_after}]")
+    raise RuntimeError(
+        f"{message} [response={category}{success_detail}; retry-after={retry_after}]"
+    )
 
 
 def verify_admin_email_recovery(port: int, member_session: Session) -> None:

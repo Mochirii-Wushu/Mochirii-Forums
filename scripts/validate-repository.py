@@ -198,7 +198,7 @@ CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78a
 APP_TEMPLATE_SHA256 = "068b3e2d0ff9edf5f03a508575706ca4347d39e8af1e8448654198dad67ef62f"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "4faf0814055b54931608011f51afaea8e2300ea6a115013d8beba0ccb913fd57"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "1e4c4b6e32cbebfa6cf3c4377ccb2679459b724ae1f34c95ef1e6391f7e802ab"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -2254,9 +2254,10 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     invalid_admin_token_function = invalid_admin_token_functions[0]
     expected_invalid_admin_token_function = ast.parse(
         '''def assert_admin_recovery_token_invalid(session: Session, path: str, message: str) -> None:
-    status, headers, _body = session.get(path)
+    status, headers, body = session.get(path)
     if status == 403:
         return
+    success_detail = ""
     category = {
         400: "bad-request",
         401: "unauthorized",
@@ -2273,6 +2274,63 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     if category is None:
         if 200 <= status < 300:
             category = "unexpected-success"
+            status_category = "ok" if status == 200 else "no-content" if status == 204 else "other"
+            content_types = headers.get("content-type", [])
+            media_type = (
+                content_types[0].partition(";")[0].strip(" \\t").lower()
+                if len(content_types) == 1
+                else ""
+            )
+            if media_type == "application/json":
+                media_category = "json"
+            elif media_type in {"application/xhtml+xml", "text/html"}:
+                media_category = "html"
+            else:
+                media_category = "other"
+
+            def unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+                value: dict[str, object] = {}
+                for key, item in pairs:
+                    if key in value:
+                        raise ValueError
+                    value[key] = item
+                return value
+
+            def reject_json_constant(_value: str) -> None:
+                raise ValueError
+
+            try:
+                document = json.loads(
+                    body,
+                    object_pairs_hook=unique_json_object,
+                    parse_constant=reject_json_constant,
+                )
+            except (UnicodeDecodeError, ValueError, RecursionError):
+                envelope_category = "malformed"
+            else:
+                requested_token = re.fullmatch(
+                    r"/session/email-login/([A-Za-z0-9_-]{20,256})",
+                    path,
+                )
+                if (
+                    isinstance(document, dict)
+                    and requested_token is not None
+                    and document.get("can_login") is True
+                    and document.get("token") == requested_token.group(1)
+                    and document.get("token_email") == "stage4-fixture@forums.mochirii.com"
+                ):
+                    envelope_category = "requested-token-current"
+                elif (
+                    isinstance(document, dict)
+                    and document.get("can_login") is False
+                    and isinstance(document.get("error"), str)
+                ):
+                    envelope_category = "invalid-token"
+                else:
+                    envelope_category = "other"
+            success_detail = (
+                f"; status={status_category}; media={media_category}; envelope={envelope_category}"
+            )
         elif 300 <= status < 400:
             category = "unexpected-redirect"
         elif 400 <= status < 500:
@@ -2282,7 +2340,9 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         else:
             category = "invalid-status"
     retry_after = "present" if "retry-after" in headers else "absent"
-    raise RuntimeError(f"{message} [response={category}; retry-after={retry_after}]")
+    raise RuntimeError(
+        f"{message} [response={category}{success_detail}; retry-after={retry_after}]"
+    )
 '''
     ).body[0]
     if ast.dump(invalid_admin_token_function, include_attributes=False) != ast.dump(

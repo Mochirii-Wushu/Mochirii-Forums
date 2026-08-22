@@ -1702,29 +1702,165 @@ def test_https_consumer_fixture_contract() -> None:
     if valid_invalid_token.requests != [invalid_token_path]:
         raise RuntimeError("Invalid administrator recovery token verifier request count changed.")
 
+    requested_token = invalid_token_path.rsplit("/", 1)[1]
+    invalid_token_body = b'{"can_login":false,"error":"MOCHIRII_PRIVATE_INVALID_TOKEN_SENTINEL"}'
+    requested_token_body = json.dumps(
+        {
+            "can_login": True,
+            "token": requested_token,
+            "token_email": "stage4-fixture@forums.mochirii.com",
+            "private": "MOCHIRII_PRIVATE_CURRENT_TOKEN_SENTINEL",
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
     hostile_invalid_token_responses = (
-        (200, {}, "unexpected-success", "absent"),
-        (302, {}, "unexpected-redirect", "absent"),
-        (400, {}, "bad-request", "absent"),
-        (401, {}, "unauthorized", "absent"),
-        (404, {}, "not-found", "absent"),
-        (408, {}, "request-timeout", "absent"),
-        (418, {}, "other-client-error", "absent"),
-        (419, {}, "private-denial", "absent"),
-        (422, {}, "unprocessable", "absent"),
-        (429, {"retry-after": ["MOCHIRII_PRIVATE_RETRY_SENTINEL"]}, "rate-limited", "present"),
-        (500, {}, "internal-error", "absent"),
-        (501, {}, "other-server-error", "absent"),
-        (502, {}, "bad-gateway", "absent"),
-        (503, {}, "unavailable", "absent"),
-        (504, {}, "gateway-timeout", "absent"),
-        (700, {}, "invalid-status", "absent"),
+        (200, {}, invalid_token_body, "unexpected-success", "absent", ("ok", "other", "invalid-token")),
+        (
+            200,
+            {"content-type": ["application/json; charset=utf-8"]},
+            requested_token_body,
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "requested-token-current"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            json.dumps(
+                {
+                    "can_login": True,
+                    "token": "MOCHIRII_PRIVATE_WRONG_TOKEN_SENTINEL",
+                    "token_email": "stage4-fixture@forums.mochirii.com",
+                },
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "other"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            json.dumps(
+                {
+                    "can_login": True,
+                    "token": requested_token,
+                    "token_email": "MOCHIRII_PRIVATE_WRONG_EMAIL_SENTINEL",
+                },
+                separators=(",", ":"),
+            ).encode("utf-8"),
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "other"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            b'{"can_login":false,"error":false,"private":"MOCHIRII_PRIVATE_ERROR_TYPE_SENTINEL"}',
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "other"),
+        ),
+        (
+            201,
+            {"content-type": ["application/json"]},
+            requested_token_body,
+            "unexpected-success",
+            "absent",
+            ("other", "json", "requested-token-current"),
+        ),
+        (
+            204,
+            {"content-type": ["application/json"]},
+            b"",
+            "unexpected-success",
+            "absent",
+            ("no-content", "json", "malformed"),
+        ),
+        (
+            200,
+            {"content-type": ["text/html; charset=utf-8"]},
+            b"<html>MOCHIRII_PRIVATE_HTML_SENTINEL</html>",
+            "unexpected-success",
+            "absent",
+            ("ok", "html", "malformed"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json", "text/html"]},
+            invalid_token_body,
+            "unexpected-success",
+            "absent",
+            ("ok", "other", "invalid-token"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            b'{"can_login":true,"can_login":false,"error":"MOCHIRII_PRIVATE_DUPLICATE_SENTINEL"}',
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "malformed"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            b'{"can_login":NaN,"private":"MOCHIRII_PRIVATE_CONSTANT_SENTINEL"}',
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "malformed"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            b'{"can_login":"\xff"}',
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "malformed"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            b'{"private":"MOCHIRII_PRIVATE_MALFORMED_SENTINEL","can_login":',
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "malformed"),
+        ),
+        (
+            200,
+            {"content-type": ["application/json"]},
+            b'["MOCHIRII_PRIVATE_OTHER_SENTINEL"]',
+            "unexpected-success",
+            "absent",
+            ("ok", "json", "other"),
+        ),
+        (302, {}, invalid_token_body, "unexpected-redirect", "absent", None),
+        (400, {}, invalid_token_body, "bad-request", "absent", None),
+        (401, {}, invalid_token_body, "unauthorized", "absent", None),
+        (404, {}, invalid_token_body, "not-found", "absent", None),
+        (408, {}, invalid_token_body, "request-timeout", "absent", None),
+        (418, {}, invalid_token_body, "other-client-error", "absent", None),
+        (419, {}, invalid_token_body, "private-denial", "absent", None),
+        (422, {}, invalid_token_body, "unprocessable", "absent", None),
+        (
+            429,
+            {"retry-after": ["MOCHIRII_PRIVATE_RETRY_SENTINEL"]},
+            invalid_token_body,
+            "rate-limited",
+            "present",
+            None,
+        ),
+        (500, {}, invalid_token_body, "internal-error", "absent", None),
+        (501, {}, invalid_token_body, "other-server-error", "absent", None),
+        (502, {}, invalid_token_body, "bad-gateway", "absent", None),
+        (503, {}, invalid_token_body, "unavailable", "absent", None),
+        (504, {}, invalid_token_body, "gateway-timeout", "absent", None),
+        (700, {}, invalid_token_body, "invalid-status", "absent", None),
     )
-    for status, headers, category, retry_after in hostile_invalid_token_responses:
+    for status, headers, body, category, retry_after, success_categories in hostile_invalid_token_responses:
         hostile_session = InvalidAdminTokenSession(
             status,
             headers,
-            b'{"can_login":false,"error":"MOCHIRII_PRIVATE_INVALID_TOKEN_SENTINEL"}',
+            body,
         )
         try:
             CONNECT_FIXTURE.assert_admin_recovery_token_invalid(
@@ -1733,13 +1869,24 @@ def test_https_consumer_fixture_contract() -> None:
                 invalid_token_message,
             )
         except RuntimeError as error:
+            success_detail = (
+                ""
+                if success_categories is None
+                else (
+                    f"; status={success_categories[0]}; media={success_categories[1]}; "
+                    f"envelope={success_categories[2]}"
+                )
+            )
             expected = (
                 f"{invalid_token_message} "
-                f"[response={category}; retry-after={retry_after}]"
+                f"[response={category}{success_detail}; retry-after={retry_after}]"
             )
             if (
                 str(error) != expected
                 or "PRIVATE" in str(error)
+                or invalid_token_path in str(error)
+                or requested_token in str(error)
+                or "stage4-fixture@forums.mochirii.com" in str(error)
                 or len(str(error)) > 192
                 or hostile_session.requests != [invalid_token_path]
             ):
