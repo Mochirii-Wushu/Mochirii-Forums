@@ -56,6 +56,30 @@ FORBIDDEN_RESPONSE_METADATA = re.compile(
 )
 
 
+def forbidden_response_header_name_category(name: str) -> str:
+    lowered = name.lower()
+    categories = {
+        "x-discourse-route": "route",
+        "x-discourse-username": "username",
+        "x-discourse-crawler-view": "crawler",
+        "discourse-no-onebox": "onebox",
+        "discourse-rate-limit-error-code": "rate-limit",
+        "discourse-xhr-redirect": "xhr-redirect",
+        "discourse-actions-remaining": "action-budget",
+        "discourse-actions-max": "action-budget",
+        "discourse-logged-out": "logged-out",
+        "x-discourse-trackview": "view-tracking",
+        "x-discourse-browserpageview": "view-tracking",
+        "x-discourse-cached": "cache",
+        "discourse-readonly": "readonly",
+    }
+    if lowered in categories:
+        return categories[lowered]
+    if "digitalocean" in lowered or "amazonaws" in lowered:
+        return "provider"
+    return "other-upstream"
+
+
 class VisibleText(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -128,23 +152,26 @@ class Session:
             for name, value in response.getheaders():
                 name_violation = FORBIDDEN_RESPONSE_METADATA.search(name)
                 value_violation = FORBIDDEN_RESPONSE_METADATA.search(value)
-                if name_violation or value_violation:
-                    surface = "name"
-                    matched = name
-                    if not name_violation:
-                        matched = value
-                        surface = {
-                            "content-security-policy": "security-policy value",
-                            "content-security-policy-report-only": "security-policy value",
-                            "link": "link value",
-                            "location": "redirect value",
-                            "nel": "reporting value",
-                            "report-to": "reporting value",
-                            "set-cookie": "cookie value",
-                        }.get(name.lower(), "other value")
+                if name_violation:
+                    category = forbidden_response_header_name_category(name)
+                    identity = "provider" if category == "provider" else "upstream-product"
+                    raise RuntimeError(
+                        "A member-facing response header name exposed "
+                        f"{identity} identity [category={category}]."
+                    )
+                if value_violation:
+                    surface = {
+                        "content-security-policy": "security-policy value",
+                        "content-security-policy-report-only": "security-policy value",
+                        "link": "link value",
+                        "location": "redirect value",
+                        "nel": "reporting value",
+                        "report-to": "reporting value",
+                        "set-cookie": "cookie value",
+                    }.get(name.lower(), "other value")
                     identity = (
                         "provider"
-                        if re.search(r"digitalocean(?:spaces)?|amazonaws", matched, re.I)
+                        if re.search(r"digitalocean(?:spaces)?|amazonaws", value, re.I)
                         else "upstream-product"
                     )
                     raise RuntimeError(

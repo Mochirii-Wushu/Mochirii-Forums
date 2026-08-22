@@ -198,7 +198,7 @@ CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78a
 APP_TEMPLATE_SHA256 = "be18aec37434153d19a05d3a59ab5372d43eab4fa87ab57761637140fc599f8e"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "a2086953e70ea154496ba0b0655977261fc307e525a140ea164dc33f3bbc2ce4"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "a723f6030e59d44e1f4e417112deae257d4b34095228011d11982b5b6e1ec625"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "f5080a2b9cae3cf493383334a05390bd70d62ad31f7bfe3f13befff4e7c33024"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -1997,6 +1997,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
             ):
                 fail("DiscourseConnect fixture module constant executes an unexpected call.")
     expected_definition_shape = [
+        ("function", "forbidden_response_header_name_category"),
         ("class", "VisibleText"),
         ("function", "register_sensitive_marker"),
         ("function", "register_admin_recovery_markers"),

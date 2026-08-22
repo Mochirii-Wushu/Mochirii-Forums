@@ -1507,11 +1507,32 @@ def test_https_consumer_fixture_contract() -> None:
     try:
         CONNECT_FIXTURE.http.client.HTTPConnection = MetadataConnection
         CONNECT_FIXTURE.time.sleep = lambda seconds: pacing_events.append(("sleep", seconds))
-        metadata_cases = (
+        metadata_name_categories = (
+            ("X-Discourse-Route", "route"),
+            ("X-Discourse-Username", "username"),
+            ("X-Discourse-Crawler-View", "crawler"),
+            ("Discourse-No-Onebox", "onebox"),
+            ("Discourse-Rate-Limit-Error-Code", "rate-limit"),
+            ("Discourse-Xhr-Redirect", "xhr-redirect"),
+            ("Discourse-Actions-Remaining", "action-budget"),
+            ("Discourse-Actions-Max", "action-budget"),
+            ("Discourse-Logged-Out", "logged-out"),
+            ("X-Discourse-TrackView", "view-tracking"),
+            ("X-Discourse-BrowserPageView", "view-tracking"),
+            ("X-Discourse-Cached", "cache"),
+            ("dIsCoUrSe-ReAdOnLy", "readonly"),
+            ("X-Discourse-Private-Sentinel", "other-upstream"),
+            ("X-DigitalOcean-Private-Sentinel", "provider"),
+        )
+        metadata_cases = tuple(
             (
-                [("X-Discourse-Route", "fixture")],
-                "A member-facing response header name exposed upstream-product identity.",
-            ),
+                [(name, "private-sentinel-value")],
+                "A member-facing response header name exposed "
+                + ("provider" if category == "provider" else "upstream-product")
+                + f" identity [category={category}].",
+            )
+            for name, category in metadata_name_categories
+        ) + (
             (
                 [("Content-Security-Policy", "worker-src https://private-sentinel.digitaloceanspaces.com")],
                 "A member-facing response header security-policy value exposed provider identity.",
@@ -1530,7 +1551,11 @@ def test_https_consumer_fixture_contract() -> None:
             try:
                 CONNECT_FIXTURE.Session(18080).get("/metadata-fixture")
             except RuntimeError as error:
-                if str(error) != expected_error or "private-sentinel" in str(error):
+                if (
+                    str(error) != expected_error
+                    or "private-sentinel" in str(error).lower()
+                    or len(str(error)) > 192
+                ):
                     raise RuntimeError("Consumer response-metadata diagnostic is not fixed and redacted.") from error
             else:
                 raise RuntimeError("Consumer response-metadata diagnostic accepted prohibited identity.")
