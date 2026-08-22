@@ -42,7 +42,7 @@ MAX_MEMINFO_BYTES = 65536
 RESOURCE_COMMAND_TIMEOUT = 5
 MAX_PUPS_TRACE_BYTES = 1024
 PUPS_TRACE_MODE = "stage4-fixture-pups-1.4.0-v1"
-PUPS_TRACE_PLAN = "pups-1.4.0-stage4-92-v1"
+PUPS_TRACE_PLAN = "pups-1.4.0-stage4-97-v1"
 PUPS_TRACE_STAGES = {
     "postgres", "redis", "web-pre-code", "code", "redis-after-code",
     "mochirii-after-code", "web-config", "web", "yarn", "bundle-exec",
@@ -55,7 +55,8 @@ PUPS_TRACE_EXEC_COUNTS = {
     18: 1, 19: 1, 23: 3, 29: 1, 35: 1, 36: 1, 37: 1, 38: 1,
     39: 1, 40: 3, 41: 1, 49: 17, 51: 1, 52: 1, 53: 16,
     57: 2, 58: 1, 59: 1, 60: 1, 61: 4, 62: 1, 63: 1,
-    64: 1, 65: 1, 66: 1, 67: 1, 68: 1, 92: 9,
+    64: 1, 65: 1, 66: 1, 67: 1, 68: 1,
+    88: 1, 90: 1, 97: 10,
 }
 
 PUPS_TRACE_OBSERVER = r'''# frozen_string_literal: true
@@ -72,7 +73,7 @@ hostile_fixture_state = hostile_fixture_mode == "source-only-hostile-fixture" &&
 
 if trace_mode == "stage4-fixture-pups-1.4.0-v1" && (production_state || hostile_fixture_state)
   module MochiriiPupsTrace
-    PLAN_VERSION = "pups-1.4.0-stage4-92-v1"
+    PLAN_VERSION = "pups-1.4.0-stage4-97-v1"
     MAX_BYTES = 1024
     MAX_ITEMS = 256
     ALLOWED_KINDS = %w[exec file merge replace].freeze
@@ -88,7 +89,10 @@ if trace_mode == "stage4-fixture-pups-1.4.0-v1" && (production_state || hostile_
       exec exec exec file file file file file file replace exec replace exec exec exec replace replace replace
       exec exec exec exec exec exec exec exec exec exec exec exec
       replace
-      file file file file file file file file file file file file file file file file file file file file file file
+      file file file file file file file file file
+      file file file file file file file file file
+      exec replace exec
+      file file file file file file
       exec
     ].freeze
     EXPECTED_HOOKS = {
@@ -101,7 +105,8 @@ if trace_mode == "stage4-fixture-pups-1.4.0-v1" && (production_state || hostile_
       18 => 1, 19 => 1, 23 => 3, 29 => 1, 35 => 1, 36 => 1, 37 => 1, 38 => 1,
       39 => 1, 40 => 3, 41 => 1, 49 => 17, 51 => 1, 52 => 1, 53 => 16,
       57 => 2, 58 => 1, 59 => 1, 60 => 1, 61 => 4, 62 => 1, 63 => 1,
-      64 => 1, 65 => 1, 66 => 1, 67 => 1, 68 => 1, 92 => 9,
+      64 => 1, 65 => 1, 66 => 1, 67 => 1, 68 => 1,
+      88 => 1, 90 => 1, 97 => 10,
     }.freeze
 
     class TraceStateError < StandardError
@@ -182,8 +187,8 @@ if trace_mode == "stage4-fixture-pups-1.4.0-v1" && (production_state || hostile_
         when 68 then "assets-precompile"
         when 69..81 then "web-finalize"
         when 82..83 then "rate-limit"
-        when 84..91 then "mochirii-files"
-        when 92 then "mochirii-final"
+        when 84..96 then "mochirii-files"
+        when 97 then "mochirii-final"
         else "plan-drift"
         end
       end
@@ -457,9 +462,9 @@ def pups_trace_stage(ordinal: int) -> str:
         return "web-finalize"
     if 82 <= ordinal <= 83:
         return "rate-limit"
-    if 84 <= ordinal <= 91:
+    if 84 <= ordinal <= 96:
         return "mochirii-files"
-    if ordinal == 92:
+    if ordinal == 97:
         return "mochirii-final"
     return "plan-drift"
 
@@ -570,8 +575,8 @@ def read_pups_trace(path: Path) -> dict[str, object]:
     )
     if valid_relation and layout_exact:
         valid_relation = (
-            item_count == 92
-            and 1 <= item_ordinal <= 92
+            item_count == 97
+            and 1 <= item_ordinal <= 97
             and stage == pups_trace_stage(item_ordinal)
             and completed < item_ordinal
             and subcommand_count == expected_subcommands

@@ -61,7 +61,10 @@ file file file replace replace exec replace replace replace replace replace exec
 exec exec exec file file file file file file replace exec replace exec exec exec replace replace replace
 exec exec exec exec exec exec exec exec exec exec exec exec
 replace
-file file file file file file file file file file file file file file file file file file file file file file
+file file file file file file file file file
+file file file file file file file file file
+exec replace exec
+file file file file file file
 exec
 """.split()
 PLAN_HOOKS = {
@@ -73,14 +76,15 @@ PLAN_EXEC_COUNTS = {
     18: 1, 19: 1, 23: 3, 29: 1, 35: 1, 36: 1, 37: 1, 38: 1,
     39: 1, 40: 3, 41: 1, 49: 17, 51: 1, 52: 1, 53: 16,
     57: 2, 58: 1, 59: 1, 60: 1, 61: 4, 62: 1, 63: 1,
-    64: 1, 65: 1, 66: 1, 67: 1, 68: 1, 92: 9,
+    64: 1, 65: 1, 66: 1, 67: 1, 68: 1,
+    88: 1, 90: 1, 97: 10,
 }
 
 def trace_failure(scenario):
     return {
         "trace-terminal-code": (49, 7, 42),
-        "trace-terminal-final-first": (92, 1, 37),
-        "trace-terminal-final-last": (92, 9, 37),
+        "trace-terminal-final-first": (97, 1, 37),
+        "trace-terminal-final-last": (97, 10, 37),
         "trace-file-failure": (84, 0, 1),
         "trace-plan-88": (49, 7, 42),
         "trace-marker-malformed": (49, 7, 42),
@@ -249,7 +253,7 @@ def run_trace_scenario(scenario, docker_args, token):
         record.chmod(0o600)
     elif scenario == "trace-marker-ordinal":
         document = json.loads(record.read_text())
-        document["itemOrdinal"] = 93
+        document["itemOrdinal"] = 98
         record.write_text(json.dumps(document, sort_keys=True) + "\n")
         record.chmod(0o600)
     elif scenario == "trace-marker-subcount":
@@ -805,7 +809,7 @@ def failure_classifier_fixture() -> None:
             "pups_stage=code",
             "pups_phase=terminal-failure",
             "pups_item_ordinal=49",
-            "pups_item_count=92",
+            "pups_item_count=97",
             "pups_completed_item_count=48",
             "pups_exec_subcommand_ordinal=7",
             "pups_exec_subcommand_count=17",
@@ -815,20 +819,20 @@ def failure_classifier_fixture() -> None:
             "pups_trace_valid=true",
             "pups_layout_exact=true",
             "pups_stage=mochirii-final",
-            "pups_item_ordinal=92",
-            "pups_completed_item_count=91",
+            "pups_item_ordinal=97",
+            "pups_completed_item_count=96",
             "pups_exec_subcommand_ordinal=1",
-            "pups_exec_subcommand_count=9",
+            "pups_exec_subcommand_count=10",
             "pups_exit_code=37",
         ),
         "trace-terminal-final-last": (
             "pups_trace_valid=true",
             "pups_layout_exact=true",
             "pups_stage=mochirii-final",
-            "pups_item_ordinal=92",
-            "pups_completed_item_count=91",
-            "pups_exec_subcommand_ordinal=9",
-            "pups_exec_subcommand_count=9",
+            "pups_item_ordinal=97",
+            "pups_completed_item_count=96",
+            "pups_exec_subcommand_ordinal=10",
+            "pups_exec_subcommand_count=10",
             "pups_exit_code=37",
         ),
         "trace-file-failure": (
@@ -1095,15 +1099,32 @@ require "yaml"
 
 document = YAML.safe_load_file(ARGV.fetch(0), aliases: true)
 expected = {
+  "/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/discourse/35-mochirii-public-response-headers.inc"),
   "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf" =>
     File.join(ARGV.fetch(1), "conf.d/outlets/discourse/40-mochirii-public-metadata.conf"),
+  "/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/server/35-mochirii-public-response-headers.conf"),
   "/etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf" =>
     File.join(ARGV.fetch(1), "conf.d/outlets/server/40-mochirii-feed-denial.conf"),
 }
 items = document.fetch("run")
 final_commands = items.fetch(-1).fetch("exec").fetch("cmd")
+expected_header_include = %q{test "$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;' /etc/nginx/conf.d/discourse.conf)" -eq 1}
 expected_nginx = "test ! -L /var/log/nginx && install -d -m 0755 -o root -g adm /var/log/nginx && nginx -t"
-abort "final Nginx command differs" unless final_commands.length == 9 && final_commands.fetch(-1) == expected_nginx
+abort "final response-header include command differs" unless final_commands.length == 10 && final_commands.fetch(-3) == expected_header_include
+abort "final Nginx command differs" unless final_commands.fetch(-1) == expected_nginx
+outlet_directories = [
+  "/etc/nginx/conf.d/outlets/discourse",
+  "/etc/nginx/conf.d/outlets/server",
+]
+actual_outlets = items.filter_map do |item|
+  file = item["file"]
+  next unless file.is_a?(Hash) && file["path"].is_a?(String)
+  next unless outlet_directories.include?(File.dirname(file["path"]))
+  file["path"]
+end
+abort "outlet inventory differs" unless actual_outlets.sort == expected.keys.sort
 expected.each do |source, destination|
   matches = items.select { |item| item["file"].is_a?(Hash) && item["file"]["path"] == source }
   abort "outlet inventory differs" unless matches.length == 1
