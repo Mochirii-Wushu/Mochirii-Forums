@@ -4986,7 +4986,7 @@ def test_sensitive_callback_markers() -> None:
             "module MochiriiSensitiveUserAuthTokenAuditFilter",
             "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",
             "UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter)",
-            "Rails.application.config.filter_parameters |= %i[sso sig token]",
+            "Rails.application.config.filter_parameters |= %i[email sso sig token]",
             exact_route,
             denial_route,
             "error_page 420 = @mochirii_email_login_denied;",
@@ -5066,7 +5066,32 @@ def test_sensitive_callback_markers() -> None:
         finally:
             VALIDATOR.read = original_read
 
+        app_candidate = app.replace(
+            "Rails.application.config.filter_parameters |= %i[email sso sig token]",
+            "Rails.application.config.filter_parameters |= %i[sso sig token]",
+            1,
+        )
+        original_read = VALIDATOR.read
+        try:
+            VALIDATOR.read = lambda path: app_candidate if path == "config/app.yml.example" else original_read(path)
+            try:
+                VALIDATOR.validate_template()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Repository validator accepted an unfiltered member-email parameter.")
+        finally:
+            VALIDATOR.read = original_read
+
         runtime_verifier = (ROOT / "scripts/verify-site.rb").read_text(encoding="utf-8")
+        runtime_email_filter = '''checks["discourse_connect_log_parameters_filtered"] =
+  Rails.application.config.filter_parameters.include?(:email) &&
+    Rails.application.config.filter_parameters.include?(:sso) &&
+    Rails.application.config.filter_parameters.include?(:sig) &&
+    Rails.application.config.filter_parameters.include?(:token)
+'''
+        if runtime_verifier.count(runtime_email_filter) != 1:
+            raise RuntimeError("Runtime verifier omitted the exact member-email parameter filter check.")
         runtime_candidate = runtime_verifier.replace(
             '    filtered_audit == { action: "generate", path: "/session/email-login/[FILTERED]" } &&\n',
             "    true &&\n",

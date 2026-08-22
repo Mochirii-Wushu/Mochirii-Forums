@@ -193,9 +193,9 @@ checks["narrative_system_user_branded"] =
     "narrative_system_user_gravatar_absent",
   ).all?
 '''
-RUNTIME_VERIFIER_SHA256 = "e3af12650a530ba3460fc5dfadda0cbfa2b502d75b40eeb3b6ce847099861017"
+RUNTIME_VERIFIER_SHA256 = "b87598ebd8678840cf51e72b80acf8304f684ffc2c69124a54c355e77cbcf7c7"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "068b3e2d0ff9edf5f03a508575706ca4347d39e8af1e8448654198dad67ef62f"
+APP_TEMPLATE_SHA256 = "ac36307e0db6e3ed6ec673b1e703d047f20f0a069e30b468d92e69cc2c13a4cd"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
 DISCOURSE_CONNECT_VERIFIER_SHA256 = "2feffe78bd228f2197e9eaa7f7ef1a70b6459a4840e6a7e883712498730fdc22"
@@ -536,6 +536,14 @@ def fail(message: str) -> None:
 
 
 def validate_theme_runtime_verifier(source: str) -> None:
+    sensitive_parameter_filter = '''checks["discourse_connect_log_parameters_filtered"] =
+  Rails.application.config.filter_parameters.include?(:email) &&
+    Rails.application.config.filter_parameters.include?(:sso) &&
+    Rails.application.config.filter_parameters.include?(:sig) &&
+    Rails.application.config.filter_parameters.include?(:token)
+'''
+    if source.count(sensitive_parameter_filter) != 1:
+        fail("Runtime verifier lost the exact member-email and callback parameter filter check.")
     start = 'checks["theme_logo_uploads"] =\n'
     end = 'checks["core_revision"] ='
     if source.count(start) != 1 or source.count(end) != 1:
@@ -2760,7 +2768,7 @@ def validate_template() -> None:
             "Access unavailable · Mochirii Forums",
             "Request unavailable · Mochirii Forums",
             "Temporarily unavailable · Mochirii Forums",
-            "Rails.application.config.filter_parameters |= %i[sso sig token]",
+            "Rails.application.config.filter_parameters |= %i[email sso sig token]",
             "module MochiriiSensitiveRequestPathFilter",
             "return FILTERED_EMAIL_LOGIN_PATH if path.match?(EMAIL_LOGIN_PATH)",
             "module MochiriiSensitiveUserAuthTokenAuditFilter",
@@ -2785,9 +2793,10 @@ def validate_template() -> None:
         # frozen_string_literal: true
 
         # The DiscourseConnect callback carries the signed payload and signature
-        # in its query. Administrator recovery carries its token in one pinned
-        # route segment. Preserve PATH_INFO/routing while redacting only that
-        # canonical segment from Rails::Rack::Logger's filtered_path.
+        # in its query. Local email-login requests carry a member email, and
+        # administrator recovery carries its token in one pinned route segment.
+        # Preserve PATH_INFO/routing while redacting only that canonical segment
+        # from Rails::Rack::Logger's filtered_path.
         module MochiriiSensitiveRequestPathFilter
           EMAIL_LOGIN_PATH = %r{\A/session/email-login/[A-Za-z0-9_-]{20,256}\z}.freeze
           FILTERED_EMAIL_LOGIN_PATH = "/session/email-login/[FILTERED]".freeze
@@ -2820,7 +2829,7 @@ def validate_template() -> None:
           UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
             UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
         end
-        Rails.application.config.filter_parameters |= %i[sso sig token]
+        Rails.application.config.filter_parameters |= %i[email sso sig token]
 '''
     if app.count(sensitive_initializer) != 1:
         fail("Sensitive request and authentication audit filters differ.")

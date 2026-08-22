@@ -104,7 +104,8 @@ checks["discourse_connect_logging_disabled"] = SiteSetting.verbose_discourse_con
 checks["discourse_connect_consumer_only"] = SiteSetting.enable_discourse_connect_provider == false
 checks["discourse_connect_session_nonce"] = SiteSetting.discourse_connect_csrf_protection == true
 checks["discourse_connect_log_parameters_filtered"] =
-  Rails.application.config.filter_parameters.include?(:sso) &&
+  Rails.application.config.filter_parameters.include?(:email) &&
+    Rails.application.config.filter_parameters.include?(:sso) &&
     Rails.application.config.filter_parameters.include?(:sig) &&
     Rails.application.config.filter_parameters.include?(:token)
 recovery_token = "a" * 32

@@ -178,9 +178,10 @@ __MOCHIRII_TLS_RUN__
         # frozen_string_literal: true
 
         # The DiscourseConnect callback carries the signed payload and signature
-        # in its query. Administrator recovery carries its token in one pinned
-        # route segment. Preserve PATH_INFO/routing while redacting only that
-        # canonical segment from Rails::Rack::Logger's filtered_path.
+        # in its query. Local email-login requests carry a member email, and
+        # administrator recovery carries its token in one pinned route segment.
+        # Preserve PATH_INFO/routing while redacting only that canonical segment
+        # from Rails::Rack::Logger's filtered_path.
         module MochiriiSensitiveRequestPathFilter
           EMAIL_LOGIN_PATH = %r{\A/session/email-login/[A-Za-z0-9_-]{20,256}\z}.freeze
           FILTERED_EMAIL_LOGIN_PATH = "/session/email-login/[FILTERED]".freeze
@@ -213,7 +214,7 @@ __MOCHIRII_TLS_RUN__
           UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
             UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
         end
-        Rails.application.config.filter_parameters |= %i[sso sig token]
+        Rails.application.config.filter_parameters |= %i[email sso sig token]
   - file:
       path: /etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc
       contents: |
