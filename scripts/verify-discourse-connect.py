@@ -120,8 +120,30 @@ class Session:
             response = connection.getresponse()
             values: dict[str, list[str]] = {}
             for name, value in response.getheaders():
-                if FORBIDDEN_RESPONSE_METADATA.search(name) or FORBIDDEN_RESPONSE_METADATA.search(value):
-                    raise RuntimeError("A member-facing response header exposed prohibited identity.")
+                name_violation = FORBIDDEN_RESPONSE_METADATA.search(name)
+                value_violation = FORBIDDEN_RESPONSE_METADATA.search(value)
+                if name_violation or value_violation:
+                    surface = "name"
+                    matched = name
+                    if not name_violation:
+                        matched = value
+                        surface = {
+                            "content-security-policy": "security-policy value",
+                            "content-security-policy-report-only": "security-policy value",
+                            "link": "link value",
+                            "location": "redirect value",
+                            "nel": "reporting value",
+                            "report-to": "reporting value",
+                            "set-cookie": "cookie value",
+                        }.get(name.lower(), "other value")
+                    identity = (
+                        "provider"
+                        if re.search(r"digitalocean(?:spaces)?|amazonaws", matched, re.I)
+                        else "upstream-product"
+                    )
+                    raise RuntimeError(
+                        f"A member-facing response header {surface} exposed {identity} identity."
+                    )
                 values.setdefault(name.lower(), []).append(value)
             body = response.read(MAX_BYTES + 1)
             if len(body) > MAX_BYTES:

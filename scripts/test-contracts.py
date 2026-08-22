@@ -1414,6 +1414,67 @@ def test_https_consumer_fixture_contract() -> None:
             continue
         raise RuntimeError("Hostile consumer response assertion accepted a wrong status or public response.")
 
+    class MetadataResponse:
+        def __init__(self, headers: list[tuple[str, str]]) -> None:
+            self.status = 404
+            self.headers = headers
+
+        def getheaders(self) -> list[tuple[str, str]]:
+            return self.headers
+
+        def read(self, _maximum: int) -> bytes:
+            raise RuntimeError("Prohibited response metadata was not rejected before body ingestion.")
+
+    class MetadataConnection:
+        response: MetadataResponse
+
+        def __init__(self, host: str, port: int, *, timeout: int) -> None:
+            if host != "127.0.0.1" or port != 18080 or timeout != 20:
+                raise RuntimeError("Consumer response-metadata connection fixture changed.")
+
+        def request(self, method: str, path: str, *, body, headers: dict[str, str]) -> None:
+            if method != "GET" or path != "/metadata-fixture" or body is not None or not headers:
+                raise RuntimeError("Consumer response-metadata request fixture changed.")
+
+        def getresponse(self) -> MetadataResponse:
+            return self.response
+
+        def close(self) -> None:
+            return None
+
+    original_connection = CONNECT_FIXTURE.http.client.HTTPConnection
+    try:
+        CONNECT_FIXTURE.http.client.HTTPConnection = MetadataConnection
+        metadata_cases = (
+            (
+                [("X-Discourse-Route", "fixture")],
+                "A member-facing response header name exposed upstream-product identity.",
+            ),
+            (
+                [("Content-Security-Policy", "worker-src https://private-sentinel.digitaloceanspaces.com")],
+                "A member-facing response header security-policy value exposed provider identity.",
+            ),
+            (
+                [("Location", "https://meta.discourse.org/private-sentinel")],
+                "A member-facing response header redirect value exposed upstream-product identity.",
+            ),
+            (
+                [("X-Fixture", "https://meta.discourse.org/private-sentinel")],
+                "A member-facing response header other value exposed upstream-product identity.",
+            ),
+        )
+        for headers, expected_error in metadata_cases:
+            MetadataConnection.response = MetadataResponse(headers)
+            try:
+                CONNECT_FIXTURE.Session(18080).get("/metadata-fixture")
+            except RuntimeError as error:
+                if str(error) != expected_error or "private-sentinel" in str(error):
+                    raise RuntimeError("Consumer response-metadata diagnostic is not fixed and redacted.") from error
+            else:
+                raise RuntimeError("Consumer response-metadata diagnostic accepted prohibited identity.")
+    finally:
+        CONNECT_FIXTURE.http.client.HTTPConnection = original_connection
+
     member_session = json.dumps(
         {"current_user": {"username": "mochirii-s4-test", "admin": False}},
         separators=(",", ":"),
