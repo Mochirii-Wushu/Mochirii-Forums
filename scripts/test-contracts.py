@@ -5018,6 +5018,14 @@ def test_sensitive_callback_markers() -> None:
         first_token = b"admin-token-stage4-fixture-111111111111"
         second_token = b"admin-token-stage4-fixture-222222222222"
         CONNECT_FIXTURE.register_admin_recovery_markers((first_token, second_token))
+        malformed_value = "<" * 16
+        try:
+            CONNECT_FIXTURE.base64.b64decode(malformed_value, validate=True)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("Malformed callback fixture unexpectedly became valid base64.")
+        malformed_path = CONNECT_FIXTURE.callback_path(malformed_value, "0" * 64)
         markers = sorted(CONNECT_FIXTURE.CALLBACK_LOG_MARKERS)
         categories = dict(CONNECT_FIXTURE.CALLBACK_LOG_MARKER_CATEGORIES)
         required = {
@@ -5028,12 +5036,20 @@ def test_sensitive_callback_markers() -> None:
             b"stage4-fixture%40forums.mochirii.com",
             b"Mochirii%20Stage%204%20Fixture",
             b"Mochirii+Stage+4+Fixture",
+            malformed_value.encode("ascii"),
             first_token,
             second_token,
             b"/session/email-login/" + first_token,
             b"/session/email-login/" + second_token,
         }
-        if not required.issubset(markers) or not encoded or not signature or not path.startswith("/session/sso_login?"):
+        if (
+            not required.issubset(markers)
+            or not encoded
+            or not signature
+            or not path.startswith("/session/sso_login?")
+            or not malformed_path.startswith("/session/sso_login?")
+            or categories.get(malformed_value.encode("ascii")) != "callback"
+        ):
             raise RuntimeError("Sensitive callback marker fixture omitted an exact identity or recovery credential.")
         if len(markers) > 64 or any(not 16 <= len(marker) <= 16_384 for marker in markers):
             raise RuntimeError("Sensitive callback marker inventory exceeded its exact bound.")
@@ -5262,6 +5278,11 @@ def test_sensitive_callback_markers() -> None:
             '            marker + b"\\n"\n',
             1,
         )
+        python_malformed_callback_short = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            '    malformed_value = "<" * 16\n',
+            '    malformed_value = "<"\n',
+            1,
+        )
         ruby_exit_map = '''SENSITIVE_LOG_AUDIT_EXIT_CODES = {
   input: 40,
   identity: 41,
@@ -5369,6 +5390,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             (
                 "scripts/verify-discourse-connect.py",
                 python_marker_protocol_drift,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_malformed_callback_short,
                 "DISCOURSE_CONNECT_VERIFIER_SHA256",
             ),
             (

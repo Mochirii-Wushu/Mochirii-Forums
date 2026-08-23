@@ -1022,7 +1022,7 @@ def verify_fixture(args: argparse.Namespace, secret: bytes) -> None:
 
     malformed = Session(args.port)
     request_nonce(malformed, secret)
-    malformed_value = "<"
+    malformed_value = "<" * 16
     malformed_signature = hmac.new(secret, malformed_value.encode("ascii"), hashlib.sha256).hexdigest()
     status, headers, body = malformed.get(callback_path(malformed_value, malformed_signature))
     assert_branded_error(status, headers, body, 422)

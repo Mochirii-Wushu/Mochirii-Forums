@@ -199,7 +199,7 @@ APP_TEMPLATE_SHA256 = "907d5cc632b086d8fa55f4427762763a8bb76e71fcb1dedb7ae592616
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "8efc3fdda3129b5ccdc8cc4be410c08d08fedef3d732b4994e333ac12d96db89"
 SENSITIVE_LOG_EXECUTABLE_SHA256 = "0b89a9eca81f3e7db1ef789b9218cef688937ada853f7cc0a2bd81ce321a468b"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "37bfe198368a7ccbc791f3f43d9ef8c700737caa630c32930f0a88f673c8353f"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "d9f356418089163ceda598688c534a219d799b987532505443f7204e6794fccf"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -2687,6 +2687,32 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     if len(verify_functions) != 1:
         fail("DiscourseConnect fixture verification function differs.")
     verify_function = verify_functions[0]
+    malformed_callback_indices = [
+        index
+        for index, node in enumerate(verify_function.body)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "malformed"
+    ]
+    expected_malformed_callback_statements = ast.parse(
+        '''def malformed_callback_fixture(args: argparse.Namespace, secret: bytes) -> None:
+    malformed = Session(args.port)
+    request_nonce(malformed, secret)
+    malformed_value = "<" * 16
+    malformed_signature = hmac.new(secret, malformed_value.encode("ascii"), hashlib.sha256).hexdigest()
+    status, headers, body = malformed.get(callback_path(malformed_value, malformed_signature))
+    assert_branded_error(status, headers, body, 422)
+'''
+    ).body[0].body
+    malformed_start = malformed_callback_indices[0] if len(malformed_callback_indices) == 1 else -1
+    malformed_actual = verify_function.body[
+        malformed_start : malformed_start + len(expected_malformed_callback_statements)
+    ]
+    if [ast.dump(node, include_attributes=False) for node in malformed_actual] != [
+        ast.dump(node, include_attributes=False) for node in expected_malformed_callback_statements
+    ]:
+        fail("DiscourseConnect malformed callback fixture differs or is unreachable.")
     if len(admin_recovery_functions) != 1:
         fail("DiscourseConnect administrator recovery verification function differs.")
     admin_recovery_function = admin_recovery_functions[0]
