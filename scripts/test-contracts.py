@@ -5545,8 +5545,10 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     logster_control_result == "runtime-context-probe" &&
     logster_control_env == { job: "runtime-context-probe" }
 checks["sensitive_request_fields_filtered_from_logster_context"] =
-  logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
-    logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
+  (!logster_callback_context.key?("params") ||
+    logster_callback_context["params"] == logster_callback_request.filtered_parameters) &&
+    (!logster_callback_context.key?("REQUEST_URI") ||
+      logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path) &&
     !JSON.generate(logster_callback_context).include?("member-identity-probe")
 '''
         if runtime_verifier.count(runtime_logster_filter) != 1:
@@ -5571,19 +5573,44 @@ checks["sensitive_request_fields_filtered_from_logster_context"] =
                 raise RuntimeError("Runtime verifier accepted a decoy Logster member-identity check.")
         finally:
             VALIDATOR.RUNTIME_VERIFIER_SHA256 = original_runtime_digest
+        runtime_logster_fields_candidate = runtime_verifier.replace(
+            '  (!logster_callback_context.key?("params") ||\n'
+            '    logster_callback_context["params"] == '
+            "logster_callback_request.filtered_parameters) &&\n",
+            "  true &&\n",
+            1,
+        )
+        if runtime_logster_fields_candidate == runtime_verifier:
+            raise RuntimeError("Runtime Logster filtered-or-omitted hostile mutation anchor is absent.")
+        original_runtime_digest = VALIDATOR.RUNTIME_VERIFIER_SHA256
+        try:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = hashlib.sha256(
+                runtime_logster_fields_candidate.encode("utf-8")
+            ).hexdigest()
+            try:
+                VALIDATOR.validate_theme_runtime_verifier(runtime_logster_fields_candidate)
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Runtime verifier accepted a decoy Logster field-safety check.")
+        finally:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = original_runtime_digest
         runtime_recovery_logster_filter = '''checks["admin_recovery_log_path_filtered"] =
   defined?(MochiriiSensitiveRequestPathFilter) &&
     ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter) &&
     recovery_request.path == "/session/email-login/#{recovery_token}" &&
     recovery_request.filtered_path == "/session/email-login/[FILTERED]" &&
     ordinary_request.filtered_path == "/session/email-login/too-short" &&
-    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&
+    (!recovery_logster_context.key?("REQUEST_URI") ||
+      recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]") &&
     !JSON.generate(recovery_logster_context).include?(recovery_token)
 '''
         if runtime_verifier.count(runtime_recovery_logster_filter) != 1:
             raise RuntimeError("Runtime verifier omitted the exact recovery Logster omission check.")
         runtime_recovery_logster_candidate = runtime_verifier.replace(
-            '    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&\n',
+            '    (!recovery_logster_context.key?("REQUEST_URI") ||\n'
+            '      recovery_logster_context["REQUEST_URI"] == '
+            '"/session/email-login/[FILTERED]") &&\n',
             "    true &&\n",
             1,
         )

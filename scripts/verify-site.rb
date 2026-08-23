@@ -135,8 +135,10 @@ checks["member_identity_omitted_from_logster_context"] =
     logster_control_result == "runtime-context-probe" &&
     logster_control_env == { job: "runtime-context-probe" }
 checks["sensitive_request_fields_filtered_from_logster_context"] =
-  logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
-    logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
+  (!logster_callback_context.key?("params") ||
+    logster_callback_context["params"] == logster_callback_request.filtered_parameters) &&
+    (!logster_callback_context.key?("REQUEST_URI") ||
+      logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path) &&
     !JSON.generate(logster_callback_context).include?("member-identity-probe")
 lograge_payload = DiscourseLograge.custom_payload(
   ip: "127.0.0.1",
@@ -164,7 +166,8 @@ checks["admin_recovery_log_path_filtered"] =
     recovery_request.path == "/session/email-login/#{recovery_token}" &&
     recovery_request.filtered_path == "/session/email-login/[FILTERED]" &&
     ordinary_request.filtered_path == "/session/email-login/too-short" &&
-    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&
+    (!recovery_logster_context.key?("REQUEST_URI") ||
+      recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]") &&
     !JSON.generate(recovery_logster_context).include?(recovery_token)
 auth_audit_probe_class =
   Class.new do

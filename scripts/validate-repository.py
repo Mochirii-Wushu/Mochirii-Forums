@@ -193,7 +193,7 @@ checks["narrative_system_user_branded"] =
     "narrative_system_user_gravatar_absent",
   ).all?
 '''
-RUNTIME_VERIFIER_SHA256 = "62676ea04e21fdb95d6c5d38aca7e509be11998ad77cd11f2b413020e196d1e4"
+RUNTIME_VERIFIER_SHA256 = "1a66972c12414a7cb777b17bae360b09519be3c008e172bd7e2065e9ac647d1b"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
 APP_TEMPLATE_SHA256 = "907d5cc632b086d8fa55f4427762763a8bb76e71fcb1dedb7ae5926168d0e496"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
@@ -592,8 +592,10 @@ checks["member_identity_omitted_from_logster_context"] =
     logster_control_result == "runtime-context-probe" &&
     logster_control_env == { job: "runtime-context-probe" }
 checks["sensitive_request_fields_filtered_from_logster_context"] =
-  logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
-    logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
+  (!logster_callback_context.key?("params") ||
+    logster_callback_context["params"] == logster_callback_request.filtered_parameters) &&
+    (!logster_callback_context.key?("REQUEST_URI") ||
+      logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path) &&
     !JSON.generate(logster_callback_context).include?("member-identity-probe")
 '''
     if source.count(logster_context_filter) != 1:
@@ -627,7 +629,8 @@ checks["admin_recovery_log_path_filtered"] =
     recovery_request.path == "/session/email-login/#{recovery_token}" &&
     recovery_request.filtered_path == "/session/email-login/[FILTERED]" &&
     ordinary_request.filtered_path == "/session/email-login/too-short" &&
-    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&
+    (!recovery_logster_context.key?("REQUEST_URI") ||
+      recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]") &&
     !JSON.generate(recovery_logster_context).include?(recovery_token)
 '''
     if source.count(recovery_logster_filter) != 1:
