@@ -193,13 +193,13 @@ checks["narrative_system_user_branded"] =
     "narrative_system_user_gravatar_absent",
   ).all?
 '''
-RUNTIME_VERIFIER_SHA256 = "8ea2c4bcf2f2a648bef629196adc6ca0a1d2599dfc744780d89375de69496501"
+RUNTIME_VERIFIER_SHA256 = "62676ea04e21fdb95d6c5d38aca7e509be11998ad77cd11f2b413020e196d1e4"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "45adfc253a1aa1713cefd2724973a64c8bf87ae77a60263920665ccd8d69bc9f"
+APP_TEMPLATE_SHA256 = "907d5cc632b086d8fa55f4427762763a8bb76e71fcb1dedb7ae5926168d0e496"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
-SENSITIVE_LOG_VERIFIER_SHA256 = "4f70f9db136cdebd0cc578585cfc9ac49b0b0c8faeedfd7310faec93126d12a3"
-SENSITIVE_LOG_EXECUTABLE_SHA256 = "23c56d65eb5ba11771f44bf6f829f833cd08bbe90bd1cee17d44ef6d3369aaed"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "48678c35b675dec6da2aa81bea79bb3042b0dfee3db0548544957e562060352d"
+SENSITIVE_LOG_VERIFIER_SHA256 = "8efc3fdda3129b5ccdc8cc4be410c08d08fedef3d732b4994e333ac12d96db89"
+SENSITIVE_LOG_EXECUTABLE_SHA256 = "0b89a9eca81f3e7db1ef789b9218cef688937ada853f7cc0a2bd81ce321a468b"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "37bfe198368a7ccbc791f3f43d9ef8c700737caa630c32930f0a88f673c8353f"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -573,8 +573,10 @@ logster_string_identity_result =
 logster_symbol_identity_result =
   Logster.add_to_env(logster_symbol_identity_env, :username, "member-identity-probe")
 logster_control_result = Logster.add_to_env(logster_control_env, :job, "runtime-context-probe")
-logster_callback_env = Rack::MockRequest.env_for(
-  "/session/sso_login?sso=member-identity-probe&sig=member-identity-probe",
+logster_callback_env = Rails.application.env_config.merge(
+  Rack::MockRequest.env_for(
+    "/session/sso_login?sso=member-identity-probe&sig=member-identity-probe",
+  ),
 )
 logster_callback_request = ActionDispatch::Request.new(logster_callback_env)
 logster_callback_context = Logster::Message.populate_from_env(logster_callback_env)
@@ -588,52 +590,37 @@ checks["member_identity_omitted_from_logster_context"] =
     logster_string_identity_env.empty? &&
     logster_symbol_identity_env.empty? &&
     logster_control_result == "runtime-context-probe" &&
-    logster_control_env == { job: "runtime-context-probe" } &&
-    logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
+    logster_control_env == { job: "runtime-context-probe" }
+checks["sensitive_request_fields_filtered_from_logster_context"] =
+  logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
     logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
     !JSON.generate(logster_callback_context).include?("member-identity-probe")
 '''
     if source.count(logster_context_filter) != 1:
         fail("Runtime verifier lost the exact member-identity Logster omission check.")
-    member_log_identity_filter = '''lograge_probe_class =
-  Class.new do
-    attr_reader :request, :current_user_reads
-
-    def initialize
-      @request = Struct.new(:remote_ip).new("127.0.0.1")
-      @current_user_reads = 0
-    end
-
-    def current_user
-      @current_user_reads += 1
-      Struct.new(:username).new("member-identity-probe")
-    end
-  end
-lograge_probe = lograge_probe_class.new
-lograge_payload =
-  Rails.application.config.lograge.custom_payload.call(lograge_probe) if DiscourseLograge.enabled?
-lograge_failure_probe = lograge_probe_class.new
-def lograge_failure_probe.request
-  raise StandardError, "request-probe"
-end
-lograge_failure_payload =
-  Rails.application.config.lograge.custom_payload.call(lograge_failure_probe) if DiscourseLograge.enabled?
+    member_log_identity_filter = '''lograge_payload = DiscourseLograge.custom_payload(
+  ip: "127.0.0.1",
+  username: "member-identity-probe",
+  route: "runtime-context-probe",
+  omitted: nil,
+)
 checks["member_identity_omitted_from_request_logs"] =
-  DiscourseLograge.enabled? &&
-    lograge_payload == { ip: "127.0.0.1", username: nil } &&
-    lograge_probe.current_user_reads.zero? &&
-    lograge_failure_payload == {} &&
-    lograge_failure_probe.current_user_reads.zero?
+  defined?(MochiriiSensitiveDiscourseLogragePayloadFilter) &&
+    DiscourseLograge.singleton_class.ancestors.include?(MochiriiSensitiveDiscourseLogragePayloadFilter) &&
+    lograge_payload == { ip: "127.0.0.1", username: nil, route: "runtime-context-probe" } &&
+    !JSON.generate(lograge_payload).include?("member-identity-probe")
 '''
     if source.count(member_log_identity_filter) != 1:
         fail("Runtime verifier lost the exact member-identity log omission check.")
     recovery_logster_filter = '''recovery_token = "a" * 32
-recovery_request = ActionDispatch::Request.new(
+recovery_logster_env = Rails.application.env_config.merge(
   Rack::MockRequest.env_for("/session/email-login/#{recovery_token}"),
 )
-recovery_logster_env = Rack::MockRequest.env_for("/session/email-login/#{recovery_token}")
+recovery_request = ActionDispatch::Request.new(recovery_logster_env)
 recovery_logster_context = Logster::Message.populate_from_env(recovery_logster_env)
-ordinary_request = ActionDispatch::Request.new(Rack::MockRequest.env_for("/session/email-login/too-short"))
+ordinary_request = ActionDispatch::Request.new(
+  Rails.application.env_config.merge(Rack::MockRequest.env_for("/session/email-login/too-short")),
+)
 checks["admin_recovery_log_path_filtered"] =
   defined?(MochiriiSensitiveRequestPathFilter) &&
     ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter) &&
@@ -2191,6 +2178,9 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
                 46: "application-log-marker",
                 47: "logster-shape",
                 48: "logster-marker",
+                49: "application-log-identity-marker",
+                50: "application-log-callback-marker",
+                51: "application-log-recovery-marker",
             }.get(completed.returncode)
             if category is not None:
                 raise RuntimeError(
@@ -2205,12 +2195,22 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     ).body[0]
     expected_sensitive_log_function = ast.parse(
         '''def assert_callback_logs_redacted() -> None:
-    markers = sorted(CALLBACK_LOG_MARKERS)
-    if not markers or len(markers) > 64 or any(len(marker) < 16 or len(marker) > 16_384 for marker in markers):
+    marker_records = sorted(CALLBACK_LOG_MARKER_CATEGORIES.items())
+    markers = [marker for marker, _category in marker_records]
+    if (
+        not markers
+        or len(markers) > 64
+        or set(markers) != CALLBACK_LOG_MARKERS
+        or any(len(marker) < 16 or len(marker) > 16_384 for marker in markers)
+        or any(category not in {"identity", "callback", "recovery"} for _marker, category in marker_records)
+    ):
         raise RuntimeError("Sensitive callback marker inventory is malformed.")
     run_container_runner(
         '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-sensitive-log-redaction.rb"',
-        input_bytes=b"\\n".join(markers) + b"\\n",
+        input_bytes=b"".join(
+            category.encode("ascii") + b"\\t" + marker + b"\\n"
+            for marker, category in marker_records
+        ),
         classify_sensitive_log_failure=True,
     )
     with tempfile.TemporaryFile() as transcript:
@@ -2233,6 +2233,29 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
             raise RuntimeError("A callback secret or member marker reached the container log boundary.")
 '''
     ).body[0]
+    expected_register_marker_function = ast.parse(
+        '''def register_sensitive_marker(value: str | bytes, category: str = "callback") -> None:
+    marker = value.encode("ascii") if isinstance(value, str) else value
+    existing = CALLBACK_LOG_MARKER_CATEGORIES.get(marker)
+    if (
+        category not in {"identity", "callback", "recovery"}
+        or not 16 <= len(marker) <= 16_384
+        or (existing is not None and existing != category)
+    ):
+        raise RuntimeError("Sensitive callback marker category is malformed.")
+    CALLBACK_LOG_MARKERS.add(marker)
+    CALLBACK_LOG_MARKER_CATEGORIES[marker] = category
+'''
+    ).body[0]
+    expected_register_recovery_markers_function = ast.parse(
+        '''def register_admin_recovery_markers(tokens: tuple[bytes, ...]) -> None:
+    for token in tokens:
+        encoded = quote(token.decode("ascii"), safe="").encode("ascii")
+        register_sensitive_marker(token, "recovery")
+        register_sensitive_marker(encoded, "recovery")
+        register_sensitive_marker(b"/session/email-login/" + encoded, "recovery")
+'''
+    ).body[0]
     runner_functions = [
         node
         for node in tree.body
@@ -2245,7 +2268,24 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         and node.name == "assert_callback_logs_redacted"
     ]
-    if len(runner_functions) != 1 or len(sensitive_log_functions) != 1:
+    register_marker_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "register_sensitive_marker"
+    ]
+    register_recovery_markers_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "register_admin_recovery_markers"
+    ]
+    if (
+        len(runner_functions) != 1
+        or len(sensitive_log_functions) != 1
+        or len(register_marker_functions) != 1
+        or len(register_recovery_markers_functions) != 1
+    ):
         fail("Sensitive-log failure classification function binding differs.")
     try:
         symbol_root = symtable.symtable(verifier, "verify-discourse-connect.py", "exec")
@@ -2261,11 +2301,36 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     if len(sensitive_log_symbol_tables) != 1:
         fail("Sensitive-log audit function symbol table differs.")
     runner_symbol = sensitive_log_symbol_tables[0].lookup("run_container_runner")
+    marker_category_stores = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "CALLBACK_LOG_MARKER_CATEGORIES"
+    ]
+    marker_inventory_mutations = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in {"CALLBACK_LOG_MARKERS", "CALLBACK_LOG_MARKER_CATEGORIES"}
+        and node.func.attr in {"add", "clear", "discard", "pop", "popitem", "remove", "setdefault", "update"}
+    ]
     if (
         ast.dump(runner_functions[0], include_attributes=False)
         != ast.dump(expected_runner_function, include_attributes=False)
         or ast.dump(sensitive_log_functions[0], include_attributes=False)
         != ast.dump(expected_sensitive_log_function, include_attributes=False)
+        or ast.dump(register_marker_functions[0], include_attributes=False)
+        != ast.dump(expected_register_marker_function, include_attributes=False)
+        or ast.dump(register_recovery_markers_functions[0], include_attributes=False)
+        != ast.dump(expected_register_recovery_markers_function, include_attributes=False)
+        or len(marker_category_stores) != 1
+        or len(marker_inventory_mutations) != 1
+        or marker_inventory_mutations[0].func.attr != "add"
+        or marker_inventory_mutations[0].func.value.id != "CALLBACK_LOG_MARKERS"
         or not runner_symbol.is_global()
         or runner_symbol.is_assigned()
         or runner_symbol.is_imported()
@@ -2301,16 +2366,19 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         node for node in tree.body if isinstance(node, (ast.Assign, ast.AnnAssign))
     ]
     assignment_targets: list[str] = []
+    assignment_values: dict[str, ast.expr] = {}
     for node in module_assignments:
         if isinstance(node, ast.Assign):
             if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
                 fail("DiscourseConnect fixture module assignment target differs.")
             assignment_targets.append(node.targets[0].id)
+            assignment_values[node.targets[0].id] = node.value
             value = node.value
         else:
             if not isinstance(node.target, ast.Name) or node.value is None:
                 fail("DiscourseConnect fixture annotated module assignment differs.")
             assignment_targets.append(node.target.id)
+            assignment_values[node.target.id] = node.value
             value = node.value
         for call in (child for child in ast.walk(value) if isinstance(child, ast.Call)):
             if not (
@@ -2320,6 +2388,22 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
                 and call.func.attr == "compile"
             ):
                 fail("DiscourseConnect fixture module constant executes an unexpected call.")
+    expected_marker_categories = {
+        b"mochirii-stage4-consumer-fixture": "identity",
+        b"stage4-fixture@forums.mochirii.com": "identity",
+        b"mochirii-s4-test": "identity",
+        b"Mochirii Stage 4 Fixture": "identity",
+        b"stage4-fixture%40forums.mochirii.com": "identity",
+        b"Mochirii%20Stage%204%20Fixture": "identity",
+        b"Mochirii+Stage+4+Fixture": "identity",
+    }
+    try:
+        marker_categories = ast.literal_eval(assignment_values["CALLBACK_LOG_MARKER_CATEGORIES"])
+        marker_inventory = ast.literal_eval(assignment_values["CALLBACK_LOG_MARKERS"])
+    except (KeyError, ValueError, TypeError, SyntaxError) as error:
+        raise RuntimeError("Sensitive callback marker constants are not exact literals.") from error
+    if marker_categories != expected_marker_categories or marker_inventory != set(expected_marker_categories):
+        fail("Sensitive callback marker categories or inventory differ.")
     expected_definition_shape = [
         ("function", "forbidden_response_header_name_category"),
         ("class", "VisibleText"),
@@ -2364,7 +2448,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
     expected_top_level_types = (
         [ast.Expr]
         + [type(node) for node in expected_imports]
-        + [ast.Assign, ast.Assign, ast.Assign, ast.Assign, ast.Assign, ast.AnnAssign, ast.Assign]
+        + [ast.Assign, ast.Assign, ast.Assign, ast.Assign, ast.Assign, ast.AnnAssign, ast.AnnAssign, ast.Assign]
         + [ast.FunctionDef if kind == "function" else ast.ClassDef
            for kind, _name in expected_definition_shape]
         + [ast.If]
@@ -2383,6 +2467,7 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
             "FORBIDDEN",
             "VALUE_FORBIDDEN",
             "VISIBLE_UPSTREAM",
+            "CALLBACK_LOG_MARKER_CATEGORIES",
             "CALLBACK_LOG_MARKERS",
             "FORBIDDEN_RESPONSE_METADATA",
         ]
@@ -3084,7 +3169,9 @@ def validate_template() -> None:
             "Request unavailable · Mochirii Forums",
             "Temporarily unavailable · Mochirii Forums",
             "Rails.application.config.filter_parameters |= %i[email sso sig token]",
-            "DiscourseLograge.custom_payload(ip: ip, username: nil)",
+            "module MochiriiSensitiveDiscourseLogragePayloadFilter",
+            "super(ip: ip, username: nil, **extras)",
+            "DiscourseLograge.singleton_class.prepend(MochiriiSensitiveDiscourseLogragePayloadFilter)",
             "module MochiriiSensitiveLogsterEnvironmentFilter",
             'return if key == "username" || key == :username',
             "Logster.singleton_class.prepend(MochiriiSensitiveLogsterEnvironmentFilter)",
@@ -3196,25 +3283,17 @@ def validate_template() -> None:
           UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
             UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
         end
-        # Pinned Discourse Lograge adds current_user.username outside the
-        # filtered-parameter pipeline. Preserve request-IP observability without
-        # reading or serializing a member identifier into application logs.
-        if DiscourseLograge.enabled?
-          Rails.application.config.to_prepare do
-            Rails.application.config.lograge.custom_payload do |controller|
-              ip =
-                begin
-                  controller.request.remote_ip
-                rescue ActionDispatch::RemoteIp::IpSpoofAttackError
-                  nil
-                end
-
-              DiscourseLograge.custom_payload(ip: ip, username: nil)
-            rescue StandardError
-              {}
-            end
+        # Pinned Discourse Lograge passes current_user.username to this helper
+        # whenever its optional logger is enabled. Preserve every other compact
+        # payload field while preventing that identifier from being serialized.
+        module MochiriiSensitiveDiscourseLogragePayloadFilter
+          def custom_payload(ip:, username:, **extras)
+            super(ip: ip, username: nil, **extras)
           end
         end
+
+        DiscourseLograge.singleton_class.prepend(MochiriiSensitiveDiscourseLogragePayloadFilter) unless
+          DiscourseLograge.singleton_class.ancestors.include?(MochiriiSensitiveDiscourseLogragePayloadFilter)
         Rails.application.config.filter_parameters |= %i[email sso sig token]
 '''
     if app.count(sensitive_initializer) != 1:
@@ -3993,6 +4072,15 @@ SENSITIVE_LOG_AUDIT_EXIT_CODES = {
   application_log_marker: 46,
   logster_shape: 47,
   logster_marker: 48,
+  application_log_identity_marker: 49,
+  application_log_callback_marker: 50,
+  application_log_recovery_marker: 51,
+}.freeze
+
+APPLICATION_LOG_MARKER_CATEGORIES = {
+  "identity" => :application_log_identity_marker,
+  "callback" => :application_log_callback_marker,
+  "recovery" => :application_log_recovery_marker,
 }.freeze
 
 def reject_sensitive_log!(category)
@@ -4169,7 +4257,12 @@ end
             'Pathname.new("/var/log/nginx")',
             'Pathname.new("/shared/log/rails")',
             'redis.scan(cursor, match: "*logster*"',
-            'value.match?(/[\\x00-\\x1f\\x7f]/)',
+            'record[1].match?(/[\\x00-\\x1f\\x7f]/)',
+            '!raw.end_with?("\\n")',
+            'raw.include?("\\r")',
+            '"identity" => :application_log_identity_marker',
+            '"callback" => :application_log_callback_marker',
+            '"recovery" => :application_log_recovery_marker',
             'UserAuthTokenLog.where(user_id: user.id).order(:id).limit(129).to_a',
             'entry.path == filtered_email_login_path',
             'UserAuthToken.where(user_id: user.id).exists?',

@@ -41,6 +41,15 @@ VALUE_FORBIDDEN = (
     re.compile(rb"amazonaws\.com", re.I),
 )
 VISIBLE_UPSTREAM = re.compile(rb"\bDiscourse(?:Connect)?\b", re.I)
+CALLBACK_LOG_MARKER_CATEGORIES: dict[bytes, str] = {
+    b"mochirii-stage4-consumer-fixture": "identity",
+    b"stage4-fixture@forums.mochirii.com": "identity",
+    b"mochirii-s4-test": "identity",
+    b"Mochirii Stage 4 Fixture": "identity",
+    b"stage4-fixture%40forums.mochirii.com": "identity",
+    b"Mochirii%20Stage%204%20Fixture": "identity",
+    b"Mochirii+Stage+4+Fixture": "identity",
+}
 CALLBACK_LOG_MARKERS: set[bytes] = {
     b"mochirii-stage4-consumer-fixture",
     b"stage4-fixture@forums.mochirii.com",
@@ -99,18 +108,25 @@ class VisibleText(HTMLParser):
             self.parts.append(data)
 
 
-def register_sensitive_marker(value: str | bytes) -> None:
+def register_sensitive_marker(value: str | bytes, category: str = "callback") -> None:
     marker = value.encode("ascii") if isinstance(value, str) else value
-    if 16 <= len(marker) <= 16_384:
-        CALLBACK_LOG_MARKERS.add(marker)
+    existing = CALLBACK_LOG_MARKER_CATEGORIES.get(marker)
+    if (
+        category not in {"identity", "callback", "recovery"}
+        or not 16 <= len(marker) <= 16_384
+        or (existing is not None and existing != category)
+    ):
+        raise RuntimeError("Sensitive callback marker category is malformed.")
+    CALLBACK_LOG_MARKERS.add(marker)
+    CALLBACK_LOG_MARKER_CATEGORIES[marker] = category
 
 
 def register_admin_recovery_markers(tokens: tuple[bytes, ...]) -> None:
     for token in tokens:
         encoded = quote(token.decode("ascii"), safe="").encode("ascii")
-        register_sensitive_marker(token)
-        register_sensitive_marker(encoded)
-        register_sensitive_marker(b"/session/email-login/" + encoded)
+        register_sensitive_marker(token, "recovery")
+        register_sensitive_marker(encoded, "recovery")
+        register_sensitive_marker(b"/session/email-login/" + encoded, "recovery")
 
 
 def sensitive_marker_reached(content: bytes, markers: list[bytes] | tuple[bytes, ...]) -> bool:
@@ -453,6 +469,9 @@ def run_container_runner(
                 46: "application-log-marker",
                 47: "logster-shape",
                 48: "logster-marker",
+                49: "application-log-identity-marker",
+                50: "application-log-callback-marker",
+                51: "application-log-recovery-marker",
             }.get(completed.returncode)
             if category is not None:
                 raise RuntimeError(
@@ -894,12 +913,22 @@ def verify_member_branding(session: Session) -> None:
 
 
 def assert_callback_logs_redacted() -> None:
-    markers = sorted(CALLBACK_LOG_MARKERS)
-    if not markers or len(markers) > 64 or any(len(marker) < 16 or len(marker) > 16_384 for marker in markers):
+    marker_records = sorted(CALLBACK_LOG_MARKER_CATEGORIES.items())
+    markers = [marker for marker, _category in marker_records]
+    if (
+        not markers
+        or len(markers) > 64
+        or set(markers) != CALLBACK_LOG_MARKERS
+        or any(len(marker) < 16 or len(marker) > 16_384 for marker in markers)
+        or any(category not in {"identity", "callback", "recovery"} for _marker, category in marker_records)
+    ):
         raise RuntimeError("Sensitive callback marker inventory is malformed.")
     run_container_runner(
         '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-sensitive-log-redaction.rb"',
-        input_bytes=b"\n".join(markers) + b"\n",
+        input_bytes=b"".join(
+            category.encode("ascii") + b"\t" + marker + b"\n"
+            for marker, category in marker_records
+        ),
         classify_sensitive_log_failure=True,
     )
     with tempfile.TemporaryFile() as transcript:

@@ -2145,12 +2145,15 @@ def test_https_consumer_fixture_contract() -> None:
         46: "application-log-marker",
         47: "logster-shape",
         48: "logster-marker",
+        49: "application-log-identity-marker",
+        50: "application-log-callback-marker",
+        51: "application-log-recovery-marker",
     }
     private_runner_sentinel = b"MOCHIRII_PRIVATE_SENSITIVE_LOG_RUNNER_SENTINEL"
     original_run = CONNECT_FIXTURE.subprocess.run
     original_absence = CONNECT_FIXTURE.container_operation_absent
     try:
-        for returncode, category in (*expected_sensitive_log_categories.items(), (49, None)):
+        for returncode, category in (*expected_sensitive_log_categories.items(), (52, None)):
             run_calls: list[dict[str, object]] = []
             absence_tokens: list[str] = []
 
@@ -5007,6 +5010,7 @@ cleanup_parser
 
 def test_sensitive_callback_markers() -> None:
     original = set(CONNECT_FIXTURE.CALLBACK_LOG_MARKERS)
+    original_categories = dict(CONNECT_FIXTURE.CALLBACK_LOG_MARKER_CATEGORIES)
     try:
         nonce = "nonce-stage4-fixture-0123456789abcdef"
         encoded, signature = CONNECT_FIXTURE.callback(nonce, b"a" * 64)
@@ -5015,6 +5019,7 @@ def test_sensitive_callback_markers() -> None:
         second_token = b"admin-token-stage4-fixture-222222222222"
         CONNECT_FIXTURE.register_admin_recovery_markers((first_token, second_token))
         markers = sorted(CONNECT_FIXTURE.CALLBACK_LOG_MARKERS)
+        categories = dict(CONNECT_FIXTURE.CALLBACK_LOG_MARKER_CATEGORIES)
         required = {
             b"mochirii-stage4-consumer-fixture",
             b"stage4-fixture@forums.mochirii.com",
@@ -5032,12 +5037,70 @@ def test_sensitive_callback_markers() -> None:
             raise RuntimeError("Sensitive callback marker fixture omitted an exact identity or recovery credential.")
         if len(markers) > 64 or any(not 16 <= len(marker) <= 16_384 for marker in markers):
             raise RuntimeError("Sensitive callback marker inventory exceeded its exact bound.")
+        if (
+            set(categories) != set(markers)
+            or categories[b"mochirii-stage4-consumer-fixture"] != "identity"
+            or categories[encoded.encode("ascii")] != "callback"
+            or categories[first_token] != "recovery"
+            or set(categories.values()) != {"identity", "callback", "recovery"}
+        ):
+            raise RuntimeError("Sensitive callback marker categories differ from their fixed boundary.")
         encoded_marker = next(marker for marker in markers if marker.startswith(b"sso=") and b"%" in marker)
         hostile_request_line = b"GET /session/sso_login?" + encoded_marker + b" HTTP/1.1\n"
         if not CONNECT_FIXTURE.sensitive_marker_reached(hostile_request_line, markers):
             raise RuntimeError("Percent-encoded callback request-line leakage was not detected.")
+        try:
+            CONNECT_FIXTURE.register_sensitive_marker(first_token, "callback")
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("A sensitive marker was accepted under conflicting categories.")
+        try:
+            CONNECT_FIXTURE.register_sensitive_marker(b"too-short", "callback")
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("An out-of-bound sensitive marker was silently omitted.")
+        captured_audit_inputs: list[bytes] = []
+        original_runner = CONNECT_FIXTURE.run_container_runner
+        original_subprocess_run = CONNECT_FIXTURE.subprocess.run
+        try:
+            def capture_audit_runner(
+                _script: str,
+                *,
+                input_bytes: bytes | None = None,
+                classify_sensitive_log_failure: bool = False,
+                **_kwargs: object,
+            ) -> bytes:
+                if input_bytes is None or not classify_sensitive_log_failure:
+                    raise RuntimeError("Sensitive-log audit invocation lost its exact classified input boundary.")
+                captured_audit_inputs.append(input_bytes)
+                return b""
+
+            CONNECT_FIXTURE.run_container_runner = capture_audit_runner
+            CONNECT_FIXTURE.subprocess.run = lambda *args, **_kwargs: subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=b"",
+                stderr=b"",
+            )
+            CONNECT_FIXTURE.assert_callback_logs_redacted()
+        finally:
+            CONNECT_FIXTURE.run_container_runner = original_runner
+            CONNECT_FIXTURE.subprocess.run = original_subprocess_run
+        expected_audit_input = b"".join(
+            category.encode("ascii") + b"\t" + marker + b"\n"
+            for marker, category in sorted(categories.items())
+        )
+        if captured_audit_inputs != [expected_audit_input]:
+            raise RuntimeError("Sensitive-log audit input lost its exact marker-category protocol.")
         scanner = (ROOT / "scripts/verify-sensitive-log-redaction.rb").read_text(encoding="utf-8")
-        if r"[\x00-\x1f\x7f]" not in scanner or r"[\x00-\x20]" in scanner:
+        if (
+            r"[\x00-\x1f\x7f]" not in scanner
+            or r"[\x00-\x20]" in scanner
+            or '!raw.end_with?("\\n")' not in scanner
+            or 'raw.include?("\\r")' not in scanner
+        ):
             raise RuntimeError("Sensitive-log marker validation rejects ordinary display-name spaces.")
         app = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
         exact_route = 'location ~ "^/session/email-login/[A-Za-z0-9_-]{20,256}$" {'
@@ -5048,7 +5111,9 @@ def test_sensitive_callback_markers() -> None:
             "module MochiriiSensitiveUserAuthTokenAuditFilter",
             "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",
             "UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter)",
-            "DiscourseLograge.custom_payload(ip: ip, username: nil)",
+            "module MochiriiSensitiveDiscourseLogragePayloadFilter",
+            "super(ip: ip, username: nil, **extras)",
+            "DiscourseLograge.singleton_class.prepend(MochiriiSensitiveDiscourseLogragePayloadFilter)",
             "module MochiriiSensitiveLogsterEnvironmentFilter",
             'return if key == "username" || key == :username',
             "Logster.singleton_class.prepend(MochiriiSensitiveLogsterEnvironmentFilter)",
@@ -5144,15 +5209,15 @@ def test_sensitive_callback_markers() -> None:
             1,
         )
         python_early_audit_return = fixture_sources["scripts/verify-discourse-connect.py"].replace(
-            "def assert_callback_logs_redacted() -> None:\n    markers =",
-            "def assert_callback_logs_redacted() -> None:\n    return\n    markers =",
+            "def assert_callback_logs_redacted() -> None:\n    marker_records =",
+            "def assert_callback_logs_redacted() -> None:\n    return\n    marker_records =",
             1,
         )
         python_local_runner_shadow = fixture_sources["scripts/verify-discourse-connect.py"].replace(
-            "def assert_callback_logs_redacted() -> None:\n    markers =",
+            "def assert_callback_logs_redacted() -> None:\n    marker_records =",
             "def assert_callback_logs_redacted() -> None:\n"
             '    run_container_runner = lambda *_args, **_kwargs: b""\n'
-            "    markers =",
+            "    marker_records =",
             1,
         )
         python_runner_preemption = fixture_sources["scripts/verify-discourse-connect.py"].replace(
@@ -5182,6 +5247,21 @@ def test_sensitive_callback_markers() -> None:
             "    run_container_runner(\n",
             1,
         )
+        python_recovery_category_drift = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            '        register_sensitive_marker(token, "recovery")\n',
+            '        register_sensitive_marker(token, "callback")\n',
+            1,
+        )
+        python_identity_category_drift = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            '    b"mochirii-stage4-consumer-fixture": "identity",\n',
+            '    b"mochirii-stage4-consumer-fixture": "callback",\n',
+            1,
+        )
+        python_marker_protocol_drift = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            '            category.encode("ascii") + b"\\t" + marker + b"\\n"\n',
+            '            marker + b"\\n"\n',
+            1,
+        )
         ruby_exit_map = '''SENSITIVE_LOG_AUDIT_EXIT_CODES = {
   input: 40,
   identity: 41,
@@ -5192,6 +5272,9 @@ def test_sensitive_callback_markers() -> None:
   application_log_marker: 46,
   logster_shape: 47,
   logster_marker: 48,
+  application_log_identity_marker: 49,
+  application_log_callback_marker: 50,
+  application_log_recovery_marker: 51,
 }.freeze
 '''
         ruby_decoy = fixture_sources["scripts/verify-sensitive-log-redaction.rb"].replace(
@@ -5228,6 +5311,13 @@ alias reject_sensitive_log! puts
 
 reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"
 ''',
+            1,
+        )
+        ruby_application_category_drift = fixture_sources[
+            "scripts/verify-sensitive-log-redaction.rb"
+        ].replace(
+            '  "identity" => :application_log_identity_marker,\n',
+            '  "identity" => :application_log_callback_marker,\n',
             1,
         )
         semantic_decoys = (
@@ -5267,6 +5357,21 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
                 "DISCOURSE_CONNECT_VERIFIER_SHA256",
             ),
             (
+                "scripts/verify-discourse-connect.py",
+                python_recovery_category_drift,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_identity_category_drift,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_marker_protocol_drift,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
                 "scripts/verify-sensitive-log-redaction.rb",
                 ruby_decoy,
                 "SENSITIVE_LOG_VERIFIER_SHA256",
@@ -5279,6 +5384,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             (
                 "scripts/verify-sensitive-log-redaction.rb",
                 ruby_helper_alias,
+                "SENSITIVE_LOG_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                ruby_application_category_drift,
                 "SENSITIVE_LOG_VERIFIER_SHA256",
             ),
         )
@@ -5393,8 +5503,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             VALIDATOR.read = original_read
 
         app_candidate = app.replace(
-            "DiscourseLograge.custom_payload(ip: ip, username: nil)",
-            "DiscourseLograge.custom_payload(ip: ip, username: controller.current_user&.username)",
+            "super(ip: ip, username: nil, **extras)",
+            "super(ip: ip, username: username, **extras)",
             1,
         )
         if app_candidate == app:
@@ -5433,8 +5543,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     logster_string_identity_env.empty? &&
     logster_symbol_identity_env.empty? &&
     logster_control_result == "runtime-context-probe" &&
-    logster_control_env == { job: "runtime-context-probe" } &&
-    logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
+    logster_control_env == { job: "runtime-context-probe" }
+checks["sensitive_request_fields_filtered_from_logster_context"] =
+  logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
     logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
     !JSON.generate(logster_callback_context).include?("member-identity-probe")
 '''
@@ -5492,16 +5603,15 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         finally:
             VALIDATOR.RUNTIME_VERIFIER_SHA256 = original_runtime_digest
         runtime_lograge_filter = '''checks["member_identity_omitted_from_request_logs"] =
-  DiscourseLograge.enabled? &&
-    lograge_payload == { ip: "127.0.0.1", username: nil } &&
-    lograge_probe.current_user_reads.zero? &&
-    lograge_failure_payload == {} &&
-    lograge_failure_probe.current_user_reads.zero?
+  defined?(MochiriiSensitiveDiscourseLogragePayloadFilter) &&
+    DiscourseLograge.singleton_class.ancestors.include?(MochiriiSensitiveDiscourseLogragePayloadFilter) &&
+    lograge_payload == { ip: "127.0.0.1", username: nil, route: "runtime-context-probe" } &&
+    !JSON.generate(lograge_payload).include?("member-identity-probe")
 '''
         if runtime_verifier.count(runtime_lograge_filter) != 1:
             raise RuntimeError("Runtime verifier omitted the exact member-identity log omission check.")
         runtime_lograge_candidate = runtime_verifier.replace(
-            "    lograge_probe.current_user_reads.zero? &&\n",
+            '    lograge_payload == { ip: "127.0.0.1", username: nil, route: "runtime-context-probe" } &&\n',
             "    true &&\n",
             1,
         )
@@ -5539,6 +5649,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         finally:
             VALIDATOR.read = original_read
     finally:
+        CONNECT_FIXTURE.CALLBACK_LOG_MARKER_CATEGORIES.clear()
+        CONNECT_FIXTURE.CALLBACK_LOG_MARKER_CATEGORIES.update(original_categories)
         CONNECT_FIXTURE.CALLBACK_LOG_MARKERS.clear()
         CONNECT_FIXTURE.CALLBACK_LOG_MARKERS.update(original)
 

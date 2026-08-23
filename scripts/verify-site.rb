@@ -116,8 +116,10 @@ logster_string_identity_result =
 logster_symbol_identity_result =
   Logster.add_to_env(logster_symbol_identity_env, :username, "member-identity-probe")
 logster_control_result = Logster.add_to_env(logster_control_env, :job, "runtime-context-probe")
-logster_callback_env = Rack::MockRequest.env_for(
-  "/session/sso_login?sso=member-identity-probe&sig=member-identity-probe",
+logster_callback_env = Rails.application.env_config.merge(
+  Rack::MockRequest.env_for(
+    "/session/sso_login?sso=member-identity-probe&sig=member-identity-probe",
+  ),
 )
 logster_callback_request = ActionDispatch::Request.new(logster_callback_env)
 logster_callback_context = Logster::Message.populate_from_env(logster_callback_env)
@@ -131,46 +133,31 @@ checks["member_identity_omitted_from_logster_context"] =
     logster_string_identity_env.empty? &&
     logster_symbol_identity_env.empty? &&
     logster_control_result == "runtime-context-probe" &&
-    logster_control_env == { job: "runtime-context-probe" } &&
-    logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
+    logster_control_env == { job: "runtime-context-probe" }
+checks["sensitive_request_fields_filtered_from_logster_context"] =
+  logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
     logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
     !JSON.generate(logster_callback_context).include?("member-identity-probe")
-lograge_probe_class =
-  Class.new do
-    attr_reader :request, :current_user_reads
-
-    def initialize
-      @request = Struct.new(:remote_ip).new("127.0.0.1")
-      @current_user_reads = 0
-    end
-
-    def current_user
-      @current_user_reads += 1
-      Struct.new(:username).new("member-identity-probe")
-    end
-  end
-lograge_probe = lograge_probe_class.new
-lograge_payload =
-  Rails.application.config.lograge.custom_payload.call(lograge_probe) if DiscourseLograge.enabled?
-lograge_failure_probe = lograge_probe_class.new
-def lograge_failure_probe.request
-  raise StandardError, "request-probe"
-end
-lograge_failure_payload =
-  Rails.application.config.lograge.custom_payload.call(lograge_failure_probe) if DiscourseLograge.enabled?
+lograge_payload = DiscourseLograge.custom_payload(
+  ip: "127.0.0.1",
+  username: "member-identity-probe",
+  route: "runtime-context-probe",
+  omitted: nil,
+)
 checks["member_identity_omitted_from_request_logs"] =
-  DiscourseLograge.enabled? &&
-    lograge_payload == { ip: "127.0.0.1", username: nil } &&
-    lograge_probe.current_user_reads.zero? &&
-    lograge_failure_payload == {} &&
-    lograge_failure_probe.current_user_reads.zero?
+  defined?(MochiriiSensitiveDiscourseLogragePayloadFilter) &&
+    DiscourseLograge.singleton_class.ancestors.include?(MochiriiSensitiveDiscourseLogragePayloadFilter) &&
+    lograge_payload == { ip: "127.0.0.1", username: nil, route: "runtime-context-probe" } &&
+    !JSON.generate(lograge_payload).include?("member-identity-probe")
 recovery_token = "a" * 32
-recovery_request = ActionDispatch::Request.new(
+recovery_logster_env = Rails.application.env_config.merge(
   Rack::MockRequest.env_for("/session/email-login/#{recovery_token}"),
 )
-recovery_logster_env = Rack::MockRequest.env_for("/session/email-login/#{recovery_token}")
+recovery_request = ActionDispatch::Request.new(recovery_logster_env)
 recovery_logster_context = Logster::Message.populate_from_env(recovery_logster_env)
-ordinary_request = ActionDispatch::Request.new(Rack::MockRequest.env_for("/session/email-login/too-short"))
+ordinary_request = ActionDispatch::Request.new(
+  Rails.application.env_config.merge(Rack::MockRequest.env_for("/session/email-login/too-short")),
+)
 checks["admin_recovery_log_path_filtered"] =
   defined?(MochiriiSensitiveRequestPathFilter) &&
     ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter) &&

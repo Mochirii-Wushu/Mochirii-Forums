@@ -12,6 +12,15 @@ SENSITIVE_LOG_AUDIT_EXIT_CODES = {
   application_log_marker: 46,
   logster_shape: 47,
   logster_marker: 48,
+  application_log_identity_marker: 49,
+  application_log_callback_marker: 50,
+  application_log_recovery_marker: 51,
+}.freeze
+
+APPLICATION_LOG_MARKER_CATEGORIES = {
+  "identity" => :application_log_identity_marker,
+  "callback" => :application_log_callback_marker,
+  "recovery" => :application_log_recovery_marker,
 }.freeze
 
 def reject_sensitive_log!(category)
@@ -21,12 +30,19 @@ end
 reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"
 
 raw = STDIN.binmode.read(1_048_577)
-reject_sensitive_log!(:input) if raw.bytesize > 1_048_576
-markers = raw.lines(chomp: true).uniq
-reject_sensitive_log!(:input) if markers.empty? || markers.length > 64
-unless markers.all? { |value| value.bytesize.between?(16, 16_384) && value.ascii_only? && !value.match?(/[\x00-\x1f\x7f]/) }
-  reject_sensitive_log!(:input)
+reject_sensitive_log!(:input) if raw.bytesize > 1_048_576 || !raw.end_with?("\n") || raw.include?("\r")
+marker_records = raw.lines(chomp: true).map { |line| line.split("\t", 2) }
+reject_sensitive_log!(:input) if marker_records.empty? || marker_records.length > 64
+valid_marker_records = marker_records.all? do |record|
+  record.length == 2 &&
+    APPLICATION_LOG_MARKER_CATEGORIES.key?(record[0]) &&
+    record[1].bytesize.between?(16, 16_384) &&
+    record[1].ascii_only? &&
+    !record[1].match?(/[\x00-\x1f\x7f]/)
 end
+reject_sensitive_log!(:input) unless valid_marker_records
+markers = marker_records.map(&:last)
+reject_sensitive_log!(:input) unless markers.uniq.length == markers.length
 
 record = SingleSignOnRecord.find_by(external_id: "mochirii-stage4-consumer-fixture")
 reject_sensitive_log!(:identity) if record.nil? || record.user.nil?
@@ -77,7 +93,9 @@ paths.each do |path|
   total_bytes += size
   reject_sensitive_log!(:log_inventory) if size > 64 * 1024 * 1024 || total_bytes > 192 * 1024 * 1024
   content = resolved.binread
-  reject_sensitive_log!(:application_log_marker) if markers.any? { |marker| content.include?(marker) }
+  if marker_record = marker_records.find { |_category, marker| content.include?(marker) }
+    reject_sensitive_log!(APPLICATION_LOG_MARKER_CATEGORIES.fetch(marker_record[0]))
+  end
 end
 
 redis = Discourse.redis

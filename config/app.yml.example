@@ -258,25 +258,17 @@ __MOCHIRII_TLS_RUN__
           UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
             UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
         end
-        # Pinned Discourse Lograge adds current_user.username outside the
-        # filtered-parameter pipeline. Preserve request-IP observability without
-        # reading or serializing a member identifier into application logs.
-        if DiscourseLograge.enabled?
-          Rails.application.config.to_prepare do
-            Rails.application.config.lograge.custom_payload do |controller|
-              ip =
-                begin
-                  controller.request.remote_ip
-                rescue ActionDispatch::RemoteIp::IpSpoofAttackError
-                  nil
-                end
-
-              DiscourseLograge.custom_payload(ip: ip, username: nil)
-            rescue StandardError
-              {}
-            end
+        # Pinned Discourse Lograge passes current_user.username to this helper
+        # whenever its optional logger is enabled. Preserve every other compact
+        # payload field while preventing that identifier from being serialized.
+        module MochiriiSensitiveDiscourseLogragePayloadFilter
+          def custom_payload(ip:, username:, **extras)
+            super(ip: ip, username: nil, **extras)
           end
         end
+
+        DiscourseLograge.singleton_class.prepend(MochiriiSensitiveDiscourseLogragePayloadFilter) unless
+          DiscourseLograge.singleton_class.ancestors.include?(MochiriiSensitiveDiscourseLogragePayloadFilter)
         Rails.application.config.filter_parameters |= %i[email sso sig token]
   - file:
       path: /etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc
