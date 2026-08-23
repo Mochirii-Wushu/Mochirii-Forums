@@ -195,16 +195,16 @@ checks["narrative_system_user_branded"] =
 '''
 RUNTIME_VERIFIER_SHA256 = "1a66972c12414a7cb777b17bae360b09519be3c008e172bd7e2065e9ac647d1b"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "907d5cc632b086d8fa55f4427762763a8bb76e71fcb1dedb7ae5926168d0e496"
+APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "dcd105f619674983c42c92eeff2f06dbdc37fca3779aa5e13acdbc8b80ffc09c"
 SENSITIVE_LOG_EXECUTABLE_SHA256 = "3e9ca44f8d9f4e2f89463fca323ba63388f2c059664cc4e0d25ebd1c9fcad6fa"
 DISCOURSE_CONNECT_VERIFIER_SHA256 = "f12739d6baba4eb4267509fd35b5e6f9ce79be19e5ec63b07e2134140041a360"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
-HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
+HOST_NGINX_FILE_VERIFIER_SHA256 = "b7356abad4a80964825cf3a8cf1290ccd7c33d65fe0095c2dd47328f046ce9d9"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
-HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "b6563cada14a3996586b06409a20a38f4f30cd69a842954afcf1cbdd8066d23a"
-HOST_VERIFY_SOURCE_SHA256 = "24257ab5e54d8e310b97a88eeaa5137e162c3098f92e1120244fab1e47c86864"
+HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "cefc6ba11ee9810f228a9f47048c95d5d441e6de854a60d0a3629de7e6d3a0e7"
+HOST_VERIFY_SOURCE_SHA256 = "c5ac86ad24e8cc011a50422a97c8d62b9e04a3aa5ba3ea482ba313001990cd51"
 DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "9aa1279010aac1a5b7c65b6634053792d15c17f788090456660f1a575aa9b98e"
 # Exact normalized server outlet derived from discourse_docker@ed9f680b0df1de28f062de1769d89d22b2644d1b
 # templates/web.ssl.template.yml (2,111 bytes; SHA-256 7a3b819e65104c9178e004772b487fa809ce6b421668dfa1adf330221dda552b).
@@ -1586,18 +1586,21 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
     )
     outlet_end_marker = "  # Pups replace is a silent no-op when its source is absent, so bind the exact\n"
     avatar_precondition = '''  # Pups replace is a silent no-op when its source is absent, so bind the exact
-  # pinned core anchor before applying the one reviewed insertion.
+  # pinned core anchors before applying the two reviewed substitutions.
   - exec:
       cmd:
         - |-
           python3 - <<'PY'
           from pathlib import Path
           source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
-          anchor = \'\'\'      proxy_hide_header "Set-Cookie";
+          cache_anchor = \'\'\'      proxy_hide_header "Set-Cookie";
                 proxy_hide_header "X-Discourse-Username";
                 proxy_hide_header "X-Runtime";\'\'\'
-          if source.count(anchor) != 1:
+          username_log_fragment = \'\'\'"$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"\'\'\'
+          if source.count(cache_anchor) != 1:
               raise SystemExit("Pinned cache response-header anchor differs.")
+          if source.count(username_log_fragment) != 1:
+              raise SystemExit("Pinned nginx username log anchor differs.")
           PY
 '''
     avatar_replacement = '''  - replace:
@@ -1611,25 +1614,40 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
               proxy_hide_header "X-Discourse-Username";
               proxy_hide_header "X-Runtime";
               include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;
+  - replace:
+      filename: /etc/nginx/conf.d/discourse.conf
+      from: |-
+        "$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"
+      to: |-
+        "-" "$upstream_http_x_discourse_trackview"
 '''
-    avatar_postcondition = '''  # Prove the replacement took effect before any later run item can continue.
+    avatar_postcondition = '''  # Prove both replacements took effect before any later run item can continue.
   - exec:
       cmd:
         - |-
           python3 - <<'PY'
           from pathlib import Path
           source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
-          anchor = \'\'\'      proxy_hide_header "Set-Cookie";
+          cache_anchor = \'\'\'      proxy_hide_header "Set-Cookie";
                 proxy_hide_header "X-Discourse-Username";
                 proxy_hide_header "X-Runtime";
                 include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\'\'\'
-          if source.count(anchor) != 1:
+          private_log_fragment = \'\'\'"-" "$upstream_http_x_discourse_trackview"\'\'\'
+          if source.count(cache_anchor) != 1:
               raise SystemExit("Pinned cache response-header replacement differs.")
+          if source.count(private_log_fragment) != 1 or "$upstream_http_x_discourse_username" in source:
+              raise SystemExit("Pinned nginx username log replacement differs.")
           PY
 '''
     avatar_build_assertion = '''        - >-
           test "$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'
           /etc/nginx/conf.d/discourse.conf)" -eq 1
+        - >-
+          test "$(grep -Fo '"-" "$upstream_http_x_discourse_trackview"'
+          /etc/nginx/conf.d/discourse.conf | wc -l)" -eq 1
+        - >-
+          ! grep -Fq '$upstream_http_x_discourse_username'
+          /etc/nginx/conf.d/discourse.conf
 '''
     if (
         app.count(shared_start_marker) != 1
@@ -1859,6 +1877,10 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         != HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256
         or literal_assignment("MAX_CONFIG_BYTES") != 1_048_576
         or literal_assignment("MAX_DIRECTORY_ENTRIES") != 32
+        or literal_assignment("PINNED_DISCOURSE_USERNAME_LOG_FRAGMENT")
+        != '"$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"'
+        or literal_assignment("PRIVATE_DISCOURSE_USERNAME_LOG_FRAGMENT")
+        != '"-" "$upstream_http_x_discourse_trackview"'
         or literal_assignment("EXPECTED_DIRECTORY_CHILDREN") != expected_directories
         or literal_assignment("EXPECTED_FILE_SHA256") != expected_files
         or file_start > host_verify.index('nginx_log="$(mktemp ')
@@ -1909,6 +1931,17 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         and isinstance(node.targets[0], ast.Name)
         and node.targets[0].id == "avatar_required"
     ]
+    log_boundary_assignments = {
+        name: [
+            node
+            for node in host_tree.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        ]
+        for name in ("private_username_log_fragment", "username_log_variable")
+    }
     expected_avatar_required = {
         "brotli_comp_level 6;",
         'proxy_ignore_headers "Set-Cookie";',
@@ -1948,6 +1981,12 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
         or len(avatar_assignments) != 1
         or not isinstance(avatar_assignments[0].value, ast.Set)
         or ast.literal_eval(avatar_assignments[0].value) != expected_avatar_required
+        or len(log_boundary_assignments["private_username_log_fragment"]) != 1
+        or ast.literal_eval(log_boundary_assignments["private_username_log_fragment"][0].value)
+        != '"-" "$upstream_http_x_discourse_trackview"'
+        or len(log_boundary_assignments["username_log_variable"]) != 1
+        or ast.literal_eval(log_boundary_assignments["username_log_variable"][0].value)
+        != "$upstream_http_x_discourse_username"
         or [ast.dump(node, include_attributes=False) for node in actual_calls]
         != [ast.dump(node, include_attributes=False) for node in expected_calls]
     ):

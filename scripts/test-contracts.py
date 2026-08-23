@@ -509,6 +509,18 @@ def test_sensitive_response_header_contract() -> None:
 
     directory_contract = ast.literal_eval(assignment("EXPECTED_DIRECTORY_CHILDREN").value)
     file_contract = ast.literal_eval(assignment("EXPECTED_FILE_SHA256").value)
+    pinned_username_log_fragment = ast.literal_eval(
+        assignment("PINNED_DISCOURSE_USERNAME_LOG_FRAGMENT").value
+    )
+    private_username_log_fragment = ast.literal_eval(
+        assignment("PRIVATE_DISCOURSE_USERNAME_LOG_FRAGMENT").value
+    )
+    if (
+        pinned_username_log_fragment
+        != '"$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"'
+        or private_username_log_fragment != '"-" "$upstream_http_x_discourse_trackview"'
+    ):
+        raise RuntimeError("Hosted nginx file verifier username-log fragments differ.")
     tls_states = (
         VALIDATOR.PINNED_WEB_SSL_SERVER_OUTLET,
         VALIDATOR.MANAGED_WEB_SSL_SERVER_OUTLET,
@@ -529,8 +541,18 @@ def test_sensitive_response_header_contract() -> None:
         raise RuntimeError("Hosted nginx file verifier does not bind both exact pinned TLS outlet states.")
     empty_digest = hashlib.sha256(b"").hexdigest()
     tls_path = "/etc/nginx/conf.d/outlets/server/20-https.conf"
+    discourse_path = "/etc/nginx/conf.d/discourse.conf"
+    pinned_username_log_digest = hashlib.sha256(
+        pinned_username_log_fragment.encode("utf-8")
+    ).hexdigest()
     fixture_file_contract = {
-        path: tuple(digest for _, digest in expected_tls_evidence) if path == tls_path else (empty_digest,)
+        path: (
+            tuple(digest for _, digest in expected_tls_evidence)
+            if path == tls_path
+            else (pinned_username_log_digest,)
+            if path == discourse_path
+            else (empty_digest,)
+        )
         for path in file_contract
     }
     file_assignment = assignment("EXPECTED_FILE_SHA256")
@@ -549,7 +571,13 @@ def test_sensitive_response_header_contract() -> None:
         for relative in fixture_file_contract:
             path = root / relative.removeprefix("/")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(tls_state.encode("utf-8") if relative == tls_path else b"")
+            path.write_bytes(
+                tls_state.encode("utf-8")
+                if relative == tls_path
+                else private_username_log_fragment.encode("utf-8")
+                if relative == discourse_path
+                else b""
+            )
 
     def run_file_fixture(root: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -582,6 +610,24 @@ def test_sensitive_response_header_contract() -> None:
             encoding="utf-8",
         )
 
+    def restored_username_log(root: Path) -> None:
+        (root / discourse_path.removeprefix("/")).write_text(
+            pinned_username_log_fragment,
+            encoding="utf-8",
+        )
+
+    def duplicated_private_username_log(root: Path) -> None:
+        (root / discourse_path.removeprefix("/")).write_text(
+            private_username_log_fragment + "\n" + private_username_log_fragment,
+            encoding="utf-8",
+        )
+
+    def displaced_username_log_variable(root: Path) -> None:
+        (root / discourse_path.removeprefix("/")).write_text(
+            private_username_log_fragment + "\n# $upstream_http_x_discourse_username\n",
+            encoding="utf-8",
+        )
+
     def hostile_mime_include(root: Path) -> None:
         (root / "etc/nginx/mime.types").write_text(
             "types { text/plain txt; }\nserver { listen 443 ssl; }\n",
@@ -609,6 +655,9 @@ def test_sensitive_response_header_contract() -> None:
     for mutate in (
         marker_spoof,
         hostile_main,
+        restored_username_log,
+        duplicated_private_username_log,
+        displaced_username_log_variable,
         hostile_mime_include,
         unexpected_outlet,
         unexpected_top_level,
@@ -636,6 +685,11 @@ def test_sensitive_response_header_contract() -> None:
         host_verify.replace(
             "docker exec -i app python3 -B - <<'PY_NGINX_FILES'",
             "docker exec -i app python3 -B - /tmp <<'PY_NGINX_FILES'",
+            1,
+        ),
+        host_verify.replace(
+            '            or "$upstream_http_x_discourse_username" in text\n',
+            "",
             1,
         ),
         host_verify.replace(file_start_marker, "true || " + file_start_marker, 1),
@@ -733,6 +787,7 @@ def test_sensitive_response_header_contract() -> None:
         )
         return (
             "# configuration file /etc/nginx/conf.d/discourse.conf:\n"
+            + 'log_format log_discourse \'"-" "$upstream_http_x_discourse_trackview"\';\n'
             + "server {\n"
             + "  location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|highlight-js|stylesheets|theme-javascripts|favicon/proxied|service-worker|extra-locales/) {\n"
             + "    brotli_comp_level 6;\n"
@@ -868,7 +923,20 @@ def test_sensitive_response_header_contract() -> None:
         "        - >-\n"
         "          test \"$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'\n"
         "          /etc/nginx/conf.d/discourse.conf)\" -eq 1\n"
+        "        - >-\n"
+        "          test \"$(grep -Fo '\"-\" \"$upstream_http_x_discourse_trackview\"'\n"
+        "          /etc/nginx/conf.d/discourse.conf | wc -l)\" -eq 1\n"
+        "        - >-\n"
+        "          ! grep -Fq '$upstream_http_x_discourse_username'\n"
+        "          /etc/nginx/conf.d/discourse.conf\n"
     )
+    username_log_replacement = '''  - replace:
+      filename: /etc/nginx/conf.d/discourse.conf
+      from: |-
+        "$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"
+      to: |-
+        "-" "$upstream_http_x_discourse_trackview"
+'''
     shared_hostiles.extend(
         (
             app[:shared_end] + "        sub_filter_once off;\n" + app[shared_end:],
@@ -880,6 +948,31 @@ def test_sensitive_response_header_contract() -> None:
             app.replace("35-mochirii-public-response-headers.inc", "35-mochirii-public-response-headers.conf"),
             app.replace(replacement_filename, replacement_filename + "      global: true\n", 1),
             app.replace('              proxy_hide_header "X-Runtime";\n      to:', '              proxy_hide_header "X-Other";\n      to:', 1),
+            app.replace(username_log_replacement, "", 1),
+            app.replace(
+                "          if source.count(username_log_fragment) != 1:\n",
+                "          if False:\n",
+                1,
+            ),
+            app.replace(
+                '          if source.count(private_log_fragment) != 1 or "$upstream_http_x_discourse_username" in source:\n',
+                "          if source.count(private_log_fragment) != 1:\n",
+                1,
+            ),
+            app.replace(
+                "        - >-\n"
+                "          test \"$(grep -Fo '\"-\" \"$upstream_http_x_discourse_trackview\"'\n"
+                "          /etc/nginx/conf.d/discourse.conf | wc -l)\" -eq 1\n",
+                "",
+                1,
+            ),
+            app.replace(
+                "        - >-\n"
+                "          ! grep -Fq '$upstream_http_x_discourse_username'\n"
+                "          /etc/nginx/conf.d/discourse.conf\n",
+                "",
+                1,
+            ),
             app.replace(build_assertion, "", 1),
         )
     )
@@ -1012,6 +1105,10 @@ def test_sensitive_response_header_contract() -> None:
     avatar_include = "    include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\n"
     avatar_marker = "  location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|highlight-js|stylesheets|theme-javascripts|favicon/proxied|service-worker|extra-locales/) {\n"
     avatar_username_hide = '    proxy_hide_header "X-Discourse-Username";\n'
+    pinned_username_log_fragment = (
+        '"$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"'
+    )
+    private_username_log_fragment = '"-" "$upstream_http_x_discourse_trackview"'
     avatar_runtime_hostiles = (
         rendered_app.replace(avatar_include, "", 1),
         rendered_app.replace(avatar_include, "    # include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;\n", 1),
@@ -1022,6 +1119,19 @@ def test_sensitive_response_header_contract() -> None:
         rendered_app.replace(avatar_include, avatar_include + "    proxy_pass_header X-Discourse-Route;\n", 1),
         rendered_app.replace(avatar_username_hide, "", 1),
         rendered_app.replace(avatar_include, "", 1).replace(avatar_marker, avatar_include + avatar_marker, 1),
+        rendered_app.replace(private_username_log_fragment, pinned_username_log_fragment, 1),
+        rendered_app.replace(private_username_log_fragment, "", 1),
+        rendered_app.replace(
+            private_username_log_fragment,
+            private_username_log_fragment + " " + private_username_log_fragment,
+            1,
+        ),
+        rendered_app.replace(
+            private_username_log_fragment,
+            '"$remote_user" "$upstream_http_x_discourse_trackview"',
+            1,
+        ),
+        rendered_app + "\n# $upstream_http_x_discourse_username\n",
     )
     if any(candidate == rendered_app for candidate in avatar_runtime_hostiles):
         raise RuntimeError("Cache-accelerated response-header hostile mutation anchor is absent.")

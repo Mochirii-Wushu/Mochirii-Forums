@@ -307,18 +307,21 @@ __MOCHIRII_TLS_RUN__
         # serves as application/xml. Bind the replacement to that exact type.
         sub_filter_types application/xml;
   # Pups replace is a silent no-op when its source is absent, so bind the exact
-  # pinned core anchor before applying the one reviewed insertion.
+  # pinned core anchors before applying the two reviewed substitutions.
   - exec:
       cmd:
         - |-
           python3 - <<'PY'
           from pathlib import Path
           source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
-          anchor = '''      proxy_hide_header "Set-Cookie";
+          cache_anchor = '''      proxy_hide_header "Set-Cookie";
                 proxy_hide_header "X-Discourse-Username";
                 proxy_hide_header "X-Runtime";'''
-          if source.count(anchor) != 1:
+          username_log_fragment = '''"$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"'''
+          if source.count(cache_anchor) != 1:
               raise SystemExit("Pinned cache response-header anchor differs.")
+          if source.count(username_log_fragment) != 1:
+              raise SystemExit("Pinned nginx username log anchor differs.")
           PY
   - replace:
       filename: /etc/nginx/conf.d/discourse.conf
@@ -331,19 +334,28 @@ __MOCHIRII_TLS_RUN__
               proxy_hide_header "X-Discourse-Username";
               proxy_hide_header "X-Runtime";
               include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;
-  # Prove the replacement took effect before any later run item can continue.
+  - replace:
+      filename: /etc/nginx/conf.d/discourse.conf
+      from: |-
+        "$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"
+      to: |-
+        "-" "$upstream_http_x_discourse_trackview"
+  # Prove both replacements took effect before any later run item can continue.
   - exec:
       cmd:
         - |-
           python3 - <<'PY'
           from pathlib import Path
           source = Path("/etc/nginx/conf.d/discourse.conf").read_text(encoding="utf-8")
-          anchor = '''      proxy_hide_header "Set-Cookie";
+          cache_anchor = '''      proxy_hide_header "Set-Cookie";
                 proxy_hide_header "X-Discourse-Username";
                 proxy_hide_header "X-Runtime";
                 include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'''
-          if source.count(anchor) != 1:
+          private_log_fragment = '''"-" "$upstream_http_x_discourse_trackview"'''
+          if source.count(cache_anchor) != 1:
               raise SystemExit("Pinned cache response-header replacement differs.")
+          if source.count(private_log_fragment) != 1 or "$upstream_http_x_discourse_username" in source:
+              raise SystemExit("Pinned nginx username log replacement differs.")
           PY
   - file:
       path: /etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf
@@ -511,6 +523,12 @@ __MOCHIRII_TLS_RUN__
         - >-
           test "$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;'
           /etc/nginx/conf.d/discourse.conf)" -eq 1
+        - >-
+          test "$(grep -Fo '"-" "$upstream_http_x_discourse_trackview"'
+          /etc/nginx/conf.d/discourse.conf | wc -l)" -eq 1
+        - >-
+          ! grep -Fq '$upstream_http_x_discourse_username'
+          /etc/nginx/conf.d/discourse.conf
         - >-
           grep -R -Fq 'include conf.d/outlets/server/*.conf;'
           /etc/nginx

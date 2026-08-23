@@ -871,6 +871,8 @@ import sys
 
 MAX_CONFIG_BYTES = 1_048_576
 MAX_DIRECTORY_ENTRIES = 32
+PINNED_DISCOURSE_USERNAME_LOG_FRAGMENT = '"$upstream_http_x_discourse_username" "$upstream_http_x_discourse_trackview"'
+PRIVATE_DISCOURSE_USERNAME_LOG_FRAGMENT = '"-" "$upstream_http_x_discourse_trackview"'
 EXPECTED_DIRECTORY_CHILDREN = {
     "/etc/nginx/conf.d": ("discourse.conf", "outlets"),
     "/etc/nginx/conf.d/outlets": ("before-server", "discourse", "server"),
@@ -1003,6 +1005,18 @@ def normalized_file_sha256(absolute_path):
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError as error:
         raise SystemExit("nginx configuration file is not UTF-8") from error
+    if absolute_path == "/etc/nginx/conf.d/discourse.conf":
+        if (
+            text.count(PRIVATE_DISCOURSE_USERNAME_LOG_FRAGMENT) != 1
+            or PINNED_DISCOURSE_USERNAME_LOG_FRAGMENT in text
+            or "$upstream_http_x_discourse_username" in text
+        ):
+            raise SystemExit("nginx username log boundary differs")
+        text = text.replace(
+            PRIVATE_DISCOURSE_USERNAME_LOG_FRAGMENT,
+            PINNED_DISCOURSE_USERNAME_LOG_FRAGMENT,
+            1,
+        )
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
@@ -1027,6 +1041,10 @@ import pathlib
 import re
 import sys
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+private_username_log_fragment = '"-" "$upstream_http_x_discourse_trackview"'
+username_log_variable = "$upstream_http_x_discourse_username"
+if text.count(private_username_log_fragment) != 1 or username_log_variable in text:
+    raise SystemExit("nginx access-log identity boundary differs")
 
 def contains_unquoted_block_delimiter(line):
     quote = None
