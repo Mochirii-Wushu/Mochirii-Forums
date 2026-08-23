@@ -193,9 +193,9 @@ checks["narrative_system_user_branded"] =
     "narrative_system_user_gravatar_absent",
   ).all?
 '''
-RUNTIME_VERIFIER_SHA256 = "b87598ebd8678840cf51e72b80acf8304f684ffc2c69124a54c355e77cbcf7c7"
+RUNTIME_VERIFIER_SHA256 = "8ea2c4bcf2f2a648bef629196adc6ca0a1d2599dfc744780d89375de69496501"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
-APP_TEMPLATE_SHA256 = "ac36307e0db6e3ed6ec673b1e703d047f20f0a069e30b468d92e69cc2c13a4cd"
+APP_TEMPLATE_SHA256 = "45adfc253a1aa1713cefd2724973a64c8bf87ae77a60263920665ccd8d69bc9f"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "4f70f9db136cdebd0cc578585cfc9ac49b0b0c8faeedfd7310faec93126d12a3"
 SENSITIVE_LOG_EXECUTABLE_SHA256 = "23c56d65eb5ba11771f44bf6f829f833cd08bbe90bd1cee17d44ef6d3369aaed"
@@ -565,6 +565,86 @@ def validate_theme_runtime_verifier(source: str) -> None:
 '''
     if source.count(sensitive_parameter_filter) != 1:
         fail("Runtime verifier lost the exact member-email and callback parameter filter check.")
+    logster_context_filter = '''logster_string_identity_env = {}
+logster_symbol_identity_env = {}
+logster_control_env = {}
+logster_string_identity_result =
+  Logster.add_to_env(logster_string_identity_env, "username", "member-identity-probe")
+logster_symbol_identity_result =
+  Logster.add_to_env(logster_symbol_identity_env, :username, "member-identity-probe")
+logster_control_result = Logster.add_to_env(logster_control_env, :job, "runtime-context-probe")
+logster_callback_env = Rack::MockRequest.env_for(
+  "/session/sso_login?sso=member-identity-probe&sig=member-identity-probe",
+)
+logster_callback_request = ActionDispatch::Request.new(logster_callback_env)
+logster_callback_context = Logster::Message.populate_from_env(logster_callback_env)
+checks["member_identity_omitted_from_logster_context"] =
+  defined?(MochiriiSensitiveLogsterEnvironmentFilter) &&
+    defined?(MochiriiSensitiveLogsterMessageFilter) &&
+    Logster.singleton_class.ancestors.include?(MochiriiSensitiveLogsterEnvironmentFilter) &&
+    Logster::Message.singleton_class.ancestors.include?(MochiriiSensitiveLogsterMessageFilter) &&
+    logster_string_identity_result.nil? &&
+    logster_symbol_identity_result.nil? &&
+    logster_string_identity_env.empty? &&
+    logster_symbol_identity_env.empty? &&
+    logster_control_result == "runtime-context-probe" &&
+    logster_control_env == { job: "runtime-context-probe" } &&
+    logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
+    logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
+    !JSON.generate(logster_callback_context).include?("member-identity-probe")
+'''
+    if source.count(logster_context_filter) != 1:
+        fail("Runtime verifier lost the exact member-identity Logster omission check.")
+    member_log_identity_filter = '''lograge_probe_class =
+  Class.new do
+    attr_reader :request, :current_user_reads
+
+    def initialize
+      @request = Struct.new(:remote_ip).new("127.0.0.1")
+      @current_user_reads = 0
+    end
+
+    def current_user
+      @current_user_reads += 1
+      Struct.new(:username).new("member-identity-probe")
+    end
+  end
+lograge_probe = lograge_probe_class.new
+lograge_payload =
+  Rails.application.config.lograge.custom_payload.call(lograge_probe) if DiscourseLograge.enabled?
+lograge_failure_probe = lograge_probe_class.new
+def lograge_failure_probe.request
+  raise StandardError, "request-probe"
+end
+lograge_failure_payload =
+  Rails.application.config.lograge.custom_payload.call(lograge_failure_probe) if DiscourseLograge.enabled?
+checks["member_identity_omitted_from_request_logs"] =
+  DiscourseLograge.enabled? &&
+    lograge_payload == { ip: "127.0.0.1", username: nil } &&
+    lograge_probe.current_user_reads.zero? &&
+    lograge_failure_payload == {} &&
+    lograge_failure_probe.current_user_reads.zero?
+'''
+    if source.count(member_log_identity_filter) != 1:
+        fail("Runtime verifier lost the exact member-identity log omission check.")
+    recovery_logster_filter = '''recovery_token = "a" * 32
+recovery_request = ActionDispatch::Request.new(
+  Rack::MockRequest.env_for("/session/email-login/#{recovery_token}"),
+)
+recovery_logster_env = Rack::MockRequest.env_for("/session/email-login/#{recovery_token}")
+recovery_logster_context = Logster::Message.populate_from_env(recovery_logster_env)
+ordinary_request = ActionDispatch::Request.new(Rack::MockRequest.env_for("/session/email-login/too-short"))
+checks["admin_recovery_log_path_filtered"] =
+  defined?(MochiriiSensitiveRequestPathFilter) &&
+    ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter) &&
+    recovery_request.path == "/session/email-login/#{recovery_token}" &&
+    recovery_request.filtered_path == "/session/email-login/[FILTERED]" &&
+    ordinary_request.filtered_path == "/session/email-login/too-short" &&
+    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&
+    !JSON.generate(recovery_logster_context).include?(recovery_token)
+'''
+    if source.count(recovery_logster_filter) != 1:
+        fail("Runtime verifier lost the exact administrator recovery Logster omission check.")
     start = 'checks["theme_logo_uploads"] =\n'
     end = 'checks["core_revision"] ='
     if source.count(start) != 1 or source.count(end) != 1:
@@ -3004,6 +3084,14 @@ def validate_template() -> None:
             "Request unavailable · Mochirii Forums",
             "Temporarily unavailable · Mochirii Forums",
             "Rails.application.config.filter_parameters |= %i[email sso sig token]",
+            "DiscourseLograge.custom_payload(ip: ip, username: nil)",
+            "module MochiriiSensitiveLogsterEnvironmentFilter",
+            'return if key == "username" || key == :username',
+            "Logster.singleton_class.prepend(MochiriiSensitiveLogsterEnvironmentFilter)",
+            "module MochiriiSensitiveLogsterMessageFilter",
+            'scrubbed["params"] = filtered_parameters if scrubbed.key?("params")',
+            'scrubbed["REQUEST_URI"] = filtered_path if scrubbed.key?("REQUEST_URI")',
+            "Logster::Message.singleton_class.prepend(MochiriiSensitiveLogsterMessageFilter)",
             "module MochiriiSensitiveRequestPathFilter",
             "return FILTERED_EMAIL_LOGIN_PATH if path.match?(EMAIL_LOGIN_PATH)",
             "module MochiriiSensitiveUserAuthTokenAuditFilter",
@@ -3058,11 +3146,74 @@ def validate_template() -> None:
           end
         end
 
+        # Pinned Discourse adds the authenticated username to Logster's
+        # persisted request environment. Omit only that member identifier while
+        # preserving every other supported Logster context field.
+        module MochiriiSensitiveLogsterEnvironmentFilter
+          def add_to_env(env, key, value)
+            return if key == "username" || key == :username
+
+            super
+          end
+        end
+
+        # Logster independently parses request parameters and copies REQUEST_URI
+        # when it persists an error. Replace those raw fields with the same Rails
+        # filtered views used by the application logger, or omit them if the
+        # filter cannot produce a trusted result.
+        module MochiriiSensitiveLogsterMessageFilter
+          def populate_env_helper(env)
+            scrubbed = super
+            return scrubbed unless scrubbed.is_a?(Hash)
+
+            scrubbed.delete("username")
+            scrubbed.delete(:username)
+            return scrubbed unless env.is_a?(Hash) && env.include?("rack.input")
+
+            begin
+              request = ActionDispatch::Request.new(env)
+              filtered_parameters = request.filtered_parameters
+              filtered_path = request.filtered_path
+            rescue StandardError
+              scrubbed.delete("params")
+              scrubbed.delete("REQUEST_URI")
+            else
+              scrubbed["params"] = filtered_parameters if scrubbed.key?("params")
+              scrubbed["REQUEST_URI"] = filtered_path if scrubbed.key?("REQUEST_URI")
+            end
+
+            scrubbed
+          end
+        end
+
         ActionDispatch::Request.prepend(MochiriiSensitiveRequestPathFilter) unless
           ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter)
+        Logster.singleton_class.prepend(MochiriiSensitiveLogsterEnvironmentFilter) unless
+          Logster.singleton_class.ancestors.include?(MochiriiSensitiveLogsterEnvironmentFilter)
+        Logster::Message.singleton_class.prepend(MochiriiSensitiveLogsterMessageFilter) unless
+          Logster::Message.singleton_class.ancestors.include?(MochiriiSensitiveLogsterMessageFilter)
         Rails.application.reloader.to_prepare do
           UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
             UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
+        end
+        # Pinned Discourse Lograge adds current_user.username outside the
+        # filtered-parameter pipeline. Preserve request-IP observability without
+        # reading or serializing a member identifier into application logs.
+        if DiscourseLograge.enabled?
+          Rails.application.config.to_prepare do
+            Rails.application.config.lograge.custom_payload do |controller|
+              ip =
+                begin
+                  controller.request.remote_ip
+                rescue ActionDispatch::RemoteIp::IpSpoofAttackError
+                  nil
+                end
+
+              DiscourseLograge.custom_payload(ip: ip, username: nil)
+            rescue StandardError
+              {}
+            end
+          end
         end
         Rails.application.config.filter_parameters |= %i[email sso sig token]
 '''

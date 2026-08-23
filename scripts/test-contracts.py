@@ -5048,6 +5048,14 @@ def test_sensitive_callback_markers() -> None:
             "module MochiriiSensitiveUserAuthTokenAuditFilter",
             "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",
             "UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter)",
+            "DiscourseLograge.custom_payload(ip: ip, username: nil)",
+            "module MochiriiSensitiveLogsterEnvironmentFilter",
+            'return if key == "username" || key == :username',
+            "Logster.singleton_class.prepend(MochiriiSensitiveLogsterEnvironmentFilter)",
+            "module MochiriiSensitiveLogsterMessageFilter",
+            'scrubbed["params"] = filtered_parameters if scrubbed.key?("params")',
+            'scrubbed["REQUEST_URI"] = filtered_path if scrubbed.key?("REQUEST_URI")',
+            "Logster::Message.singleton_class.prepend(MochiriiSensitiveLogsterMessageFilter)",
             "Rails.application.config.filter_parameters |= %i[email sso sig token]",
             exact_route,
             denial_route,
@@ -5340,6 +5348,72 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         finally:
             VALIDATOR.read = original_read
 
+        app_candidate = app.replace(
+            'return if key == "username" || key == :username',
+            'return if key == "email"',
+            1,
+        )
+        if app_candidate == app:
+            raise RuntimeError("Logster member-identity hostile mutation anchor is absent.")
+        original_app_digest = VALIDATOR.APP_TEMPLATE_SHA256
+        original_read = VALIDATOR.read
+        try:
+            VALIDATOR.APP_TEMPLATE_SHA256 = hashlib.sha256(app_candidate.encode("utf-8")).hexdigest()
+            VALIDATOR.read = lambda path: app_candidate if path == "config/app.yml.example" else original_read(path)
+            try:
+                VALIDATOR.validate_template()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Repository validator accepted member identity in Logster context.")
+        finally:
+            VALIDATOR.APP_TEMPLATE_SHA256 = original_app_digest
+            VALIDATOR.read = original_read
+
+        app_candidate = app.replace(
+            'scrubbed["params"] = filtered_parameters if scrubbed.key?("params")',
+            'scrubbed["params"] = scrubbed["params"] if scrubbed.key?("params")',
+            1,
+        )
+        if app_candidate == app:
+            raise RuntimeError("Logster request-field hostile mutation anchor is absent.")
+        original_app_digest = VALIDATOR.APP_TEMPLATE_SHA256
+        original_read = VALIDATOR.read
+        try:
+            VALIDATOR.APP_TEMPLATE_SHA256 = hashlib.sha256(app_candidate.encode("utf-8")).hexdigest()
+            VALIDATOR.read = lambda path: app_candidate if path == "config/app.yml.example" else original_read(path)
+            try:
+                VALIDATOR.validate_template()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Repository validator accepted raw Logster request parameters.")
+        finally:
+            VALIDATOR.APP_TEMPLATE_SHA256 = original_app_digest
+            VALIDATOR.read = original_read
+
+        app_candidate = app.replace(
+            "DiscourseLograge.custom_payload(ip: ip, username: nil)",
+            "DiscourseLograge.custom_payload(ip: ip, username: controller.current_user&.username)",
+            1,
+        )
+        if app_candidate == app:
+            raise RuntimeError("Member-identity log hostile mutation anchor is absent.")
+        original_app_digest = VALIDATOR.APP_TEMPLATE_SHA256
+        original_read = VALIDATOR.read
+        try:
+            VALIDATOR.APP_TEMPLATE_SHA256 = hashlib.sha256(app_candidate.encode("utf-8")).hexdigest()
+            VALIDATOR.read = lambda path: app_candidate if path == "config/app.yml.example" else original_read(path)
+            try:
+                VALIDATOR.validate_template()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Repository validator accepted member identity in the Lograge payload.")
+        finally:
+            VALIDATOR.APP_TEMPLATE_SHA256 = original_app_digest
+            VALIDATOR.read = original_read
+
         runtime_verifier = (ROOT / "scripts/verify-site.rb").read_text(encoding="utf-8")
         runtime_email_filter = '''checks["discourse_connect_log_parameters_filtered"] =
   Rails.application.config.filter_parameters.include?(:email) &&
@@ -5349,6 +5423,103 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
 '''
         if runtime_verifier.count(runtime_email_filter) != 1:
             raise RuntimeError("Runtime verifier omitted the exact member-email parameter filter check.")
+        runtime_logster_filter = '''checks["member_identity_omitted_from_logster_context"] =
+  defined?(MochiriiSensitiveLogsterEnvironmentFilter) &&
+    defined?(MochiriiSensitiveLogsterMessageFilter) &&
+    Logster.singleton_class.ancestors.include?(MochiriiSensitiveLogsterEnvironmentFilter) &&
+    Logster::Message.singleton_class.ancestors.include?(MochiriiSensitiveLogsterMessageFilter) &&
+    logster_string_identity_result.nil? &&
+    logster_symbol_identity_result.nil? &&
+    logster_string_identity_env.empty? &&
+    logster_symbol_identity_env.empty? &&
+    logster_control_result == "runtime-context-probe" &&
+    logster_control_env == { job: "runtime-context-probe" } &&
+    logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
+    logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
+    !JSON.generate(logster_callback_context).include?("member-identity-probe")
+'''
+        if runtime_verifier.count(runtime_logster_filter) != 1:
+            raise RuntimeError("Runtime verifier omitted the exact Logster member-identity omission check.")
+        runtime_logster_candidate = runtime_verifier.replace(
+            "    logster_string_identity_env.empty? &&\n",
+            "    true &&\n",
+            1,
+        )
+        if runtime_logster_candidate == runtime_verifier:
+            raise RuntimeError("Runtime Logster member-identity hostile mutation anchor is absent.")
+        original_runtime_digest = VALIDATOR.RUNTIME_VERIFIER_SHA256
+        try:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = hashlib.sha256(
+                runtime_logster_candidate.encode("utf-8")
+            ).hexdigest()
+            try:
+                VALIDATOR.validate_theme_runtime_verifier(runtime_logster_candidate)
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Runtime verifier accepted a decoy Logster member-identity check.")
+        finally:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = original_runtime_digest
+        runtime_recovery_logster_filter = '''checks["admin_recovery_log_path_filtered"] =
+  defined?(MochiriiSensitiveRequestPathFilter) &&
+    ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter) &&
+    recovery_request.path == "/session/email-login/#{recovery_token}" &&
+    recovery_request.filtered_path == "/session/email-login/[FILTERED]" &&
+    ordinary_request.filtered_path == "/session/email-login/too-short" &&
+    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&
+    !JSON.generate(recovery_logster_context).include?(recovery_token)
+'''
+        if runtime_verifier.count(runtime_recovery_logster_filter) != 1:
+            raise RuntimeError("Runtime verifier omitted the exact recovery Logster omission check.")
+        runtime_recovery_logster_candidate = runtime_verifier.replace(
+            '    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&\n',
+            "    true &&\n",
+            1,
+        )
+        if runtime_recovery_logster_candidate == runtime_verifier:
+            raise RuntimeError("Runtime recovery Logster hostile mutation anchor is absent.")
+        original_runtime_digest = VALIDATOR.RUNTIME_VERIFIER_SHA256
+        try:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = hashlib.sha256(
+                runtime_recovery_logster_candidate.encode("utf-8")
+            ).hexdigest()
+            try:
+                VALIDATOR.validate_theme_runtime_verifier(runtime_recovery_logster_candidate)
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Runtime verifier accepted a decoy recovery Logster check.")
+        finally:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = original_runtime_digest
+        runtime_lograge_filter = '''checks["member_identity_omitted_from_request_logs"] =
+  DiscourseLograge.enabled? &&
+    lograge_payload == { ip: "127.0.0.1", username: nil } &&
+    lograge_probe.current_user_reads.zero? &&
+    lograge_failure_payload == {} &&
+    lograge_failure_probe.current_user_reads.zero?
+'''
+        if runtime_verifier.count(runtime_lograge_filter) != 1:
+            raise RuntimeError("Runtime verifier omitted the exact member-identity log omission check.")
+        runtime_lograge_candidate = runtime_verifier.replace(
+            "    lograge_probe.current_user_reads.zero? &&\n",
+            "    true &&\n",
+            1,
+        )
+        if runtime_lograge_candidate == runtime_verifier:
+            raise RuntimeError("Runtime member-identity log hostile mutation anchor is absent.")
+        original_runtime_digest = VALIDATOR.RUNTIME_VERIFIER_SHA256
+        try:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = hashlib.sha256(
+                runtime_lograge_candidate.encode("utf-8")
+            ).hexdigest()
+            try:
+                VALIDATOR.validate_theme_runtime_verifier(runtime_lograge_candidate)
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("Runtime verifier accepted a decoy member-identity log check.")
+        finally:
+            VALIDATOR.RUNTIME_VERIFIER_SHA256 = original_runtime_digest
         runtime_candidate = runtime_verifier.replace(
             '    filtered_audit == { action: "generate", path: "/session/email-login/[FILTERED]" } &&\n',
             "    true &&\n",

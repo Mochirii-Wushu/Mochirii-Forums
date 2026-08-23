@@ -208,11 +208,74 @@ __MOCHIRII_TLS_RUN__
           end
         end
 
+        # Pinned Discourse adds the authenticated username to Logster's
+        # persisted request environment. Omit only that member identifier while
+        # preserving every other supported Logster context field.
+        module MochiriiSensitiveLogsterEnvironmentFilter
+          def add_to_env(env, key, value)
+            return if key == "username" || key == :username
+
+            super
+          end
+        end
+
+        # Logster independently parses request parameters and copies REQUEST_URI
+        # when it persists an error. Replace those raw fields with the same Rails
+        # filtered views used by the application logger, or omit them if the
+        # filter cannot produce a trusted result.
+        module MochiriiSensitiveLogsterMessageFilter
+          def populate_env_helper(env)
+            scrubbed = super
+            return scrubbed unless scrubbed.is_a?(Hash)
+
+            scrubbed.delete("username")
+            scrubbed.delete(:username)
+            return scrubbed unless env.is_a?(Hash) && env.include?("rack.input")
+
+            begin
+              request = ActionDispatch::Request.new(env)
+              filtered_parameters = request.filtered_parameters
+              filtered_path = request.filtered_path
+            rescue StandardError
+              scrubbed.delete("params")
+              scrubbed.delete("REQUEST_URI")
+            else
+              scrubbed["params"] = filtered_parameters if scrubbed.key?("params")
+              scrubbed["REQUEST_URI"] = filtered_path if scrubbed.key?("REQUEST_URI")
+            end
+
+            scrubbed
+          end
+        end
+
         ActionDispatch::Request.prepend(MochiriiSensitiveRequestPathFilter) unless
           ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter)
+        Logster.singleton_class.prepend(MochiriiSensitiveLogsterEnvironmentFilter) unless
+          Logster.singleton_class.ancestors.include?(MochiriiSensitiveLogsterEnvironmentFilter)
+        Logster::Message.singleton_class.prepend(MochiriiSensitiveLogsterMessageFilter) unless
+          Logster::Message.singleton_class.ancestors.include?(MochiriiSensitiveLogsterMessageFilter)
         Rails.application.reloader.to_prepare do
           UserAuthToken.singleton_class.prepend(MochiriiSensitiveUserAuthTokenAuditFilter) unless
             UserAuthToken.singleton_class.ancestors.include?(MochiriiSensitiveUserAuthTokenAuditFilter)
+        end
+        # Pinned Discourse Lograge adds current_user.username outside the
+        # filtered-parameter pipeline. Preserve request-IP observability without
+        # reading or serializing a member identifier into application logs.
+        if DiscourseLograge.enabled?
+          Rails.application.config.to_prepare do
+            Rails.application.config.lograge.custom_payload do |controller|
+              ip =
+                begin
+                  controller.request.remote_ip
+                rescue ActionDispatch::RemoteIp::IpSpoofAttackError
+                  nil
+                end
+
+              DiscourseLograge.custom_payload(ip: ip, username: nil)
+            rescue StandardError
+              {}
+            end
+          end
         end
         Rails.application.config.filter_parameters |= %i[email sso sig token]
   - file:

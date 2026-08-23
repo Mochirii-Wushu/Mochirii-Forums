@@ -108,17 +108,77 @@ checks["discourse_connect_log_parameters_filtered"] =
     Rails.application.config.filter_parameters.include?(:sso) &&
     Rails.application.config.filter_parameters.include?(:sig) &&
     Rails.application.config.filter_parameters.include?(:token)
+logster_string_identity_env = {}
+logster_symbol_identity_env = {}
+logster_control_env = {}
+logster_string_identity_result =
+  Logster.add_to_env(logster_string_identity_env, "username", "member-identity-probe")
+logster_symbol_identity_result =
+  Logster.add_to_env(logster_symbol_identity_env, :username, "member-identity-probe")
+logster_control_result = Logster.add_to_env(logster_control_env, :job, "runtime-context-probe")
+logster_callback_env = Rack::MockRequest.env_for(
+  "/session/sso_login?sso=member-identity-probe&sig=member-identity-probe",
+)
+logster_callback_request = ActionDispatch::Request.new(logster_callback_env)
+logster_callback_context = Logster::Message.populate_from_env(logster_callback_env)
+checks["member_identity_omitted_from_logster_context"] =
+  defined?(MochiriiSensitiveLogsterEnvironmentFilter) &&
+    defined?(MochiriiSensitiveLogsterMessageFilter) &&
+    Logster.singleton_class.ancestors.include?(MochiriiSensitiveLogsterEnvironmentFilter) &&
+    Logster::Message.singleton_class.ancestors.include?(MochiriiSensitiveLogsterMessageFilter) &&
+    logster_string_identity_result.nil? &&
+    logster_symbol_identity_result.nil? &&
+    logster_string_identity_env.empty? &&
+    logster_symbol_identity_env.empty? &&
+    logster_control_result == "runtime-context-probe" &&
+    logster_control_env == { job: "runtime-context-probe" } &&
+    logster_callback_context["params"] == logster_callback_request.filtered_parameters &&
+    logster_callback_context["REQUEST_URI"] == logster_callback_request.filtered_path &&
+    !JSON.generate(logster_callback_context).include?("member-identity-probe")
+lograge_probe_class =
+  Class.new do
+    attr_reader :request, :current_user_reads
+
+    def initialize
+      @request = Struct.new(:remote_ip).new("127.0.0.1")
+      @current_user_reads = 0
+    end
+
+    def current_user
+      @current_user_reads += 1
+      Struct.new(:username).new("member-identity-probe")
+    end
+  end
+lograge_probe = lograge_probe_class.new
+lograge_payload =
+  Rails.application.config.lograge.custom_payload.call(lograge_probe) if DiscourseLograge.enabled?
+lograge_failure_probe = lograge_probe_class.new
+def lograge_failure_probe.request
+  raise StandardError, "request-probe"
+end
+lograge_failure_payload =
+  Rails.application.config.lograge.custom_payload.call(lograge_failure_probe) if DiscourseLograge.enabled?
+checks["member_identity_omitted_from_request_logs"] =
+  DiscourseLograge.enabled? &&
+    lograge_payload == { ip: "127.0.0.1", username: nil } &&
+    lograge_probe.current_user_reads.zero? &&
+    lograge_failure_payload == {} &&
+    lograge_failure_probe.current_user_reads.zero?
 recovery_token = "a" * 32
 recovery_request = ActionDispatch::Request.new(
   Rack::MockRequest.env_for("/session/email-login/#{recovery_token}"),
 )
+recovery_logster_env = Rack::MockRequest.env_for("/session/email-login/#{recovery_token}")
+recovery_logster_context = Logster::Message.populate_from_env(recovery_logster_env)
 ordinary_request = ActionDispatch::Request.new(Rack::MockRequest.env_for("/session/email-login/too-short"))
 checks["admin_recovery_log_path_filtered"] =
   defined?(MochiriiSensitiveRequestPathFilter) &&
     ActionDispatch::Request.ancestors.include?(MochiriiSensitiveRequestPathFilter) &&
     recovery_request.path == "/session/email-login/#{recovery_token}" &&
     recovery_request.filtered_path == "/session/email-login/[FILTERED]" &&
-    ordinary_request.filtered_path == "/session/email-login/too-short"
+    ordinary_request.filtered_path == "/session/email-login/too-short" &&
+    recovery_logster_context["REQUEST_URI"] == "/session/email-login/[FILTERED]" &&
+    !JSON.generate(recovery_logster_context).include?(recovery_token)
 auth_audit_probe_class =
   Class.new do
     class << self
