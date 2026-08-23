@@ -2135,6 +2135,68 @@ def test_https_consumer_fixture_contract() -> None:
         CONNECT_FIXTURE.container_operation_absent = original_absence
         CONNECT_FIXTURE.stop_fixture_app = original_stop
 
+    expected_sensitive_log_categories = {
+        40: "input",
+        41: "identity",
+        42: "authenticated-session",
+        43: "authentication-audit-shape",
+        44: "authentication-audit-marker",
+        45: "log-inventory",
+        46: "application-log-marker",
+        47: "logster-shape",
+        48: "logster-marker",
+    }
+    private_runner_sentinel = b"MOCHIRII_PRIVATE_SENSITIVE_LOG_RUNNER_SENTINEL"
+    original_run = CONNECT_FIXTURE.subprocess.run
+    original_absence = CONNECT_FIXTURE.container_operation_absent
+    try:
+        for returncode, category in (*expected_sensitive_log_categories.items(), (49, None)):
+            run_calls: list[dict[str, object]] = []
+            absence_tokens: list[str] = []
+
+            def classified_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                run_calls.append(kwargs)
+                return subprocess.CompletedProcess(
+                    args=[],
+                    returncode=returncode,
+                    stdout=private_runner_sentinel,
+                    stderr=private_runner_sentinel,
+                )
+
+            CONNECT_FIXTURE.subprocess.run = classified_run
+            CONNECT_FIXTURE.container_operation_absent = (
+                lambda token: not absence_tokens.append(token)
+            )
+            try:
+                CONNECT_FIXTURE.run_container_runner(
+                    "sensitive-log-classification",
+                    input_bytes=private_runner_sentinel,
+                    classify_sensitive_log_failure=True,
+                )
+            except RuntimeError as error:
+                expected = (
+                    f"A disposable sensitive-log audit failed closed [category={category}]."
+                    if category is not None
+                    else "A disposable in-container fixture failed within its bounded operation."
+                )
+                if str(error) != expected:
+                    raise RuntimeError("Sensitive-log runner category mapping changed.") from error
+                if error.__cause__ is not None or private_runner_sentinel.decode("ascii") in str(error):
+                    raise RuntimeError("Sensitive-log runner diagnostic exposed private process data.") from error
+            else:
+                raise RuntimeError("Sensitive-log runner accepted a nonzero operation result.")
+            if (
+                len(run_calls) != 1
+                or len(absence_tokens) != 1
+                or run_calls[0].get("stdout") is not subprocess.DEVNULL
+                or run_calls[0].get("stderr") is not subprocess.DEVNULL
+                or run_calls[0].get("input") != private_runner_sentinel
+            ):
+                raise RuntimeError("Sensitive-log runner retry, output, or absence-proof boundary changed.")
+    finally:
+        CONNECT_FIXTURE.subprocess.run = original_run
+        CONNECT_FIXTURE.container_operation_absent = original_absence
+
 
 def test_theme_archive() -> None:
     with tempfile.TemporaryDirectory(prefix="mochirii-theme-test-") as directory:
@@ -4998,6 +5060,9 @@ def test_sensitive_callback_markers() -> None:
             raise RuntimeError("Administrator email-login log filter changes routing or became overbroad.")
 
         fixture_sources = {
+            "scripts/verify-discourse-connect.py": (
+                ROOT / "scripts/verify-discourse-connect.py"
+            ).read_text(encoding="utf-8"),
             "scripts/prepare-admin-recovery-fixture.rb": (
                 ROOT / "scripts/prepare-admin-recovery-fixture.rb"
             ).read_text(encoding="utf-8"),
@@ -5026,8 +5091,18 @@ def test_sensitive_callback_markers() -> None:
             ),
             (
                 "scripts/verify-sensitive-log-redaction.rb",
-                'raise "Sensitive-log fixture retained an authenticated session" if UserAuthToken.where(user_id: user.id).exists?\n',
-                'raise "Sensitive-log fixture retained an authenticated session" if false\n',
+                "reject_sensitive_log!(:authenticated_session) if UserAuthToken.where(user_id: user.id).exists?\n",
+                "reject_sensitive_log!(:authenticated_session) if false\n",
+            ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                "  application_log_marker: 46,\n",
+                "  application_log_marker: 45,\n",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                "        classify_sensitive_log_failure=True,\n",
+                "        classify_sensitive_log_failure=False,\n",
             ),
         )
         original_read = VALIDATOR.read
@@ -5048,6 +5123,188 @@ def test_sensitive_callback_markers() -> None:
                 raise RuntimeError("Repository validator accepted a hostile recovery or durable-log mutation.")
         finally:
             VALIDATOR.read = original_read
+
+        python_decoy = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            "        classify_sensitive_log_failure=True,\n",
+            "        classify_sensitive_log_failure=False,\n",
+            1,
+        ).replace(
+            '"""Exercise the pinned built-in consumer over the loopback HTTP boundary."""',
+            '"""Exercise the pinned built-in consumer over the loopback HTTP boundary.\n'
+            "        classify_sensitive_log_failure=True,\n"
+            '"""',
+            1,
+        )
+        python_early_audit_return = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            "def assert_callback_logs_redacted() -> None:\n    markers =",
+            "def assert_callback_logs_redacted() -> None:\n    return\n    markers =",
+            1,
+        )
+        python_local_runner_shadow = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            "def assert_callback_logs_redacted() -> None:\n    markers =",
+            "def assert_callback_logs_redacted() -> None:\n"
+            '    run_container_runner = lambda *_args, **_kwargs: b""\n'
+            "    markers =",
+            1,
+        )
+        python_runner_preemption = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            "    if completed.returncode != 0:\n        if classify_sensitive_log_failure:\n",
+            "    return b\"\"\n"
+            "    if completed.returncode != 0:\n        if classify_sensitive_log_failure:\n",
+            1,
+        )
+        python_main_global_rebind = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            "    run_with_fixture_force_https(lambda: verify_fixture(args, secret))\n",
+            '    globals()["assert_callback_logs_redacted"] = lambda: None\n'
+            "    run_with_fixture_force_https(lambda: verify_fixture(args, secret))\n",
+            1,
+        )
+        python_helper_global_rebind = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            "def verify_fixture_user() -> None:\n    run_container_runner(\n",
+            "def verify_fixture_user() -> None:\n"
+            "    global run_container_runner\n"
+            '    run_container_runner = lambda *_args, **_kwargs: b""\n'
+            "    run_container_runner(\n",
+            1,
+        )
+        python_dependency_rebind = fixture_sources["scripts/verify-discourse-connect.py"].replace(
+            "def verify_fixture_user() -> None:\n    run_container_runner(\n",
+            "def verify_fixture_user() -> None:\n"
+            "    subprocess.run = lambda *_args, **_kwargs: None\n"
+            "    run_container_runner(\n",
+            1,
+        )
+        ruby_exit_map = '''SENSITIVE_LOG_AUDIT_EXIT_CODES = {
+  input: 40,
+  identity: 41,
+  authenticated_session: 42,
+  authentication_audit_shape: 43,
+  authentication_audit_marker: 44,
+  log_inventory: 45,
+  application_log_marker: 46,
+  logster_shape: 47,
+  logster_marker: 48,
+}.freeze
+'''
+        ruby_decoy = fixture_sources["scripts/verify-sensitive-log-redaction.rb"].replace(
+            "  application_log_marker: 46,\n",
+            "  application_log_marker: 45,\n",
+            1,
+        ) + f"\n=begin\n{ruby_exit_map}=end\n"
+        ruby_helper_anchor = '''def reject_sensitive_log!(category)
+  exit SENSITIVE_LOG_AUDIT_EXIT_CODES.fetch(category)
+end
+
+reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"
+'''
+        ruby_helper_override = fixture_sources["scripts/verify-sensitive-log-redaction.rb"].replace(
+            ruby_helper_anchor,
+            '''def reject_sensitive_log!(category)
+  exit SENSITIVE_LOG_AUDIT_EXIT_CODES.fetch(category)
+end
+
+def reject_sensitive_log!(_category)
+end
+
+reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"
+''',
+            1,
+        )
+        ruby_helper_alias = fixture_sources["scripts/verify-sensitive-log-redaction.rb"].replace(
+            ruby_helper_anchor,
+            '''def reject_sensitive_log!(category)
+  exit SENSITIVE_LOG_AUDIT_EXIT_CODES.fetch(category)
+end
+
+alias reject_sensitive_log! puts
+
+reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"
+''',
+            1,
+        )
+        semantic_decoys = (
+            (
+                "scripts/verify-discourse-connect.py",
+                python_decoy,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_early_audit_return,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_local_runner_shadow,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_runner_preemption,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_main_global_rebind,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_helper_global_rebind,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-discourse-connect.py",
+                python_dependency_rebind,
+                "DISCOURSE_CONNECT_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                ruby_decoy,
+                "SENSITIVE_LOG_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                ruby_helper_override,
+                "SENSITIVE_LOG_VERIFIER_SHA256",
+            ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                ruby_helper_alias,
+                "SENSITIVE_LOG_VERIFIER_SHA256",
+            ),
+        )
+        original_hashes = {
+            name: getattr(VALIDATOR, name)
+            for _relative, _candidate, name in semantic_decoys
+        }
+        original_read = VALIDATOR.read
+        try:
+            for relative, candidate, hash_name in semantic_decoys:
+                if candidate == fixture_sources[relative]:
+                    raise RuntimeError("Sensitive-log semantic-decoy mutation anchor is absent.")
+                setattr(
+                    VALIDATOR,
+                    hash_name,
+                    hashlib.sha256(candidate.encode("utf-8")).hexdigest(),
+                )
+                VALIDATOR.read = (
+                    lambda path, relative=relative, candidate=candidate: candidate
+                    if path == relative
+                    else original_read(path)
+                )
+                try:
+                    VALIDATOR.validate_secrets_and_workflows()
+                except RuntimeError:
+                    pass
+                else:
+                    raise RuntimeError("Repository validator accepted a sensitive-log semantic bypass.")
+                finally:
+                    setattr(VALIDATOR, hash_name, original_hashes[hash_name])
+        finally:
+            VALIDATOR.read = original_read
+            for hash_name, value in original_hashes.items():
+                setattr(VALIDATOR, hash_name, value)
 
         app_candidate = app.replace(
             "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",

@@ -403,6 +403,7 @@ def run_container_runner(
     arguments: tuple[str, ...] = (),
     input_bytes: bytes | None = None,
     capture_stdout: bool = False,
+    classify_sensitive_log_failure: bool = False,
 ) -> bytes:
     token = secrets.token_hex(16)
     command = [
@@ -438,7 +439,25 @@ def run_container_runner(
                     "A disposable in-container fixture absence proof failed."
                 ) from absence_error
             raise RuntimeError("A disposable in-container fixture survived its operation boundary.")
-    if timed_out or completed is None or completed.returncode != 0:
+    if timed_out or completed is None:
+        raise RuntimeError("A disposable in-container fixture failed within its bounded operation.")
+    if completed.returncode != 0:
+        if classify_sensitive_log_failure:
+            category = {
+                40: "input",
+                41: "identity",
+                42: "authenticated-session",
+                43: "authentication-audit-shape",
+                44: "authentication-audit-marker",
+                45: "log-inventory",
+                46: "application-log-marker",
+                47: "logster-shape",
+                48: "logster-marker",
+            }.get(completed.returncode)
+            if category is not None:
+                raise RuntimeError(
+                    f"A disposable sensitive-log audit failed closed [category={category}]."
+                )
         raise RuntimeError("A disposable in-container fixture failed within its bounded operation.")
     output = completed.stdout or b""
     if len(output) > 16_384:
@@ -881,6 +900,7 @@ def assert_callback_logs_redacted() -> None:
     run_container_runner(
         '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-sensitive-log-redaction.rb"',
         input_bytes=b"\n".join(markers) + b"\n",
+        classify_sensitive_log_failure=True,
     )
     with tempfile.TemporaryFile() as transcript:
         completed = subprocess.run(

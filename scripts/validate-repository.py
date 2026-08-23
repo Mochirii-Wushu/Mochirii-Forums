@@ -197,8 +197,9 @@ RUNTIME_VERIFIER_SHA256 = "b87598ebd8678840cf51e72b80acf8304f684ffc2c69124a54c35
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
 APP_TEMPLATE_SHA256 = "ac36307e0db6e3ed6ec673b1e703d047f20f0a069e30b468d92e69cc2c13a4cd"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
-SENSITIVE_LOG_VERIFIER_SHA256 = "ce351a5bf603f2b4d76a73eaab16489c86cb6e5c8d4b8b10f76f4644b0a826eb"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "2feffe78bd228f2197e9eaa7f7ef1a70b6459a4840e6a7e883712498730fdc22"
+SENSITIVE_LOG_VERIFIER_SHA256 = "4f70f9db136cdebd0cc578585cfc9ac49b0b0c8faeedfd7310faec93126d12a3"
+SENSITIVE_LOG_EXECUTABLE_SHA256 = "23c56d65eb5ba11771f44bf6f829f833cd08bbe90bd1cee17d44ef6d3369aaed"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "48678c35b675dec6da2aa81bea79bb3042b0dfee3db0548544957e562060352d"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -533,6 +534,26 @@ JSON_SHAPE_SHA256 = {
 
 def fail(message: str) -> None:
     raise RuntimeError(message)
+
+
+def ruby_executable_contract_source(source: str) -> str:
+    executable: list[str] = []
+    in_block_comment = False
+    for line in source.splitlines(keepends=True):
+        logical = line.rstrip("\r\n")
+        if in_block_comment:
+            if re.fullmatch(r"=end(?:[ \t].*)?", logical):
+                in_block_comment = False
+            continue
+        if re.fullmatch(r"=begin(?:[ \t].*)?", logical):
+            in_block_comment = True
+            continue
+        if logical.lstrip(" \t").startswith("#"):
+            continue
+        executable.append(line)
+    if in_block_comment:
+        fail("Sensitive-log executable Ruby contract contains an unterminated block comment.")
+    return "".join(executable)
 
 
 def validate_theme_runtime_verifier(source: str) -> None:
@@ -1959,6 +1980,220 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
         tree = ast.parse(verifier)
     except SyntaxError as error:
         fail(f"DiscourseConnect fixture is not valid Python: {error}")
+
+    protected_global_names = {
+        "assert_callback_logs_redacted",
+        "run_container_runner",
+    }
+    dynamic_namespace_names = {
+        "__builtins__",
+        "__import__",
+        "compile",
+        "delattr",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "locals",
+        "setattr",
+        "vars",
+    }
+    dynamic_namespace_attributes = {
+        "__code__",
+        "__dict__",
+        "__globals__",
+        "__setattr__",
+        "f_globals",
+    }
+    expected_instance_attribute_stores = [
+        "cookies",
+        "hidden",
+        "hidden",
+        "hidden",
+        "original",
+        "parts",
+        "pending",
+        "pending",
+        "port",
+    ]
+    instance_attribute_stores = [
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    ]
+    if (
+        any(isinstance(node, (ast.Global, ast.Nonlocal)) for node in ast.walk(tree))
+        or any(
+            isinstance(node, ast.Name) and node.id in dynamic_namespace_names
+            for node in ast.walk(tree)
+        )
+        or any(
+            isinstance(node, ast.Attribute)
+            and (
+                node.attr in dynamic_namespace_attributes
+                or (
+                    node.attr in protected_global_names
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                )
+            )
+            for node in ast.walk(tree)
+        )
+        or any(
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and not (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            )
+            for node in ast.walk(tree)
+        )
+        or sorted(instance_attribute_stores) != expected_instance_attribute_stores
+    ):
+        fail("DiscourseConnect fixture can mutate a protected global call target.")
+
+    expected_runner_function = ast.parse(
+        '''def run_container_runner(
+    script: str,
+    *,
+    arguments: tuple[str, ...] = (),
+    input_bytes: bytes | None = None,
+    capture_stdout: bool = False,
+    classify_sensitive_log_failure: bool = False,
+) -> bytes:
+    token = secrets.token_hex(16)
+    command = [
+        "sudo", "docker", "exec", "-i", "-e", f"MOCHIRII_OPERATION_TOKEN={token}",
+        "app", "timeout", "--signal=TERM", "--kill-after=10s", "45s",
+        "bash", "-lc", script, "bash", *arguments,
+    ]
+    completed: subprocess.CompletedProcess[bytes] | None = None
+    timed_out = False
+    try:
+        try:
+            completed = subprocess.run(
+                command,
+                input=input_bytes,
+                stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            timed_out = True
+    finally:
+        absence_error: BaseException | None = None
+        try:
+            absent = container_operation_absent(token)
+        except BaseException as error:
+            absence_error = error
+            absent = False
+        if not absent:
+            stop_fixture_app()
+            if absence_error is not None:
+                raise RuntimeError(
+                    "A disposable in-container fixture absence proof failed."
+                ) from absence_error
+            raise RuntimeError("A disposable in-container fixture survived its operation boundary.")
+    if timed_out or completed is None:
+        raise RuntimeError("A disposable in-container fixture failed within its bounded operation.")
+    if completed.returncode != 0:
+        if classify_sensitive_log_failure:
+            category = {
+                40: "input",
+                41: "identity",
+                42: "authenticated-session",
+                43: "authentication-audit-shape",
+                44: "authentication-audit-marker",
+                45: "log-inventory",
+                46: "application-log-marker",
+                47: "logster-shape",
+                48: "logster-marker",
+            }.get(completed.returncode)
+            if category is not None:
+                raise RuntimeError(
+                    f"A disposable sensitive-log audit failed closed [category={category}]."
+                )
+        raise RuntimeError("A disposable in-container fixture failed within its bounded operation.")
+    output = completed.stdout or b""
+    if len(output) > 16_384:
+        raise RuntimeError("A disposable in-container fixture exceeded its output boundary.")
+    return output.strip()
+'''
+    ).body[0]
+    expected_sensitive_log_function = ast.parse(
+        '''def assert_callback_logs_redacted() -> None:
+    markers = sorted(CALLBACK_LOG_MARKERS)
+    if not markers or len(markers) > 64 or any(len(marker) < 16 or len(marker) > 16_384 for marker in markers):
+        raise RuntimeError("Sensitive callback marker inventory is malformed.")
+    run_container_runner(
+        '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-sensitive-log-redaction.rb"',
+        input_bytes=b"\\n".join(markers) + b"\\n",
+        classify_sensitive_log_failure=True,
+    )
+    with tempfile.TemporaryFile() as transcript:
+        completed = subprocess.run(
+            ["timeout", "35", "sudo", "docker", "logs", "--since", "30m", "app"],
+            stdin=subprocess.DEVNULL,
+            stdout=transcript,
+            stderr=subprocess.DEVNULL,
+            timeout=40,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("Disposable container log readback failed.")
+        size = os.fstat(transcript.fileno()).st_size
+        if size > 128 * 1024 * 1024:
+            raise RuntimeError("Disposable container log readback exceeded its byte boundary.")
+        transcript.seek(0)
+        content = transcript.read()
+        if sensitive_marker_reached(content, markers):
+            raise RuntimeError("A callback secret or member marker reached the container log boundary.")
+'''
+    ).body[0]
+    runner_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "run_container_runner"
+    ]
+    sensitive_log_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "assert_callback_logs_redacted"
+    ]
+    if len(runner_functions) != 1 or len(sensitive_log_functions) != 1:
+        fail("Sensitive-log failure classification function binding differs.")
+    try:
+        symbol_root = symtable.symtable(verifier, "verify-discourse-connect.py", "exec")
+    except SyntaxError as error:
+        fail(f"DiscourseConnect fixture symbol table is invalid: {error}")
+    sensitive_log_symbol_tables = [
+        table
+        for table in symbol_root.get_children()
+        if table.get_type() == "function"
+        and table.get_name() == "assert_callback_logs_redacted"
+        and table.get_lineno() == sensitive_log_functions[0].lineno
+    ]
+    if len(sensitive_log_symbol_tables) != 1:
+        fail("Sensitive-log audit function symbol table differs.")
+    runner_symbol = sensitive_log_symbol_tables[0].lookup("run_container_runner")
+    if (
+        ast.dump(runner_functions[0], include_attributes=False)
+        != ast.dump(expected_runner_function, include_attributes=False)
+        or ast.dump(sensitive_log_functions[0], include_attributes=False)
+        != ast.dump(expected_sensitive_log_function, include_attributes=False)
+        or not runner_symbol.is_global()
+        or runner_symbol.is_assigned()
+        or runner_symbol.is_imported()
+        or runner_symbol.is_parameter()
+        or runner_symbol.is_nonlocal()
+        or runner_symbol.is_free()
+    ):
+        fail("Sensitive-log failure classification executable Python sequence differs.")
     expected_imports = ast.parse(
         "from __future__ import annotations\n"
         "import argparse\n"
@@ -3590,6 +3825,38 @@ def validate_secrets_and_workflows() -> None:
         fail("Administrator recovery fixture differs from the exact reviewed source digest.")
     if hashlib.sha256(sensitive_log_verifier.encode("utf-8")).hexdigest() != SENSITIVE_LOG_VERIFIER_SHA256:
         fail("Sensitive-log verifier differs from the exact reviewed source digest.")
+    sensitive_log_executable = ruby_executable_contract_source(sensitive_log_verifier)
+    if hashlib.sha256(sensitive_log_executable.encode("utf-8")).hexdigest() != SENSITIVE_LOG_EXECUTABLE_SHA256:
+        fail("Sensitive-log executable Ruby body differs from the exact reviewed contract.")
+    sensitive_log_executable_prefix = '''# frozen_string_literal: true
+
+require "pathname"
+
+SENSITIVE_LOG_AUDIT_EXIT_CODES = {
+  input: 40,
+  identity: 41,
+  authenticated_session: 42,
+  authentication_audit_shape: 43,
+  authentication_audit_marker: 44,
+  log_inventory: 45,
+  application_log_marker: 46,
+  logster_shape: 47,
+  logster_marker: 48,
+}.freeze
+
+def reject_sensitive_log!(category)
+  exit SENSITIVE_LOG_AUDIT_EXIT_CODES.fetch(category)
+end
+
+'''
+    if (
+        not sensitive_log_verifier.startswith(sensitive_log_executable_prefix)
+        or "SENSITIVE_LOG_AUDIT_EXIT_CODES" in sensitive_log_verifier[
+            len(sensitive_log_executable_prefix):
+        ]
+        or sensitive_log_verifier.count("def reject_sensitive_log!(category)") != 1
+    ):
+        fail("Sensitive-log executable Ruby classification contract differs.")
     finalizer = read("scripts/finalize-member-rollout.sh")
     require_text(
         host_deploy,
