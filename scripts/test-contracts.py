@@ -2148,12 +2148,19 @@ def test_https_consumer_fixture_contract() -> None:
         49: "application-log-identity-marker",
         50: "application-log-callback-marker",
         51: "application-log-recovery-marker",
+        52: "application-log-identity-marker-1",
+        53: "application-log-identity-marker-2",
+        54: "application-log-identity-marker-3",
+        55: "application-log-identity-marker-4",
+        56: "application-log-identity-marker-5",
+        57: "application-log-identity-marker-6",
+        58: "application-log-identity-marker-7",
     }
     private_runner_sentinel = b"MOCHIRII_PRIVATE_SENSITIVE_LOG_RUNNER_SENTINEL"
     original_run = CONNECT_FIXTURE.subprocess.run
     original_absence = CONNECT_FIXTURE.container_operation_absent
     try:
-        for returncode, category in (*expected_sensitive_log_categories.items(), (52, None)):
+        for returncode, category in (*expected_sensitive_log_categories.items(), (59, None)):
             run_calls: list[dict[str, object]] = []
             absence_tokens: list[str] = []
 
@@ -5296,6 +5303,13 @@ def test_sensitive_callback_markers() -> None:
   application_log_identity_marker: 49,
   application_log_callback_marker: 50,
   application_log_recovery_marker: 51,
+  application_log_identity_marker_1: 52,
+  application_log_identity_marker_2: 53,
+  application_log_identity_marker_3: 54,
+  application_log_identity_marker_4: 55,
+  application_log_identity_marker_5: 56,
+  application_log_identity_marker_6: 57,
+  application_log_identity_marker_7: 58,
 }.freeze
 '''
         ruby_decoy = fixture_sources["scripts/verify-sensitive-log-redaction.rb"].replace(
@@ -5339,6 +5353,13 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ].replace(
             '  "identity" => :application_log_identity_marker,\n',
             '  "identity" => :application_log_callback_marker,\n',
+            1,
+        )
+        ruby_identity_ordinal_bypass = fixture_sources[
+            "scripts/verify-sensitive-log-redaction.rb"
+        ].replace(
+            "      reject_sensitive_log!(APPLICATION_LOG_IDENTITY_MARKER_CATEGORIES.fetch(marker_record[1], :input))\n",
+            "      reject_sensitive_log!(:application_log_identity_marker)\n",
             1,
         )
         semantic_decoys = (
@@ -5417,11 +5438,17 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
                 ruby_application_category_drift,
                 "SENSITIVE_LOG_VERIFIER_SHA256",
             ),
+            (
+                "scripts/verify-sensitive-log-redaction.rb",
+                ruby_identity_ordinal_bypass,
+                "SENSITIVE_LOG_VERIFIER_SHA256",
+            ),
         )
         original_hashes = {
             name: getattr(VALIDATOR, name)
             for _relative, _candidate, name in semantic_decoys
         }
+        original_sensitive_log_executable_hash = VALIDATOR.SENSITIVE_LOG_EXECUTABLE_SHA256
         original_read = VALIDATOR.read
         try:
             for relative, candidate, hash_name in semantic_decoys:
@@ -5432,6 +5459,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
                     hash_name,
                     hashlib.sha256(candidate.encode("utf-8")).hexdigest(),
                 )
+                if relative == "scripts/verify-sensitive-log-redaction.rb":
+                    candidate_executable = VALIDATOR.ruby_executable_contract_source(candidate)
+                    VALIDATOR.SENSITIVE_LOG_EXECUTABLE_SHA256 = hashlib.sha256(
+                        candidate_executable.encode("utf-8")
+                    ).hexdigest()
                 VALIDATOR.read = (
                     lambda path, relative=relative, candidate=candidate: candidate
                     if path == relative
@@ -5445,10 +5477,14 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
                     raise RuntimeError("Repository validator accepted a sensitive-log semantic bypass.")
                 finally:
                     setattr(VALIDATOR, hash_name, original_hashes[hash_name])
+                    VALIDATOR.SENSITIVE_LOG_EXECUTABLE_SHA256 = (
+                        original_sensitive_log_executable_hash
+                    )
         finally:
             VALIDATOR.read = original_read
             for hash_name, value in original_hashes.items():
                 setattr(VALIDATOR, hash_name, value)
+            VALIDATOR.SENSITIVE_LOG_EXECUTABLE_SHA256 = original_sensitive_log_executable_hash
 
         app_candidate = app.replace(
             "super(info.merge(path: MochiriiSensitiveRequestPathFilter::FILTERED_EMAIL_LOGIN_PATH))",

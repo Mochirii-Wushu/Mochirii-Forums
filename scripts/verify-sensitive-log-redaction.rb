@@ -15,12 +15,29 @@ SENSITIVE_LOG_AUDIT_EXIT_CODES = {
   application_log_identity_marker: 49,
   application_log_callback_marker: 50,
   application_log_recovery_marker: 51,
+  application_log_identity_marker_1: 52,
+  application_log_identity_marker_2: 53,
+  application_log_identity_marker_3: 54,
+  application_log_identity_marker_4: 55,
+  application_log_identity_marker_5: 56,
+  application_log_identity_marker_6: 57,
+  application_log_identity_marker_7: 58,
 }.freeze
 
 APPLICATION_LOG_MARKER_CATEGORIES = {
   "identity" => :application_log_identity_marker,
   "callback" => :application_log_callback_marker,
   "recovery" => :application_log_recovery_marker,
+}.freeze
+
+APPLICATION_LOG_IDENTITY_MARKER_CATEGORIES = {
+  "Mochirii Stage 4 Fixture" => :application_log_identity_marker_1,
+  "Mochirii%20Stage%204%20Fixture" => :application_log_identity_marker_2,
+  "Mochirii+Stage+4+Fixture" => :application_log_identity_marker_3,
+  "mochirii-s4-test" => :application_log_identity_marker_4,
+  "mochirii-stage4-consumer-fixture" => :application_log_identity_marker_5,
+  "stage4-fixture%40forums.mochirii.com" => :application_log_identity_marker_6,
+  "stage4-fixture@forums.mochirii.com" => :application_log_identity_marker_7,
 }.freeze
 
 def reject_sensitive_log!(category)
@@ -43,6 +60,10 @@ end
 reject_sensitive_log!(:input) unless valid_marker_records
 markers = marker_records.map(&:last)
 reject_sensitive_log!(:input) unless markers.uniq.length == markers.length
+identity_markers = marker_records.select { |category, _marker| category == "identity" }.map(&:last)
+unless identity_markers.sort == APPLICATION_LOG_IDENTITY_MARKER_CATEGORIES.keys.sort
+  reject_sensitive_log!(:input)
+end
 
 record = SingleSignOnRecord.find_by(external_id: "mochirii-stage4-consumer-fixture")
 reject_sensitive_log!(:identity) if record.nil? || record.user.nil?
@@ -94,6 +115,9 @@ paths.each do |path|
   reject_sensitive_log!(:log_inventory) if size > 64 * 1024 * 1024 || total_bytes > 192 * 1024 * 1024
   content = resolved.binread
   if marker_record = marker_records.find { |_category, marker| content.include?(marker) }
+    if marker_record[0] == "identity"
+      reject_sensitive_log!(APPLICATION_LOG_IDENTITY_MARKER_CATEGORIES.fetch(marker_record[1], :input))
+    end
     reject_sensitive_log!(APPLICATION_LOG_MARKER_CATEGORIES.fetch(marker_record[0]))
   end
 end

@@ -472,6 +472,13 @@ def run_container_runner(
                 49: "application-log-identity-marker",
                 50: "application-log-callback-marker",
                 51: "application-log-recovery-marker",
+                52: "application-log-identity-marker-1",
+                53: "application-log-identity-marker-2",
+                54: "application-log-identity-marker-3",
+                55: "application-log-identity-marker-4",
+                56: "application-log-identity-marker-5",
+                57: "application-log-identity-marker-6",
+                58: "application-log-identity-marker-7",
             }.get(completed.returncode)
             if category is not None:
                 raise RuntimeError(

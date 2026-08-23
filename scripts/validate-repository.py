@@ -197,9 +197,9 @@ RUNTIME_VERIFIER_SHA256 = "1a66972c12414a7cb777b17bae360b09519be3c008e172bd7e206
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
 APP_TEMPLATE_SHA256 = "907d5cc632b086d8fa55f4427762763a8bb76e71fcb1dedb7ae5926168d0e496"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
-SENSITIVE_LOG_VERIFIER_SHA256 = "8efc3fdda3129b5ccdc8cc4be410c08d08fedef3d732b4994e333ac12d96db89"
-SENSITIVE_LOG_EXECUTABLE_SHA256 = "0b89a9eca81f3e7db1ef789b9218cef688937ada853f7cc0a2bd81ce321a468b"
-DISCOURSE_CONNECT_VERIFIER_SHA256 = "d9f356418089163ceda598688c534a219d799b987532505443f7204e6794fccf"
+SENSITIVE_LOG_VERIFIER_SHA256 = "dcd105f619674983c42c92eeff2f06dbdc37fca3779aa5e13acdbc8b80ffc09c"
+SENSITIVE_LOG_EXECUTABLE_SHA256 = "3e9ca44f8d9f4e2f89463fca323ba63388f2c059664cc4e0d25ebd1c9fcad6fa"
+DISCOURSE_CONNECT_VERIFIER_SHA256 = "f12739d6baba4eb4267509fd35b5e6f9ce79be19e5ec63b07e2134140041a360"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "be818e81098f77636e9a58985eedd5589876422d9c9adaa04457fb1707cec16c"
 HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300cc976150e9fd62a043cc28317b"
@@ -2184,6 +2184,13 @@ def validate_https_consumer_fixture_contract(verifier: str) -> None:
                 49: "application-log-identity-marker",
                 50: "application-log-callback-marker",
                 51: "application-log-recovery-marker",
+                52: "application-log-identity-marker-1",
+                53: "application-log-identity-marker-2",
+                54: "application-log-identity-marker-3",
+                55: "application-log-identity-marker-4",
+                56: "application-log-identity-marker-5",
+                57: "application-log-identity-marker-6",
+                58: "application-log-identity-marker-7",
             }.get(completed.returncode)
             if category is not None:
                 raise RuntimeError(
@@ -4104,6 +4111,13 @@ SENSITIVE_LOG_AUDIT_EXIT_CODES = {
   application_log_identity_marker: 49,
   application_log_callback_marker: 50,
   application_log_recovery_marker: 51,
+  application_log_identity_marker_1: 52,
+  application_log_identity_marker_2: 53,
+  application_log_identity_marker_3: 54,
+  application_log_identity_marker_4: 55,
+  application_log_identity_marker_5: 56,
+  application_log_identity_marker_6: 57,
+  application_log_identity_marker_7: 58,
 }.freeze
 
 APPLICATION_LOG_MARKER_CATEGORIES = {
@@ -4112,9 +4126,21 @@ APPLICATION_LOG_MARKER_CATEGORIES = {
   "recovery" => :application_log_recovery_marker,
 }.freeze
 
+APPLICATION_LOG_IDENTITY_MARKER_CATEGORIES = {
+  "Mochirii Stage 4 Fixture" => :application_log_identity_marker_1,
+  "Mochirii%20Stage%204%20Fixture" => :application_log_identity_marker_2,
+  "Mochirii+Stage+4+Fixture" => :application_log_identity_marker_3,
+  "mochirii-s4-test" => :application_log_identity_marker_4,
+  "mochirii-stage4-consumer-fixture" => :application_log_identity_marker_5,
+  "stage4-fixture%40forums.mochirii.com" => :application_log_identity_marker_6,
+  "stage4-fixture@forums.mochirii.com" => :application_log_identity_marker_7,
+}.freeze
+
 def reject_sensitive_log!(category)
   exit SENSITIVE_LOG_AUDIT_EXIT_CODES.fetch(category)
 end
+
+reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "true"
 
 '''
     if (
@@ -4292,6 +4318,7 @@ end
             '"identity" => :application_log_identity_marker',
             '"callback" => :application_log_callback_marker',
             '"recovery" => :application_log_recovery_marker',
+            'APPLICATION_LOG_IDENTITY_MARKER_CATEGORIES.fetch(marker_record[1], :input)',
             'UserAuthTokenLog.where(user_id: user.id).order(:id).limit(129).to_a',
             'entry.path == filtered_email_login_path',
             'UserAuthToken.where(user_id: user.id).exists?',
