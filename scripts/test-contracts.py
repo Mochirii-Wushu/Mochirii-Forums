@@ -6621,19 +6621,24 @@ return -1""",
         source = (ROOT / document).read_text(encoding="utf-8")
         if any(value not in source for value in required_values):
             raise RuntimeError(f"Sidekiq processing operations documentation differs in {document}.")
-    for verifier in (site, restored):
-        required_verifier = (
-            "Sidekiq::ProcessSet.new.any?",
-            "MochiriiEmailMetadata.verify_sidekiq_processing!",
-            "rescue MochiriiEmailMetadata::SidekiqProbeError => error",
-            'sidekiq_probe_state = "completed"',
-            "sidekiq_probe_state = error.state",
-            "sidekiqProbeState: sidekiq_probe_state",
-        )
-        if any(value not in verifier for value in required_verifier):
-            raise RuntimeError("Runtime verification no longer proves and safely reports Sidekiq execution.")
-        if any(value in verifier for value in ("error.message", "error.backtrace", "error.inspect")):
-            raise RuntimeError("Runtime Sidekiq verification emits unsafe exception detail.")
+    for label, verifier in (("site", site), ("restored", restored)):
+        VALIDATOR.validate_sidekiq_runtime_verifier(verifier, label)
+
+    process_line = 'checks["sidekiq_process_present"] = Sidekiq::ProcessSet.new.any?\n'
+    probe_state_line = 'sidekiq_probe_state = "completed"\n'
+    if site.count(process_line) != 1 or site.count(probe_state_line) != 1:
+        raise RuntimeError("Runtime Sidekiq registration-order hostile anchor is absent.")
+    early_process_sample = site.replace(process_line, "", 1).replace(
+        probe_state_line,
+        process_line + probe_state_line,
+        1,
+    )
+    try:
+        VALIDATOR.validate_sidekiq_runtime_verifier(early_process_sample, "hostile site")
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Runtime verifier accepted a pre-processing Sidekiq registration sample.")
 
 
 def test_backup_restore_normal_upload_contract() -> None:

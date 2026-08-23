@@ -5,7 +5,6 @@ require "json"
 checks = {}
 checks["database"] = ActiveRecord::Base.connection.select_value("SELECT 1").to_i == 1
 checks["redis"] = Discourse.redis.ping == "PONG"
-checks["sidekiq_process_present"] = Sidekiq::ProcessSet.new.any?
 sidekiq_probe_state = "completed"
 begin
   checks["sidekiq_processing"] = MochiriiEmailMetadata.verify_sidekiq_processing!
@@ -13,6 +12,7 @@ rescue MochiriiEmailMetadata::SidekiqProbeError => error
   checks["sidekiq_processing"] = false
   sidekiq_probe_state = error.state
 end
+checks["sidekiq_process_present"] = Sidekiq::ProcessSet.new.any?
 checks["theme"] = Theme.find_by(name: "Mochirii Forums")&.default? == true
 checks["single_theme"] = Theme.where(name: "Mochirii Forums").count == 1
 theme = Theme.find_by(name: "Mochirii Forums")

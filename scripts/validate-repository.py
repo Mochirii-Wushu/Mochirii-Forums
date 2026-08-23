@@ -193,7 +193,7 @@ checks["narrative_system_user_branded"] =
     "narrative_system_user_gravatar_absent",
   ).all?
 '''
-RUNTIME_VERIFIER_SHA256 = "1a66972c12414a7cb777b17bae360b09519be3c008e172bd7e2065e9ac647d1b"
+RUNTIME_VERIFIER_SHA256 = "98d006018e124694965ce26167cad5fed03897fe79ecdac3a87f702ad40788a5"
 CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
 APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
@@ -687,6 +687,25 @@ checks["admin_recovery_log_path_filtered"] =
         fail("Runtime theme verifier differs from the exact pinned semantic block.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != RUNTIME_VERIFIER_SHA256:
         fail("Runtime verifier differs from the exact reviewed source digest.")
+
+
+def validate_sidekiq_runtime_verifier(source: str, label: str) -> None:
+    processing_marker = "MochiriiEmailMetadata.verify_sidekiq_processing!"
+    process_marker = "Sidekiq::ProcessSet.new.any?"
+    required = (
+        process_marker,
+        processing_marker,
+        "rescue MochiriiEmailMetadata::SidekiqProbeError => error",
+        'sidekiq_probe_state = "completed"',
+        "sidekiq_probe_state = error.state",
+        "sidekiqProbeState: sidekiq_probe_state",
+    )
+    if any(source.count(value) != 1 for value in required):
+        fail(f"Registered, executing, and fixed-state Sidekiq verification differs in {label}.")
+    if source.index(processing_marker) > source.index(process_marker):
+        fail(f"Sidekiq registration is sampled before the bounded processing proof in {label}.")
+    if any(value in source for value in ("error.message", "error.backtrace", "error.inspect")):
+        fail(f"Sidekiq verifier emits an unsafe exception value: {label}")
 
 
 def validate_narrative_avatar_contract(template: str, configure: str, verifier: str) -> None:
@@ -3888,21 +3907,7 @@ return -1""",
     for document, required_values in sidekiq_doc_requirements.items():
         require_text(read(document), required_values, f"Sidekiq diagnostic operations contract in {document}")
     for verifier in ("scripts/verify-site.rb", "scripts/verify-restored-backup.rb"):
-        verifier_text = read(verifier)
-        require_text(
-            verifier_text,
-            [
-                "Sidekiq::ProcessSet.new.any?",
-                "MochiriiEmailMetadata.verify_sidekiq_processing!",
-                "rescue MochiriiEmailMetadata::SidekiqProbeError => error",
-                'sidekiq_probe_state = "completed"',
-                "sidekiq_probe_state = error.state",
-                "sidekiqProbeState: sidekiq_probe_state",
-            ],
-            f"registered, executing, and fixed-state Sidekiq verification in {verifier}",
-        )
-        if "error.message" in verifier_text or "error.backtrace" in verifier_text or "error.inspect" in verifier_text:
-            fail(f"Sidekiq verifier emits an unsafe exception value: {verifier}")
+        validate_sidekiq_runtime_verifier(read(verifier), verifier)
 
 
 def validate_secrets_and_workflows() -> None:
