@@ -206,6 +206,49 @@ HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "c6f39e2fbe27e81de30b8f48e06b0cd4201300
 HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "cefc6ba11ee9810f228a9f47048c95d5d441e6de854a60d0a3629de7e6d3a0e7"
 HOST_VERIFY_SOURCE_SHA256 = "c5ac86ad24e8cc011a50422a97c8d62b9e04a3aa5ba3ea482ba313001990cd51"
 DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "9aa1279010aac1a5b7c65b6634053792d15c17f788090456660f1a575aa9b98e"
+DISPOSABLE_NGINX_OUTLET_EXTRACTOR_RUBY = r"""
+require "yaml"
+
+document = YAML.safe_load_file(ARGV.fetch(0), aliases: true)
+expected = {
+  "/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/discourse/35-mochirii-public-response-headers.inc"),
+  "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/discourse/40-mochirii-public-metadata.conf"),
+  "/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/server/35-mochirii-public-response-headers.conf"),
+  "/etc/nginx/conf.d/outlets/server/40-mochirii-feed-denial.conf" =>
+    File.join(ARGV.fetch(1), "conf.d/outlets/server/40-mochirii-feed-denial.conf"),
+}
+items = document.fetch("run")
+final_commands = items.fetch(-1).fetch("exec").fetch("cmd")
+expected_header_include = %q{test "$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;' /etc/nginx/conf.d/discourse.conf)" -eq 1}
+expected_private_username_log = %q{test "$(grep -Fo '"-" "$upstream_http_x_discourse_trackview"' /etc/nginx/conf.d/discourse.conf | wc -l)" -eq 1}
+expected_no_username_log = %q{! grep -Fq '$upstream_http_x_discourse_username' /etc/nginx/conf.d/discourse.conf}
+expected_nginx = "test ! -L /var/log/nginx && install -d -m 0755 -o root -g adm /var/log/nginx && nginx -t"
+abort "final response-header include command differs" unless final_commands.length == 12 && final_commands.fetch(-5) == expected_header_include
+abort "final private username-log command differs" unless final_commands.fetch(-4) == expected_private_username_log
+abort "final username-log exclusion command differs" unless final_commands.fetch(-3) == expected_no_username_log
+abort "final Nginx command differs" unless final_commands.fetch(-1) == expected_nginx
+outlet_directories = [
+  "/etc/nginx/conf.d/outlets/discourse",
+  "/etc/nginx/conf.d/outlets/server",
+]
+actual_outlets = items.filter_map do |item|
+  file = item["file"]
+  next unless file.is_a?(Hash) && file["path"].is_a?(String)
+  next unless outlet_directories.include?(File.dirname(file["path"]))
+  file["path"]
+end
+abort "outlet inventory differs" unless actual_outlets.sort == expected.keys.sort
+expected.each do |source, destination|
+  matches = items.select { |item| item["file"].is_a?(Hash) && item["file"]["path"] == source }
+  abort "outlet inventory differs" unless matches.length == 1
+  contents = matches.fetch(0).fetch("file").fetch("contents")
+  abort "outlet contents differ" unless contents.is_a?(String) && !contents.empty?
+  File.binwrite(destination, contents)
+end
+"""
 # Exact normalized server outlet derived from discourse_docker@ed9f680b0df1de28f062de1769d89d22b2644d1b
 # templates/web.ssl.template.yml (2,111 bytes; SHA-256 7a3b819e65104c9178e004772b487fa809ce6b421668dfa1adf330221dda552b).
 PINNED_WEB_SSL_SERVER_OUTLET = '''listen 443 ssl;
@@ -2028,6 +2071,99 @@ def validate_disposable_nginx_response_header_proof(workflow: str) -> None:
         fail("Disposable rendered nginx response-header proof differs from the exact reviewed body.")
 
 
+def validate_disposable_nginx_fixture_final_command_contract(source: str) -> None:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        fail("Disposable Nginx fixture is not valid Python source.")
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "nginx_outlet_syntax_fixture"
+    ]
+    if len(functions) != 1:
+        fail("Disposable Nginx fixture function boundary differs.")
+    function = functions[0]
+    extractor_assignments = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "extractor"
+    ]
+    expected_run = ast.parse(
+        'subprocess.run([ruby, "-e", extractor, str(rendered), str(prefix)], '
+        'stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, '
+        'timeout=10, check=False)',
+        mode="eval",
+    ).body
+    extracted_assignments = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "extracted"
+    ]
+    expected_failure = ast.parse(
+        'if extracted.returncode != 0:\n'
+        '    raise RuntimeError("Pinned Nginx fixture could not extract the exact outlet inventory.")'
+    ).body[0]
+    failure_checks = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.If)
+        and ast.dump(node, include_attributes=False)
+        == ast.dump(expected_failure, include_attributes=False)
+    ]
+    bound_names: dict[str, list[ast.Name]] = {}
+    if len(extractor_assignments) == 1 and len(extracted_assignments) == 1:
+        bound_names = {
+            name.id: [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.Name)
+                and node.id == name.id
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            ]
+            for name in (
+                extractor_assignments[0].targets[0],
+                extracted_assignments[0].targets[0],
+            )
+        }
+    execution_sequences = 0
+    if (
+        len(extractor_assignments) == 1
+        and len(extracted_assignments) == 1
+        and len(failure_checks) == 1
+    ):
+        for node in ast.walk(function):
+            body = getattr(node, "body", None)
+            if not isinstance(body, list):
+                continue
+            execution_sequences += sum(
+                body[index] is extractor_assignments[0]
+                and body[index + 1] is extracted_assignments[0]
+                and body[index + 2] is failure_checks[0]
+                for index in range(max(0, len(body) - 2))
+            )
+    if (
+        len(extractor_assignments) != 1
+        or not isinstance(extractor_assignments[0].value, ast.Constant)
+        or extractor_assignments[0].value.value != DISPOSABLE_NGINX_OUTLET_EXTRACTOR_RUBY
+        or len(extracted_assignments) != 1
+        or ast.dump(extracted_assignments[0].value, include_attributes=False)
+        != ast.dump(expected_run, include_attributes=False)
+        or len(failure_checks) != 1
+        or len(bound_names.get("extractor", ())) != 1
+        or len(bound_names.get("extracted", ())) != 1
+        or execution_sequences != 1
+    ):
+        fail("Disposable Nginx fixture final-command contract differs from the exact executed source.")
+
+
 def validate_https_consumer_fixture_contract(verifier: str) -> None:
     required = (
         "import atexit",
@@ -3188,6 +3324,9 @@ if current_status != 404:
 
 def validate_template() -> None:
     app = read("config/app.yml.example")
+    validate_disposable_nginx_fixture_final_command_contract(
+        read("scripts/test-disposable-launcher-guard.py")
+    )
     validate_html_denial_types_contract(app)
     validate_sensitive_response_header_contract(app, read("scripts/verify-host.sh"))
     require_text(

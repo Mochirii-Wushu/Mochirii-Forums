@@ -8193,6 +8193,49 @@ def test_runtime_rails_execution_contract() -> None:
         raise RuntimeError("Runtime Rails owner-wrapper hostile mutation was accepted.")
 
 
+def test_disposable_nginx_fixture_final_command_contract() -> None:
+    fixture = (ROOT / "scripts/test-disposable-launcher-guard.py").read_text(encoding="utf-8")
+    VALIDATOR.validate_disposable_nginx_fixture_final_command_contract(fixture)
+    hostile_fixtures = (
+        fixture.replace("        extractor = r'''\n", "        _extractor = r'''\n", 1),
+        fixture.replace("final_commands.length == 12", "final_commands.length == 11", 1),
+        fixture.replace("final_commands.fetch(-5) == expected_header_include", "final_commands.fetch(-4) == expected_header_include", 1),
+        fixture.replace(
+            'abort "final private username-log command differs" unless final_commands.fetch(-4) == expected_private_username_log\n',
+            "",
+            1,
+        ),
+        fixture.replace(
+            'abort "final username-log exclusion command differs" unless final_commands.fetch(-3) == expected_no_username_log\n',
+            "",
+            1,
+        ),
+        fixture.replace(
+            '[ruby, "-e", extractor, str(rendered), str(prefix)],',
+            '[ruby, "-e", extractor + "\\n", str(rendered), str(prefix)],',
+            1,
+        ),
+        fixture.replace(
+            "        extracted = subprocess.run(\n",
+            "        extractor += \"\"\n        extracted = subprocess.run(\n",
+            1,
+        ),
+        fixture.replace(
+            '        if extracted.returncode != 0:\n            raise RuntimeError("Pinned Nginx fixture could not extract the exact outlet inventory.")\n',
+            '        if False:\n            if extracted.returncode != 0:\n                raise RuntimeError("Pinned Nginx fixture could not extract the exact outlet inventory.")\n',
+            1,
+        ),
+    )
+    for hostile_fixture in hostile_fixtures:
+        if hostile_fixture == fixture:
+            raise RuntimeError("Disposable Nginx fixture hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_disposable_nginx_fixture_final_command_contract(hostile_fixture)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Disposable Nginx fixture hostile mutation was accepted.")
+
+
 def main() -> int:
     test_renderer()
     test_opensearch_filter_contract()
@@ -8234,6 +8277,7 @@ def main() -> int:
     test_host_operation_lock_contract()
     test_host_security_control_plane_contract()
     test_runtime_rails_execution_contract()
+    test_disposable_nginx_fixture_final_command_contract()
     print("Configuration and theme hostile fixtures passed.")
     return 0
 

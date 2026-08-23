@@ -1111,8 +1111,12 @@ expected = {
 items = document.fetch("run")
 final_commands = items.fetch(-1).fetch("exec").fetch("cmd")
 expected_header_include = %q{test "$(grep -Fxc '      include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;' /etc/nginx/conf.d/discourse.conf)" -eq 1}
+expected_private_username_log = %q{test "$(grep -Fo '"-" "$upstream_http_x_discourse_trackview"' /etc/nginx/conf.d/discourse.conf | wc -l)" -eq 1}
+expected_no_username_log = %q{! grep -Fq '$upstream_http_x_discourse_username' /etc/nginx/conf.d/discourse.conf}
 expected_nginx = "test ! -L /var/log/nginx && install -d -m 0755 -o root -g adm /var/log/nginx && nginx -t"
-abort "final response-header include command differs" unless final_commands.length == 10 && final_commands.fetch(-3) == expected_header_include
+abort "final response-header include command differs" unless final_commands.length == 12 && final_commands.fetch(-5) == expected_header_include
+abort "final private username-log command differs" unless final_commands.fetch(-4) == expected_private_username_log
+abort "final username-log exclusion command differs" unless final_commands.fetch(-3) == expected_no_username_log
 abort "final Nginx command differs" unless final_commands.fetch(-1) == expected_nginx
 outlet_directories = [
   "/etc/nginx/conf.d/outlets/discourse",
