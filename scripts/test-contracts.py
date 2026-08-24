@@ -8563,6 +8563,132 @@ def test_host_security_control_plane_contract() -> None:
     dispatcher = (ROOT / "scripts/ssh-deploy-dispatch.py").read_text(encoding="utf-8")
     finalizer = (ROOT / "scripts/host-finalize-authentication.sh").read_text(encoding="utf-8")
 
+    def assert_ssh_service_activation_contract(
+        installer_source: str,
+        verifier_source: str,
+        upgrade_source: str,
+    ) -> None:
+        installer_required = (
+            'readonly ssh_generator_parent="/etc/systemd/system-generators"',
+            'readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"',
+            '[[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]]',
+            'stat -c \'%U:%G %a\' -- "${ssh_generator_parent}")" == "root:root 755"',
+            'ln -s /dev/null "${staging}/mask"',
+            'run_bounded_host_operation 60 systemctl disable --now ssh.socket',
+            'run_bounded_host_operation 60 systemctl enable --now ssh.service',
+            'restore_ssh_socket_activation_predecessor()',
+            'ensure_ssh_service_activation()',
+        )
+        verifier_required = (
+            '--socket-activation-recovery',
+            '--upgrade-socket-activation-recovery',
+            'ssh_generator_parent=/etc/systemd/system-generators',
+            'OpenSSH socket-generator parent is unsafe.',
+            '[[ ! -e ${ssh_generator_mask} && ! -L ${ssh_generator_mask} ]]',
+            'systemctl is-enabled ssh.service 2>/dev/null || true)" == disabled',
+            'systemctl is-active ssh.service 2>/dev/null || true)" == active',
+            'systemctl is-enabled ssh.socket 2>/dev/null || true)" == enabled',
+            'systemctl is-active ssh.socket 2>/dev/null || true)" == active',
+            'service_state ssh.service || fail "OpenSSH service is not enabled and active."',
+            'systemctl is-enabled ssh.socket 2>/dev/null || true)" == disabled',
+            'systemctl is-active ssh.socket 2>/dev/null || true)" == inactive',
+        )
+        upgrade_required = (
+            'readonly ssh_generator_parent="/etc/systemd/system-generators"',
+            'readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"',
+            '[[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]]',
+            'stat -c \'%U:%G %a\' -- "${ssh_generator_parent}")" == "root:root 755"',
+            'ssh_activation_predecessor()',
+            'restore_ssh_activation_predecessor()',
+            'verify_previous_host_controls()',
+            '"sshActivationPredecessor"',
+            '.control-upgrade-staging-${expected_commit}.XXXXXXXX',
+            'bounded 60s systemctl disable --now ssh.socket',
+            'bounded 60s systemctl enable --now ssh.service',
+            'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction',
+            'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-socket-activation-recovery',
+            'bash "${candidate}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --socket-activation-recovery',
+        )
+        if any(value not in installer_source for value in installer_required):
+            raise RuntimeError("Initial host SSH service-activation contract differs.")
+        if any(value not in verifier_source for value in verifier_required):
+            raise RuntimeError("Terminal host SSH service-activation contract differs.")
+        if any(value not in upgrade_source for value in upgrade_required):
+            raise RuntimeError("Transactional host SSH service-activation contract differs.")
+        if 'service_state ssh.socket || fail "OpenSSH service is not enabled and active."' in verifier_source:
+            raise RuntimeError("Terminal host verification permits socket activation.")
+
+        candidate_validation = upgrade_source.index('bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"')
+        predecessor_gate = upgrade_source.index('ssh_predecessor="$(ssh_activation_predecessor)"', candidate_validation)
+        recovery_gate = upgrade_source.index('--socket-activation-recovery', predecessor_gate)
+        journal_position = upgrade_source.index('os.link(candidate, journal_path, follow_symlinks=False)', recovery_gate)
+        first_publication = upgrade_source.index('atomic_install "${candidate}/${relative}"', journal_position)
+        activation_commit = upgrade_source.index('ensure_ssh_service_activation || {', first_publication)
+        first_readback = upgrade_source.index('post_install_readback "${candidate}"', activation_commit)
+        terminal_verification = upgrade_source.index(
+            'bash "${candidate}/scripts/verify-host-security.sh" "${expected_commit}" "${candidate}" --upgrade-transaction',
+            first_readback,
+        )
+        if not (
+            candidate_validation
+            < predecessor_gate
+            < recovery_gate
+            < journal_position
+            < first_publication
+            < activation_commit
+            < first_readback
+            < terminal_verification
+        ):
+            raise RuntimeError("SSH activation validation, journal, publication, conversion, or verification ordering differs.")
+
+        rollback_start = upgrade_source.index("verify_previous_host_controls() {")
+        rollback_end = upgrade_source.index("\n}\n", rollback_start)
+        rollback_block = upgrade_source[rollback_start:rollback_end]
+        if '${previous_source}/scripts/verify-host-security.sh' in rollback_block:
+            raise RuntimeError("Rollback verification uses the schema-incompatible predecessor verifier.")
+
+    assert_ssh_service_activation_contract(installer, verifier, upgrade)
+
+    hostile_activation_mutations = (
+        (installer.replace('[[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]]', '[[ -d ${ssh_generator_parent} ]]'), verifier, upgrade),
+        (installer.replace('ln -s /dev/null "${staging}/mask"', 'ln -s /tmp/socket "${staging}/mask"', 1), verifier, upgrade),
+        (installer.replace('systemctl disable --now ssh.socket', 'systemctl enable --now ssh.socket', 1), verifier, upgrade),
+        (installer, verifier.replace('service_state ssh.service || fail "OpenSSH service is not enabled and active."', 'service_state ssh.socket || fail "OpenSSH service is not enabled and active."', 1), upgrade),
+        (installer, verifier.replace('--upgrade-socket-activation-recovery', '--upgrade-service-recovery'), upgrade),
+        (installer, verifier, upgrade.replace('"sshActivationPredecessor"', '"sshActivationMode"')),
+        (installer, verifier, upgrade.replace('bounded 60s systemctl disable --now ssh.socket', 'bounded 60s systemctl enable --now ssh.socket', 1)),
+        (installer, verifier, upgrade.replace('bash "${candidate_source}/scripts/verify-host-security.sh"', 'bash "${previous_source}/scripts/verify-host-security.sh"', 1)),
+    )
+    for mutated_installer, mutated_verifier, mutated_upgrade in hostile_activation_mutations:
+        try:
+            assert_ssh_service_activation_contract(mutated_installer, mutated_verifier, mutated_upgrade)
+        except (RuntimeError, ValueError):
+            continue
+        raise RuntimeError("Hostile SSH service-activation mutation passed the source contract.")
+
+    def classify_ssh_activation(state: tuple[str, str, str, str, str]) -> str | None:
+        mask, service_enabled, service_active, socket_enabled, socket_active = state
+        if state == ("dev-null", "enabled", "active", "disabled", "inactive"):
+            return "service"
+        if state == ("absent", "disabled", "active", "enabled", "active"):
+            return "socket"
+        return None
+
+    modeled_states = {
+        (mask, service_enabled, service_active, socket_enabled, socket_active)
+        for mask in ("absent", "dev-null", "other")
+        for service_enabled in ("enabled", "disabled")
+        for service_active in ("active", "inactive")
+        for socket_enabled in ("enabled", "disabled")
+        for socket_active in ("active", "inactive")
+    }
+    accepted_states = {state: classify_ssh_activation(state) for state in modeled_states if classify_ssh_activation(state)}
+    if accepted_states != {
+        ("dev-null", "enabled", "active", "disabled", "inactive"): "service",
+        ("absent", "disabled", "active", "enabled", "active"): "socket",
+    }:
+        raise RuntimeError("SSH activation predecessor model accepts a mixed or ambiguous state.")
+
     if operator_sudoers.splitlines() != [
         'Defaults:mochirii-forums-operator env_keep += "SSH_CONNECTION"',
         "mochirii-forums-operator ALL=(ALL:ALL) NOPASSWD: ALL",

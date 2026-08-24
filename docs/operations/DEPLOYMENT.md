@@ -334,16 +334,33 @@ inventory before any installed byte changes.
 
 A root-owned mode-`0600` journal and root-owned mode-`0700` transaction tree
 contain the exact old bytes, modes, new digests, current control pointer, and
-certificate-timer state. The journal is directory-fsynced before the timer is
-stopped or any target is atomically replaced. A retry commits forward only
-when every target is already the exact new root-owned byte/mode tuple;
-otherwise it restores every exact old target and pointer. Both paths rerun
-bounded sshd syntax/effective-setting checks, service readback, installed
-target digests, and the full host-security verifier. Unjournaled staging left
-before mutation or after successful journal clearance is accepted only under
-the exact protected work-root naming/mode contract and is durably removed on
-retry. The deploy SSH principal has no dispatcher or sudo route to this
-operation.
+certificate-timer state. It also records exactly one OpenSSH activation
+predecessor: the reviewed service state, or the one-time Ubuntu 24.04 socket
+state in which `ssh.service` is disabled/active, `ssh.socket` is
+enabled/active, and the socket generator is unmasked. No mixed activation
+state is accepted. The journal is directory-fsynced before the timer is
+stopped, any target is atomically replaced, or OpenSSH activation changes.
+
+Ubuntu's packaged socket-to-service conversion procedure is made explicit: the
+upgrade publishes an exact `/dev/null` mask at
+`/etc/systemd/system-generators/sshd-socket-generator`, reloads systemd,
+disables and stops `ssh.socket`, then enables and starts `ssh.service`.
+Terminal verification requires that exact mask, `ssh.service`
+enabled/active, and `ssh.socket` disabled/inactive. A failed or interrupted
+conversion restores the journaled predecessor before clearing the
+transaction; the socket predecessor restoration removes the mask, reloads
+systemd, enables/starts `ssh.socket`, and preserves the active daemon. Keep a
+verified privileged recovery session open throughout the one-time conversion.
+Do not edit units manually or retry unchanged failing bytes.
+
+A retry commits forward only when every target is already the exact new
+root-owned byte/mode tuple; otherwise it restores every exact old target,
+pointer, and activation predecessor. Both paths rerun bounded sshd
+syntax/effective-setting checks, service readback, installed target digests,
+and the full host-security verifier. Unjournaled pre-journal staging is
+accepted only under the exact protected state-root naming/mode contract and is
+durably removed on retry. The deploy SSH principal has no dispatcher or sudo
+route to this operation.
 
 The initial host-control installer safely creates and validates the ephemeral
 private lock namespace before publishing controls. The certificate-automation
