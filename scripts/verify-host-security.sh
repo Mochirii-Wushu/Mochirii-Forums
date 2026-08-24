@@ -227,7 +227,7 @@ for user in root mochirii-forums-operator mochirii-forums-deploy; do
   [[ "$(effective_value "${effective}" authorizedprincipalscommanduser)" == nobody ]] || fail "SSH authorized-principals command identity differs for ${user}."
   [[ "$(effective_value "${effective}" permituserenvironment)" == no ]] || fail "SSH user environment remains enabled for ${user}."
   [[ "$(effective_value "${effective}" permituserrc)" == no ]] || fail "SSH user rc remains enabled for ${user}."
-  allow_users="$(awk '$1 == "allowusers" { $1=""; sub(/^ /, ""); found=$0 } END { print found }' <<<"${effective}")"
+  allow_users="$(awk '$1 == "allowusers" { for (i = 2; i <= NF; i++) { found = found (found == "" ? "" : " ") $i } } END { print found }' <<<"${effective}")"
   [[ ${allow_users} == "mochirii-forums-operator mochirii-forums-deploy" ]] || fail "SSH AllowUsers differs for ${user}."
   case "${user}" in
     root)
