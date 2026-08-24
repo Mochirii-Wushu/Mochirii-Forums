@@ -282,6 +282,55 @@ checks["guidelines_branded"] =
     !guidelines.raw.include?("Discourse provides tools") &&
     !guidelines.raw.match?(/discourse[.]org|digitaloceanspaces|amazonaws/i)
 
+expected_admin_quick_start_template = <<~MARKDOWN
+  *Mochirii staff setup guide*
+
+  ## Verify email delivery
+
+  Email supports member notifications and account recovery.
+
+  → Send a **[<kbd>test email</kbd>](%{base_url}/admin/email/server-settings)**.
+
+  → If delivery fails, use the approved private operations runbook without exposing credentials or member data.
+
+  ## Invite the moderation team
+
+  → **[<kbd>Send staff invitations</kbd>](%{base_url}/new-invite)** only to approved moderators and operators.
+
+  ## Start reviewed conversations
+
+  → Add useful topics, frequently asked questions, and community guidance before inviting members.
+
+  → Keep staff planning in the staff category until it is approved for members.
+
+  ## Review member-facing setup
+
+  → Review the **[<kbd>welcome topic</kbd>](%{base_url}/t/-/5/)** and **[<kbd>about page</kbd>](%{base_url}/about)**.
+
+  → Review **[<kbd>site appearance</kbd>](%{base_url}/admin/config/logo)** and approved sign-in configuration.
+
+  ## Invite verified members
+
+  → Use **[<kbd>member invitations</kbd>](%{base_url}/new-invite)** only after the reviewed privacy, recovery, moderation, and access checks pass.
+
+  ## Continue operations
+
+  Use the approved Mochirii source, validation, backup, recovery, privacy, and moderation runbooks. Keep credentials and private evidence in their designated recovery boundaries.
+MARKDOWN
+expected_admin_quick_start =
+  expected_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url)
+admin_quick_start_topic = Topic.find_by(id: SiteSetting.admin_quick_start_topic_id)
+admin_quick_start = admin_quick_start_topic&.first_post
+checks["admin_quick_start_branded"] =
+  admin_quick_start_topic&.archetype == Archetype.default &&
+    admin_quick_start_topic.category_id == SiteSetting.staff_category_id &&
+    !Category.exists?(topic_id: admin_quick_start_topic.id) &&
+    admin_quick_start&.post_number == 1 &&
+    admin_quick_start.user_id == Discourse::SYSTEM_USER_ID &&
+    admin_quick_start.last_editor_id == Discourse::SYSTEM_USER_ID &&
+    admin_quick_start.raw == expected_admin_quick_start &&
+    !admin_quick_start.raw.match?(/\bDiscourse\b|discourse[.](?:org|com)|digitaloceanspaces|amazonaws/i)
+
 failed = checks.select { |_name, passed| !passed }.keys
 puts JSON.generate({ checks: checks, failed: failed, sidekiqProbeState: sidekiq_probe_state })
 raise "Mochirii runtime verification failed" if failed.any?

@@ -193,8 +193,9 @@ checks["narrative_system_user_branded"] =
     "narrative_system_user_gravatar_absent",
   ).all?
 '''
-RUNTIME_VERIFIER_SHA256 = "98d006018e124694965ce26167cad5fed03897fe79ecdac3a87f702ad40788a5"
-CONFIGURE_SITE_SHA256 = "5d482f6609b487800e1dfa59077846afa25e7a5abf199b31baee78af987f687b"
+ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9eb5ee81a931a5492d03f5c"
+RUNTIME_VERIFIER_SHA256 = "76fb956da7067e253ce71a11c67296b7d9d21302413670ae9964d8e1ddf58b6c"
+CONFIGURE_SITE_SHA256 = "ead5f1811d775dadc3749a9721fabaadd01baf03937e769fd0f04d5e6d17f9d0"
 APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "dcd105f619674983c42c92eeff2f06dbdc37fca3779aa5e13acdbc8b80ffc09c"
@@ -294,8 +295,8 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
             ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
-BRANDING_EMAIL_RENDERER_SHA256 = "80d8ff8a52018314f806d9b70c97cadb81bd0e91482bb22725a6e180216436b2"
-PINNED_SOURCE_VERIFIER_SHA256 = "20fb64bc0cddbd77a74cc291b103b2f8555e512d84fa54ee523aa09c3846747b"
+BRANDING_EMAIL_RENDERER_SHA256 = "0b504c71c1de2053585a20848e0515d2507d6d0b2a41c24eb99b83204b88c15c"
+PINNED_SOURCE_VERIFIER_SHA256 = "9bbbd6a6820f0835bf437d8853e30ca640ede17573c668e7bd64c1b02cdff4fc"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
@@ -367,6 +368,23 @@ PINNED_MAIL_RENDERING_EVIDENCE = [
         "path": "config/routes.rb",
         "bytes": 81601,
         "sha256": "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b",
+    },
+]
+PINNED_TOPIC_SEED_EVIDENCE = [
+    {
+        "path": "db/fixtures/990_topics.rb",
+        "bytes": 321,
+        "sha256": "e25b129d6c76d27837e1d4a9e187cd7b49bacfe79e3d438e1a7473909e48a5c9",
+    },
+    {
+        "path": "docs/ADMIN-QUICK-START-GUIDE.md",
+        "bytes": 1905,
+        "sha256": "94d08273429f2e919890201c2d21608595b78d384e4d3d7dc180659918744f50",
+    },
+    {
+        "path": "lib/seed_data/topics.rb",
+        "bytes": 7537,
+        "sha256": "2e43f4a9f95f19d1e928e5ef6b873ed4f66144d91280f400a63e6e23e9029020",
     },
 ]
 PINNED_GRAVATAR_EVIDENCE = [
@@ -569,7 +587,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "32bf20277854c6b2d55e6cb2bcc02be1f695c31fbb881b0c3b84e365bd23a6c7",
+    "docs/operations/third-party-components.v1.json": "91a73d1f8f6da7d5345629174203328f822de726bcaa0c24e26e05549f38ffb6",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -742,6 +760,46 @@ def validate_narrative_avatar_contract(template: str, configure: str, verifier: 
         fail("Narrative system-user configuration differs from the exact reviewed helper and call.")
     if verifier.count(runtime_setting) != 1 or verifier.count(NARRATIVE_RUNTIME_VERIFIER_BLOCK) != 1:
         fail("Narrative runtime verifier lost its environment, setting, or fixed subcheck boundary.")
+    admin_templates: list[str] = []
+    for source, start, label in (
+        (configure, "mochirii_admin_quick_start_template = <<~MARKDOWN\n", "site configurator"),
+        (verifier, "expected_admin_quick_start_template = <<~MARKDOWN\n", "runtime verifier"),
+    ):
+        if source.count(start) != 1:
+            fail(f"Administrator quick-start template boundary differs in the {label}.")
+        body_start = source.index(start) + len(start)
+        body_end = source.find("MARKDOWN\n", body_start)
+        if body_end < 0:
+            fail(f"Administrator quick-start template is unterminated in the {label}.")
+        admin_templates.append(source[body_start:body_end])
+    if (
+        admin_templates[0] != admin_templates[1]
+        or hashlib.sha256(admin_templates[0].encode("utf-8")).hexdigest()
+        != ADMIN_QUICK_START_TEMPLATE_SHA256
+    ):
+        fail("Administrator quick-start replacement differs from the exact reviewed template.")
+    configurator_contract = (
+        'require "digest"\n',
+        "normalized_upstream_admin_quick_start.bytesize == 1905 &&\n",
+        '      "94d08273429f2e919890201c2d21608595b78d384e4d3d7dc180659918744f50"\n',
+        "if admin_quick_start.raw == mochirii_admin_quick_start\n",
+        "elsif untouched_upstream_admin_quick_start\n",
+        "  admin_quick_start.revise(Discourse.system_user, { raw: mochirii_admin_quick_start })\n",
+        '  raise "Pinned administrator quick-start content was edited"\n',
+        "unless admin_quick_start.raw == mochirii_admin_quick_start\n",
+    )
+    if any(configure.count(value) != 1 for value in configurator_contract):
+        fail("Administrator quick-start configurator lost its exact fail-closed seed revision contract.")
+    runtime_contract = (
+        'checks["admin_quick_start_branded"] =\n',
+        "    admin_quick_start_topic.category_id == SiteSetting.staff_category_id &&\n",
+        "    admin_quick_start.user_id == Discourse::SYSTEM_USER_ID &&\n",
+        "    admin_quick_start.last_editor_id == Discourse::SYSTEM_USER_ID &&\n",
+        "    admin_quick_start.raw == expected_admin_quick_start &&\n",
+        "    !admin_quick_start.raw.match?(/\\bDiscourse\\b|discourse[.](?:org|com)|digitaloceanspaces|amazonaws/i)\n",
+    )
+    if any(verifier.count(value) != 1 for value in runtime_contract):
+        fail("Administrator quick-start runtime verifier lost its exact content and ownership contract.")
     if hashlib.sha256(configure.encode("utf-8")).hexdigest() != CONFIGURE_SITE_SHA256:
         fail("Site configurator differs from the exact reviewed source digest.")
     if hashlib.sha256(verifier.encode("utf-8")).hexdigest() != RUNTIME_VERIFIER_SHA256:
@@ -780,37 +838,46 @@ def validate_branding_email_renderer(source: str) -> None:
         "def materialize(delivery, label:)\n",
         "  unless mail.is_a?(Mail::Message)\n",
         '    raise "#{label} mail path did not render a Mail::Message"\n',
-        "def render_stage4_digest!(user:, topic:)\n",
-        "  if topic.id != SiteSetting.welcome_topic_id || topic.archetype != Archetype.default || topic.closed? ||\n",
-        "      topic.archived? || Category.exists?(topic_id: topic.id)\n",
-        '    raise "Digest fixture topic is not an ordinary visible topic"\n',
-        "  original_created_at = topic.created_at\n",
+        "def render_stage4_digest!(user:, welcome_topic:, guidelines_topic:, admin_quick_start_topic:)\n",
+        "  topics = [welcome_topic, guidelines_topic, admin_quick_start_topic]\n",
+        "    SiteSetting.admin_quick_start_topic_id,\n",
+        '    raise "Digest fixture topics are not the exact controlled seed topics"\n',
+        '      !admin_quick_start_topic.first_post.raw.start_with?("*Mochirii staff setup guide*")\n',
+        "  original_created_at = topics.to_h { |topic| [topic.id, topic.created_at] }\n",
         "  Topic.transaction(requires_new: true) do\n",
-        "    topic.update_columns(created_at: 2.days.ago)\n",
+        "    topics.each { |topic| topic.update_columns(created_at: aged_created_at) }\n",
         "    delivery = UserNotifications.digest(user, since: 3.days.ago, skip_unsubscribe_links: true)\n",
         '    mail = materialize(delivery, label: "digest")\n',
+        '    expected_markers = topics.map(&:title) + ["Mochirii staff setup guide"]\n',
+        '      raise "Digest fixture omitted a controlled seed topic"\n',
         "    raise ActiveRecord::Rollback\n",
-        "  topic.reload\n",
-        '    raise "Digest fixture topic age leaked beyond rollback"\n',
-        '  deliveries["digest"] = render_stage4_digest!(user: bot, topic: post.topic)\n',
+        "  topics.each(&:reload)\n",
+        "  unless topics.all? { |topic| topic.created_at == original_created_at.fetch(topic.id) }\n",
+        '    raise "Digest fixture topic ages leaked beyond rollback"\n',
+        "  deliveries[\"digest\"] = render_stage4_digest!(\n",
+        "    welcome_topic: welcome_topic,\n",
+        "    guidelines_topic: guidelines_topic,\n",
+        "    admin_quick_start_topic: admin_quick_start_topic,\n",
         "  mail = materialize(delivery, label: label)\n",
         '  digest = materialize(deliveries.fetch("digest"), label: "digest")\n',
     )
     if any(source.count(value) != 1 for value in digest_fixture_contract):
         fail("Branding email renderer lost its rollback-only real-digest fixture contract.")
-    digest_start = "def render_stage4_digest!(user:, topic:)\n"
+    digest_start = "def render_stage4_digest!(user:, welcome_topic:, guidelines_topic:, admin_quick_start_topic:)\n"
     digest_end = "def allow_fixture_admin_login_http?(stage4_fixture:, connect_fixture:, expected_address:)\n"
     if source.count(digest_start) != 1 or source.count(digest_end) != 1:
         fail("Branding email renderer digest-fixture method boundary differs.")
     digest_block = source[source.index(digest_start) : source.index(digest_end)]
     ordered_digest_steps = (
-        "    topic.update_columns(created_at: 2.days.ago)\n",
+        "    topics.each { |topic| topic.update_columns(created_at: aged_created_at) }\n",
         "    delivery = UserNotifications.digest(user, since: 3.days.ago, skip_unsubscribe_links: true)\n",
         '    mail = materialize(delivery, label: "digest")\n',
+        "    digest_text, digest_html = render_parts(mail)\n",
+        '    expected_markers = topics.map(&:title) + ["Mochirii staff setup guide"]\n',
         "    mail.encoded\n",
         "    raise ActiveRecord::Rollback\n",
-        "  topic.reload\n",
-        "  unless topic.created_at == original_created_at\n",
+        "  topics.each(&:reload)\n",
+        "  unless topics.all? { |topic| topic.created_at == original_created_at.fetch(topic.id) }\n",
     )
     if any(digest_block.count(value) != 1 for value in ordered_digest_steps):
         fail("Branding email renderer lost an exact ordered digest-fixture step.")
@@ -866,7 +933,7 @@ def validate_branding_email_renderer(source: str) -> None:
             "non-fixture verification requires HTTPS",
             "route-valid deterministic administrator-confirmation fixture token",
             "pinned `site_digest_logo_url` accessor",
-            "rollback-only age adjustment of the ordinary welcome topic",
+            "rollback-only age adjustment of the exact controlled seed topics",
             "real `Mail::Message`",
         ],
         "mode-bound administrator recovery-mail validation contract",
@@ -1015,16 +1082,25 @@ def validate_pinned_source_verifier(source: str) -> None:
     required = (
         'verify_email_semantics(core["lib/email.rb"])',
         "verify_mail_evidence_manifest(components)",
+        "verify_topic_seed_evidence_manifest(components)",
         "verify_opensearch_evidence_manifest(components)",
         "verify_opensearch_semantics(core)",
         "verify_login_code_denial_semantics(session_controller)",
         "verify_mail_semantics(core)",
+        "verify_topic_seed_semantics(core)",
         "def verify_mail_evidence_manifest(components: dict) -> None:",
+        "def verify_topic_seed_evidence_manifest(components: dict) -> None:",
         "def verify_opensearch_evidence_manifest(components: dict) -> None:",
         "def verify_opensearch_controller_method(source: bytes) -> None:",
         "def verify_opensearch_semantics(core: dict[str, bytes]) -> None:",
         "PINNED_OPENSEARCH_CONTROLLER_BLOCK = b'''",
         "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
+        "def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:",
+        "PINNED_TOPIC_SEED_EVIDENCE = {",
+        "PINNED_TOPIC_FIXTURE_SOURCE = b'''",
+        "PINNED_ADMIN_QUICK_START_TOPIC_BLOCK = b'''",
+        "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
+        "PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''",
         "PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''",
         "PINNED_TOPIC_FOR_DIGEST_BLOCK = b'''",
         '        PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK,',
@@ -1047,7 +1123,7 @@ def validate_pinned_source_verifier(source: str) -> None:
         'if b"SiteSetting.digest_logo_url" in helper:',
     )
     if any(source.count(value) != 1 for value in required):
-        fail("Pinned-source verifier does not execute the exact mail and OpenSearch semantic gates once.")
+        fail("Pinned-source verifier does not execute the exact mail, topic-seed, and OpenSearch semantic gates once.")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != PINNED_SOURCE_VERIFIER_SHA256:
         fail("Pinned-source verifier differs from the exact reviewed source digest.")
 
@@ -1405,6 +1481,14 @@ def validate_manifests() -> None:
     ]
     if mail_rendering_evidence != PINNED_MAIL_RENDERING_EVIDENCE:
         fail("Pinned administrator-mail and digest-logo rendering evidence changed.")
+    topic_seed_paths = {expected["path"] for expected in PINNED_TOPIC_SEED_EVIDENCE}
+    topic_seed_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in topic_seed_paths
+    ]
+    if topic_seed_evidence != PINNED_TOPIC_SEED_EVIDENCE:
+        fail("Pinned topic-seed and administrator-guide evidence changed.")
     gravatar_evidence = [
         entry
         for entry in components["application"]["semanticEvidenceFiles"]

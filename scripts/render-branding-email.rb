@@ -55,27 +55,47 @@ def render_parts(mail)
   [text, html]
 end
 
-def render_stage4_digest!(user:, topic:)
-  if topic.id != SiteSetting.welcome_topic_id || topic.archetype != Archetype.default || topic.closed? ||
-      topic.archived? || Category.exists?(topic_id: topic.id)
-    raise "Digest fixture topic is not an ordinary visible topic"
+def render_stage4_digest!(user:, welcome_topic:, guidelines_topic:, admin_quick_start_topic:)
+  topics = [welcome_topic, guidelines_topic, admin_quick_start_topic]
+  expected_ids = [
+    SiteSetting.welcome_topic_id,
+    SiteSetting.guidelines_topic_id,
+    SiteSetting.admin_quick_start_topic_id,
+  ]
+  if !user.admin? || user.id != -2 || topics.map(&:id) != expected_ids || topics.uniq.length != 3 ||
+      topics.any? { |topic| topic.archetype != Archetype.default || Category.exists?(topic_id: topic.id) } ||
+      welcome_topic.closed? || welcome_topic.archived? ||
+      guidelines_topic.category_id != SiteSetting.staff_category_id ||
+      admin_quick_start_topic.category_id != SiteSetting.staff_category_id
+    raise "Digest fixture topics are not the exact controlled seed topics"
+  end
+  if topics.any? { |topic| topic.first_post.nil? } ||
+      !admin_quick_start_topic.first_post.raw.start_with?("*Mochirii staff setup guide*")
+    raise "Digest fixture seed content is absent"
   end
 
-  original_created_at = topic.created_at
+  original_created_at = topics.to_h { |topic| [topic.id, topic.created_at] }
   mail = nil
   Topic.transaction(requires_new: true) do
-    # The fresh bootstrap topic is still inside Discourse's editing-grace
-    # exclusion. Age only that row inside a savepoint so the real digest query
-    # and templates run without creating or retaining fixture content.
-    topic.update_columns(created_at: 2.days.ago)
+    # All controlled seed topics may still be inside the editing-grace
+    # exclusion. Age exactly those rows inside a savepoint so the real digest
+    # query and templates run deterministically without retaining fixture state.
+    aged_created_at = 2.days.ago
+    topics.each { |topic| topic.update_columns(created_at: aged_created_at) }
     delivery = UserNotifications.digest(user, since: 3.days.ago, skip_unsubscribe_links: true)
     mail = materialize(delivery, label: "digest")
+    digest_text, digest_html = render_parts(mail)
+    rendered_digest = [digest_text, digest_html].compact.join("\n")
+    expected_markers = topics.map(&:title) + ["Mochirii staff setup guide"]
+    unless expected_markers.all? { |marker| rendered_digest.include?(marker) }
+      raise "Digest fixture omitted a controlled seed topic"
+    end
     mail.encoded
     raise ActiveRecord::Rollback
   end
-  topic.reload
-  unless topic.created_at == original_created_at
-    raise "Digest fixture topic age leaked beyond rollback"
+  topics.each(&:reload)
+  unless topics.all? { |topic| topic.created_at == original_created_at.fetch(topic.id) }
+    raise "Digest fixture topic ages leaked beyond rollback"
   end
   mail
 end
@@ -130,8 +150,10 @@ end
 bot = User.find_by(id: -2)
 raise "Mochirii guide fixture is absent" unless bot&.username == "mochirii-guide"
 
-post = Topic.find_by(id: SiteSetting.welcome_topic_id)&.first_post
-post ||= Topic.find_by(id: SiteSetting.guidelines_topic_id)&.first_post
+welcome_topic = Topic.find_by(id: SiteSetting.welcome_topic_id)
+guidelines_topic = Topic.find_by(id: SiteSetting.guidelines_topic_id)
+admin_quick_start_topic = Topic.find_by(id: SiteSetting.admin_quick_start_topic_id)
+post = welcome_topic&.first_post
 raise "Pinned member-visible mail fixture topic is absent" if post.nil?
 
 notification_data = {
@@ -181,7 +203,12 @@ if ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"
       notification_type: Notification.types[:posted],
       notification_data_hash: notification_data,
     )
-  deliveries["digest"] = render_stage4_digest!(user: bot, topic: post.topic)
+  deliveries["digest"] = render_stage4_digest!(
+    user: bot,
+    welcome_topic: welcome_topic,
+    guidelines_topic: guidelines_topic,
+    admin_quick_start_topic: admin_quick_start_topic,
+  )
 end
 
 deliveries.each do |label, delivery|

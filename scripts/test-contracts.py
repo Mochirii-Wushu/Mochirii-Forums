@@ -2639,6 +2639,56 @@ def test_narrative_avatar_contract() -> None:
                 1,
             ),
         ),
+        (
+            template,
+            configure.replace(
+                "normalized_upstream_admin_quick_start.bytesize == 1905 &&",
+                "true &&",
+                1,
+            ),
+            verifier,
+        ),
+        (
+            template,
+            configure.replace(
+                "elsif untouched_upstream_admin_quick_start\n",
+                "elsif true\n",
+                1,
+            ),
+            verifier,
+        ),
+        (
+            template,
+            configure.replace(
+                '  raise "Pinned administrator quick-start content was edited"\n',
+                "  admin_quick_start.revise(Discourse.system_user, { raw: mochirii_admin_quick_start })\n",
+                1,
+            ),
+            verifier,
+        ),
+        (
+            template,
+            configure,
+            verifier.replace(
+                "    admin_quick_start.last_editor_id == Discourse::SYSTEM_USER_ID &&\n",
+                "    true &&\n",
+                1,
+            ),
+        ),
+        (
+            template,
+            configure,
+            verifier.replace(
+                "    admin_quick_start.raw == expected_admin_quick_start &&\n",
+                "    admin_quick_start.raw.present? &&\n",
+                1,
+            ),
+        ),
+        (
+            template,
+            configure.replace("Mochirii staff setup guide", "Different staff setup guide", 1),
+            verifier,
+        ),
     )
     for hostile_template, hostile_configure, hostile_verifier in hostile_cases:
         try:
@@ -2711,23 +2761,42 @@ def test_branding_email_renderer_contract() -> None:
         ("SiteSetting.site_digest_logo_url", "SiteSetting.digest_logo_url"),
         ("def materialize(delivery, label:)", "def materialize(delivery)"),
         ("mail.is_a?(Mail::Message)", "mail.respond_to?(:header)"),
-        ("topic.id != SiteSetting.welcome_topic_id", "false"),
-        ("topic.archetype != Archetype.default", "false"),
-        ("topic.closed?", "false"),
-        ("topic.archived?", "false"),
+        ("!user.admin?", "false"),
+        ("topics.map(&:id) != expected_ids", "false"),
+        ("topics.uniq.length != 3", "false"),
         ("Category.exists?(topic_id: topic.id)", "false"),
+        ("guidelines_topic.category_id != SiteSetting.staff_category_id", "false"),
+        ("admin_quick_start_topic.category_id != SiteSetting.staff_category_id", "false"),
+        (
+            '!admin_quick_start_topic.first_post.raw.start_with?("*Mochirii staff setup guide*")',
+            "false",
+        ),
         ("Topic.transaction(requires_new: true)", "Topic.transaction"),
-        ("topic.update_columns(created_at: 2.days.ago)", "topic.update_columns(created_at: 2.minutes.ago)"),
+        (
+            "topics.each { |topic| topic.update_columns(created_at: aged_created_at) }",
+            "welcome_topic.update_columns(created_at: aged_created_at)",
+        ),
         ("since: 3.days.ago", "since: 1.day.ago"),
+        (
+            'expected_markers = topics.map(&:title) + ["Mochirii staff setup guide"]',
+            "expected_markers = [welcome_topic.title]",
+        ),
+        (
+            "expected_markers.all? { |marker| rendered_digest.include?(marker) }",
+            "true",
+        ),
         ("raise ActiveRecord::Rollback", "next"),
-        ("  topic.reload\n", "  topic\n"),
-        ("topic.created_at == original_created_at", "true"),
+        ("  topics.each(&:reload)\n", "  welcome_topic.reload\n"),
+        (
+            "topics.all? { |topic| topic.created_at == original_created_at.fetch(topic.id) }",
+            "true",
+        ),
         (
             "    mail.encoded\n    raise ActiveRecord::Rollback\n",
             "    raise ActiveRecord::Rollback\n    mail.encoded\n",
         ),
         (
-            'deliveries["digest"] = render_stage4_digest!(user: bot, topic: post.topic)',
+            '  deliveries["digest"] = render_stage4_digest!(\n',
             'deliveries["digest"] = UserNotifications.digest(bot, since: 30.days.ago, skip_unsubscribe_links: true)',
         ),
     )
@@ -2760,6 +2829,14 @@ def test_branding_email_renderer_contract() -> None:
     ]
     if mail_rendering_evidence != VALIDATOR.PINNED_MAIL_RENDERING_EVIDENCE:
         raise RuntimeError("Pinned administrator-mail and digest-logo evidence differs.")
+    topic_seed_paths = {entry["path"] for entry in VALIDATOR.PINNED_TOPIC_SEED_EVIDENCE}
+    topic_seed_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in topic_seed_paths
+    ]
+    if topic_seed_evidence != VALIDATOR.PINNED_TOPIC_SEED_EVIDENCE:
+        raise RuntimeError("Pinned topic-seed and administrator-guide evidence differs.")
 
     fixture = (ROOT / "scripts/test-admin-login-link.rb").read_text(encoding="utf-8")
     VALIDATOR.validate_admin_login_link_fixture(fixture)
@@ -2835,11 +2912,20 @@ def test_branding_email_renderer_contract() -> None:
         "def verify_email_extract_parts_method(source: bytes) -> None:",
         "def verify_email_semantics(source: bytes) -> None:",
         "def verify_mail_evidence_manifest(components: dict) -> None:",
+        "def verify_topic_seed_evidence_manifest(components: dict) -> None:",
         "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
+        "def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:",
+        "PINNED_TOPIC_SEED_EVIDENCE = {",
+        "PINNED_TOPIC_FIXTURE_SOURCE = b'''",
+        "PINNED_ADMIN_QUICK_START_TOPIC_BLOCK = b'''",
+        "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
+        "PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''",
         'hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256',
         'verify_email_semantics(core["lib/email.rb"])',
         "verify_mail_evidence_manifest(components)",
         "verify_mail_semantics(core)",
+        "verify_topic_seed_evidence_manifest(components)",
+        "verify_topic_seed_semantics(core)",
     ):
         if upstream.count(canary) != 1:
             raise RuntimeError("Pinned email extraction semantic gate differs.")
@@ -3019,6 +3105,66 @@ def test_branding_email_renderer_contract() -> None:
     finally:
         UPSTREAM.PINNED_MAIL_SEMANTIC_EVIDENCE = original_mail_evidence
 
+    synthetic_seed_core = {
+        "db/fixtures/990_topics.rb": UPSTREAM.PINNED_TOPIC_FIXTURE_SOURCE,
+        "docs/ADMIN-QUICK-START-GUIDE.md": (
+            b"*Welcome to your new community, and thank you for choosing Discourse!*\n"
+            + b"https://github.com/discourse/discourse/blob/main/docs/INSTALL-email.md\n"
+            + (b"%{base_url}\n" * 7)
+            + (b"Discourse\n" * 6)
+            + (b"discourse.org\n" * 3)
+        ),
+        "lib/seed_data/topics.rb": (
+            UPSTREAM.PINNED_ADMIN_QUICK_START_TOPIC_BLOCK
+            + UPSTREAM.PINNED_TOPIC_CREATE_GUARD_BLOCK
+            + UPSTREAM.PINNED_ADMIN_QUICK_START_RAW_BLOCK
+        ),
+    }
+    original_topic_seed_evidence = UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE
+    try:
+        UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE = synthetic_evidence(synthetic_seed_core)
+        UPSTREAM.verify_topic_seed_semantics(synthetic_seed_core)
+        seed_hostiles = (
+            (
+                "db/fixtures/990_topics.rb",
+                b"include_welcome_topics: !topics_exist",
+                b"include_welcome_topics: false",
+            ),
+            (
+                "lib/seed_data/topics.rb",
+                b'site_setting_name: "admin_quick_start_topic_id"',
+                b'site_setting_name: "welcome_topic_id"',
+            ),
+            (
+                "lib/seed_data/topics.rb",
+                b"return if topic_id > 0 || Topic.find_by(id: topic_id)",
+                b"return if false",
+            ),
+            (
+                "lib/seed_data/topics.rb",
+                b"content = File.read(quick_start_filename)",
+                b'content = "safe decoy"',
+            ),
+            (
+                "docs/ADMIN-QUICK-START-GUIDE.md",
+                b"%{base_url}\n",
+                b"https://foreign.invalid/\n",
+            ),
+        )
+        for path, current, stale in seed_hostiles:
+            hostile_core = dict(synthetic_seed_core)
+            hostile_core[path] = hostile_core[path].replace(current, stale, 1)
+            if hostile_core[path] == synthetic_seed_core[path]:
+                raise RuntimeError("Pinned topic-seed hostile mutation anchor is absent.")
+            UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE = synthetic_evidence(hostile_core)
+            try:
+                UPSTREAM.verify_topic_seed_semantics(hostile_core)
+            except RuntimeError:
+                continue
+            raise RuntimeError("Pinned topic-seed semantic gate accepted a hostile implementation.")
+    finally:
+        UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE = original_topic_seed_evidence
+
     verifier_hostiles = (
         upstream.replace(
             '    verify_email_semantics(core["lib/email.rb"])\n',
@@ -3038,6 +3184,16 @@ def test_branding_email_renderer_contract() -> None:
         upstream.replace(
             "    verify_mail_evidence_manifest(components)\n",
             "    if False:\n        verify_mail_evidence_manifest(components)\n",
+            1,
+        ),
+        upstream.replace(
+            "    verify_topic_seed_semantics(core)\n",
+            "    if False:\n        verify_topic_seed_semantics(core)\n",
+            1,
+        ),
+        upstream.replace(
+            "    verify_topic_seed_evidence_manifest(components)\n",
+            "    if False:\n        verify_topic_seed_evidence_manifest(components)\n",
             1,
         ),
     )

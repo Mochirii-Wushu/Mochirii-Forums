@@ -95,15 +95,19 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
   automatic external Gravatar downloads are disabled
   before the narrative system user is saved, and fixed identity, profile,
   active-avatar, and no-Gravatar subchecks remain true after Sidekiq processing;
+- the system-owned staff Admin Quick Start topic is revised only from the exact
+  pinned upstream seed to the exact reviewed Mochirii guide; the exact successor
+  is idempotent, while any unexpected staff edit fails closed without overwrite;
 - the administrator recovery mail contains only the exact fixture-token path
   at the mode-bound Forums origin: HTTP is accepted solely for the explicit
   loopback fixture, while non-fixture verification requires HTTPS; and the
   separate administrator-confirmation presentation uses a
   route-valid deterministic administrator-confirmation fixture token
   rather than a real Redis-backed privilege token; the digest uses the pinned `site_digest_logo_url` accessor
-  and a rollback-only age adjustment of the ordinary welcome topic so
-  Discourse's real digest query produces a real `Mail::Message` without
-  retaining fixture content;
+  and a rollback-only age adjustment of the exact controlled seed topics
+  (welcome, guidelines, and Admin Quick Start), requires all three in the
+  rendered message, and restores every original timestamp so Discourse's real
+  digest query produces a real `Mail::Message` without retaining fixture state;
 - one local application backup is created in the fixture, a protected marker is
   changed, the exact local backup is destructively restored with
   `--location local`, and the restored marker is verified; and

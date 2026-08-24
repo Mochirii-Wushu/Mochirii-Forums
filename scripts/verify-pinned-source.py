@@ -100,6 +100,66 @@ PINNED_MAIL_SEMANTIC_EVIDENCE = {
         "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b",
     ),
 }
+PINNED_TOPIC_SEED_EVIDENCE = {
+    "db/fixtures/990_topics.rb": (
+        321,
+        "e25b129d6c76d27837e1d4a9e187cd7b49bacfe79e3d438e1a7473909e48a5c9",
+    ),
+    "docs/ADMIN-QUICK-START-GUIDE.md": (
+        1905,
+        "94d08273429f2e919890201c2d21608595b78d384e4d3d7dc180659918744f50",
+    ),
+    "lib/seed_data/topics.rb": (
+        7537,
+        "2e43f4a9f95f19d1e928e5ef6b873ed4f66144d91280f400a63e6e23e9029020",
+    ),
+}
+PINNED_TOPIC_FIXTURE_SOURCE = b'''# frozen_string_literal: true
+
+if !Rails.env.test?
+  require "seed_data/topics"
+
+  topics_exist = Topic.where(<<~SQL).exists?
+    id NOT IN (
+      SELECT topic_id
+      FROM categories
+      WHERE topic_id IS NOT NULL
+    )
+  SQL
+
+  SeedData::Topics.with_default_locale.create(include_welcome_topics: !topics_exist)
+end
+'''
+PINNED_ADMIN_QUICK_START_TOPIC_BLOCK = b'''        # Admin Quick Start Guide
+        topics << {
+          site_setting_name: "admin_quick_start_topic_id",
+          title:
+            DiscoursePluginRegistry.seed_data["admin_quick_start_title"] ||
+              I18n.t("admin_quick_start_title"),
+          raw: admin_quick_start_raw,
+          category: staff_category,
+        }
+'''
+PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''      topic_id = SiteSetting.get(site_setting_name)
+      return if topic_id > 0 || Topic.find_by(id: topic_id)
+
+      post =
+        PostCreator.create!(
+          Discourse.system_user,
+'''
+PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''    def admin_quick_start_raw
+      quick_start_filename = DiscoursePluginRegistry.seed_data["admin_quick_start_filename"]
+
+      if !quick_start_filename || !File.exist?(quick_start_filename)
+        # TODO Make the quick start guide translatable
+        quick_start_filename = Rails.root.join("docs/ADMIN-QUICK-START-GUIDE.md").to_s
+      end
+
+      content = File.read(quick_start_filename)
+      content.gsub!("%{base_url}", Discourse.base_url)
+      content
+    end
+'''
 PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''  def digest(user, opts = {})
     build_summary_for(user)
     if !opts[:skip_unsubscribe_links]
@@ -895,6 +955,25 @@ def verify_mail_evidence_manifest(components: dict) -> None:
             raise RuntimeError(f"Pinned mail semantic evidence changed: {path}")
 
 
+def verify_topic_seed_evidence_manifest(components: dict) -> None:
+    entries = components.get("application", {}).get("semanticEvidenceFiles")
+    if not isinstance(entries, list):
+        raise RuntimeError("Pinned topic-seed semantic evidence inventory is absent.")
+    for path, (expected_bytes, expected_sha256) in PINNED_TOPIC_SEED_EVIDENCE.items():
+        matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("path") == path]
+        if len(matches) != 1:
+            raise RuntimeError(f"Pinned topic-seed semantic evidence is not unique: {path}")
+        entry = matches[0]
+        if (
+            set(entry) != {"path", "bytes", "sha256"}
+            or type(entry["bytes"]) is not int
+            or entry["bytes"] != expected_bytes
+            or not isinstance(entry["sha256"], str)
+            or entry["sha256"] != expected_sha256
+        ):
+            raise RuntimeError(f"Pinned topic-seed semantic evidence changed: {path}")
+
+
 def verify_opensearch_evidence_manifest(components: dict) -> None:
     entries = components.get("application", {}).get("semanticEvidenceFiles")
     if not isinstance(entries, list):
@@ -1059,6 +1138,36 @@ def verify_mail_semantics(core: dict[str, bytes]) -> None:
     )
 
 
+def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:
+    for path, (expected_bytes, expected_sha256) in PINNED_TOPIC_SEED_EVIDENCE.items():
+        source = core.get(path)
+        if source is None:
+            raise RuntimeError(f"Pinned topic-seed semantic source is absent: {path}")
+        if len(source) != expected_bytes or hashlib.sha256(source).hexdigest() != expected_sha256:
+            raise RuntimeError(f"Pinned topic-seed semantic source changed: {path}")
+
+    if core["db/fixtures/990_topics.rb"] != PINNED_TOPIC_FIXTURE_SOURCE:
+        raise RuntimeError("The pinned topic fixture invocation changed.")
+    topics = core["lib/seed_data/topics.rb"]
+    for block, label in (
+        (PINNED_ADMIN_QUICK_START_TOPIC_BLOCK, "administrator quick-start topic seed"),
+        (PINNED_TOPIC_CREATE_GUARD_BLOCK, "one-time topic creation guard"),
+        (PINNED_ADMIN_QUICK_START_RAW_BLOCK, "administrator quick-start source loader"),
+    ):
+        if topics.count(block) != 1:
+            raise RuntimeError(f"The pinned {label} changed.")
+
+    guide = core["docs/ADMIN-QUICK-START-GUIDE.md"]
+    if (
+        guide.count(b"%{base_url}") != 7
+        or guide.count(b"Discourse") != 7
+        or guide.count(b"discourse.org") != 3
+        or not guide.startswith(b"*Welcome to your new community, and thank you for choosing Discourse!*\n")
+        or b"https://github.com/discourse/discourse/blob/main/docs/INSTALL-email.md" not in guide
+    ):
+        raise RuntimeError("The pinned administrator quick-start guide semantics changed.")
+
+
 def verify_gravatar_semantics(core: dict[str, bytes]) -> None:
     for path, (expected_bytes, expected_sha256) in PINNED_GRAVATAR_EVIDENCE.items():
         source = core[path]
@@ -1144,6 +1253,7 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
     verify_opensearch_semantics(core)
     verify_email_semantics(core["lib/email.rb"])
     verify_mail_semantics(core)
+    verify_topic_seed_semantics(core)
     verify_gravatar_semantics(core)
     require(
         core,
@@ -1227,6 +1337,7 @@ def main() -> int:
     components = load("docs/operations/third-party-components.v1.json")
     identity = load("docs/operations/forum-central-identity.consumer.v1.json")
     verify_mail_evidence_manifest(components)
+    verify_topic_seed_evidence_manifest(components)
     verify_opensearch_evidence_manifest(components)
     if not args.online:
         print("Pinned-source manifest structure passed; online bytes were not requested.")

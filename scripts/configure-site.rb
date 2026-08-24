@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "digest"
+
 # Executed inside the exact standalone build after the deterministic theme is
 # imported. It intentionally contains no credential.
 
@@ -197,6 +199,76 @@ if revised != guidelines.raw
 end
 unless guidelines.raw.include?(mochirii_guidelines_phrase) && guidelines.raw.include?(mochirii_generic_phrase)
   raise "Guidelines branding revision failed"
+end
+
+# The pinned one-time seed returns without updating this staff topic on later
+# supported rebuilds. Revise only the exact untouched upstream guide or accept
+# the exact reviewed Mochirii replacement; an operator edit must never be
+# overwritten by automation.
+admin_quick_start_topic = Topic.find_by(id: SiteSetting.admin_quick_start_topic_id)
+admin_quick_start = admin_quick_start_topic&.first_post
+unless admin_quick_start_topic&.archetype == Archetype.default &&
+    admin_quick_start_topic.category_id == SiteSetting.staff_category_id &&
+    !Category.exists?(topic_id: admin_quick_start_topic.id) &&
+    admin_quick_start&.post_number == 1 &&
+    admin_quick_start.user_id == Discourse::SYSTEM_USER_ID
+  raise "Pinned administrator quick-start topic is unexpected"
+end
+
+mochirii_admin_quick_start_template = <<~MARKDOWN
+  *Mochirii staff setup guide*
+
+  ## Verify email delivery
+
+  Email supports member notifications and account recovery.
+
+  → Send a **[<kbd>test email</kbd>](%{base_url}/admin/email/server-settings)**.
+
+  → If delivery fails, use the approved private operations runbook without exposing credentials or member data.
+
+  ## Invite the moderation team
+
+  → **[<kbd>Send staff invitations</kbd>](%{base_url}/new-invite)** only to approved moderators and operators.
+
+  ## Start reviewed conversations
+
+  → Add useful topics, frequently asked questions, and community guidance before inviting members.
+
+  → Keep staff planning in the staff category until it is approved for members.
+
+  ## Review member-facing setup
+
+  → Review the **[<kbd>welcome topic</kbd>](%{base_url}/t/-/5/)** and **[<kbd>about page</kbd>](%{base_url}/about)**.
+
+  → Review **[<kbd>site appearance</kbd>](%{base_url}/admin/config/logo)** and approved sign-in configuration.
+
+  ## Invite verified members
+
+  → Use **[<kbd>member invitations</kbd>](%{base_url}/new-invite)** only after the reviewed privacy, recovery, moderation, and access checks pass.
+
+  ## Continue operations
+
+  Use the approved Mochirii source, validation, backup, recovery, privacy, and moderation runbooks. Keep credentials and private evidence in their designated recovery boundaries.
+MARKDOWN
+mochirii_admin_quick_start =
+  mochirii_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url)
+normalized_upstream_admin_quick_start =
+  admin_quick_start.raw.gsub(Discourse.base_url, "%{base_url}")
+untouched_upstream_admin_quick_start =
+  normalized_upstream_admin_quick_start.bytesize == 1905 &&
+    Digest::SHA256.hexdigest(normalized_upstream_admin_quick_start) ==
+      "94d08273429f2e919890201c2d21608595b78d384e4d3d7dc180659918744f50"
+
+if admin_quick_start.raw == mochirii_admin_quick_start
+  # Exact idempotent successor; retain it without a new revision.
+elsif untouched_upstream_admin_quick_start
+  admin_quick_start.revise(Discourse.system_user, { raw: mochirii_admin_quick_start })
+  admin_quick_start.reload
+else
+  raise "Pinned administrator quick-start content was edited"
+end
+unless admin_quick_start.raw == mochirii_admin_quick_start
+  raise "Administrator quick-start branding revision failed"
 end
 
 fixture = ENV["MOCHIRII_STAGE4_FIXTURE"] == "true"
