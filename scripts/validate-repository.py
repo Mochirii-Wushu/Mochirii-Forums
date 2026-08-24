@@ -198,6 +198,7 @@ ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9e
 ADMIN_QUICK_START_STORED_TEMPLATE_BYTES = 1305
 ADMIN_QUICK_START_STORED_TEMPLATE_SHA256 = "797e8a4616d96ed775fc51b1df92ee3d6bac0ce1b431050ba2af306894bdc766"
 RUNTIME_VERIFIER_SHA256 = "5fdd719f737b67a6ed1dfd544e75a9073ef0a0d5d0048907dc3c838b210f1f2e"
+RESTORED_BACKUP_VERIFIER_SHA256 = "650ea230080b89a772a4c41cf24cd3e5764ce547da9d23c429bf6f2e75b42034"
 CONFIGURE_SITE_SHA256 = "b4c38e0c734ce7b1300756beee970578ee7f1521d10497a0820880808c714dd3"
 APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
@@ -299,7 +300,7 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
 BRANDING_EMAIL_RENDERER_SHA256 = "0b504c71c1de2053585a20848e0515d2507d6d0b2a41c24eb99b83204b88c15c"
-PINNED_SOURCE_VERIFIER_SHA256 = "633de290378acb7e690f26d6ce761f03ecb07882d6b5603563d02d99fe1295c6"
+PINNED_SOURCE_VERIFIER_SHA256 = "4af86c3f95dc54b1e51790b8c7954c38e7fc0c1ccfc1a4ce607b5b56078927db"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
@@ -403,6 +404,18 @@ PINNED_TOPIC_SEED_EVIDENCE = [
         "path": "lib/text_cleaner.rb",
         "bytes": 3043,
         "sha256": "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a",
+    },
+]
+PINNED_RESTORE_EVIDENCE = [
+    {
+        "path": "script/discourse",
+        "bytes": 12564,
+        "sha256": "417622a3df71fe50f4e0405dc20ba6abf0eeb2bf387ad1c132beb58684649e9e",
+    },
+    {
+        "path": "lib/backup_restore/restorer.rb",
+        "bytes": 6291,
+        "sha256": "ad002009a0eb446706d8b29a679682f849e506df14fad15f500338b697a5a272",
     },
 ]
 PINNED_GRAVATAR_EVIDENCE = [
@@ -605,7 +618,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "3b5ee034372328e9c66a6013143dde05ea8c827a9c5bf8c9d9394735c08f7ac0",
+    "docs/operations/third-party-components.v1.json": "bdb87c1d4e255ea39e377a16f36ec53f3443713cdcd12c93287d239acfc7e6bc",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -742,6 +755,23 @@ def validate_sidekiq_runtime_verifier(source: str, label: str) -> None:
         fail(f"Sidekiq registration is sampled before the bounded processing proof in {label}.")
     if any(value in source for value in ("error.message", "error.backtrace", "error.inspect")):
         fail(f"Sidekiq verifier emits an unsafe exception value: {label}")
+
+
+def validate_restored_mail_suppression_contract(source: str) -> None:
+    runtime_binding = 'runtime_mail_suppression = ENV.fetch("DISCOURSE_DISABLE_EMAILS")\n'
+    check = '''  mail_suppression_matches_runtime:
+    %w[yes non-staff].include?(runtime_mail_suppression) &&
+      SiteSetting.disable_emails == runtime_mail_suppression,
+'''
+    if (
+        source.count(runtime_binding) != 1
+        or source.count(check) != 1
+        or source.count("runtime_mail_suppression") != 3
+        or source.count("mail_suppression_matches_runtime") != 1
+        or "all_mail_disabled" in source
+        or hashlib.sha256(source.encode("utf-8")).hexdigest() != RESTORED_BACKUP_VERIFIER_SHA256
+    ):
+        fail("Restored-backup mail suppression is not bound to the exact safe runtime setting.")
 
 
 def validate_narrative_avatar_contract(template: str, configure: str, verifier: str) -> None:
@@ -1172,20 +1202,29 @@ def validate_pinned_source_verifier(source: str) -> None:
         'verify_email_semantics(core["lib/email.rb"])',
         "verify_mail_evidence_manifest(components)",
         "verify_topic_seed_evidence_manifest(components)",
+        "verify_restore_evidence_manifest(components)",
         "verify_opensearch_evidence_manifest(components)",
         "verify_opensearch_semantics(core)",
         "verify_login_code_denial_semantics(session_controller)",
         "verify_mail_semantics(core)",
         "verify_topic_seed_semantics(core)",
+        "verify_restore_semantics(core)",
         "def verify_mail_evidence_manifest(components: dict) -> None:",
         "def verify_topic_seed_evidence_manifest(components: dict) -> None:",
+        "def verify_restore_evidence_manifest(components: dict) -> None:",
         "def verify_opensearch_evidence_manifest(components: dict) -> None:",
         "def verify_opensearch_controller_method(source: bytes) -> None:",
         "def verify_opensearch_semantics(core: dict[str, bytes]) -> None:",
         "PINNED_OPENSEARCH_CONTROLLER_BLOCK = b'''",
         "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
         "def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:",
+        "def verify_restore_semantics(core: dict[str, bytes]) -> None:",
         "PINNED_TOPIC_SEED_EVIDENCE = {",
+        "PINNED_RESTORE_EVIDENCE = {",
+        "PINNED_RESTORE_CLI_OPTION_BLOCK = b'''",
+        "PINNED_RESTORE_CLI_PASS_THROUGH_BLOCK = b'''",
+        "PINNED_RESTORER_INITIALIZER_BLOCK = b'''",
+        "PINNED_RESTORER_MAIL_SUPPRESSION_BLOCK = b'''",
         "PINNED_TOPIC_FIXTURE_SOURCE = b'''",
         "PINNED_ADMIN_QUICK_START_TOPIC_BLOCK = b'''",
         "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
@@ -1582,6 +1621,14 @@ def validate_manifests() -> None:
     ]
     if topic_seed_evidence != PINNED_TOPIC_SEED_EVIDENCE:
         fail("Pinned topic-seed and administrator-guide evidence changed.")
+    restore_paths = {expected["path"] for expected in PINNED_RESTORE_EVIDENCE}
+    restore_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in restore_paths
+    ]
+    if restore_evidence != PINNED_RESTORE_EVIDENCE:
+        fail("Pinned restore mail-suppression evidence changed.")
     gravatar_evidence = [
         entry
         for entry in components["application"]["semanticEvidenceFiles"]
@@ -4886,6 +4933,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         fail("Backup running-identity Git proof is not bound to the exact repository owner.")
     backup_marker = read("scripts/prepare-backup-marker.rb")
     restored_verifier = read("scripts/verify-restored-backup.rb")
+    validate_restored_mail_suppression_contract(restored_verifier)
     require_text(
         backup_marker,
         [

@@ -126,6 +126,53 @@ PINNED_TOPIC_SEED_EVIDENCE = {
         "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a",
     ),
 }
+PINNED_RESTORE_EVIDENCE = {
+    "script/discourse": (
+        12564,
+        "417622a3df71fe50f4e0405dc20ba6abf0eeb2bf387ad1c132beb58684649e9e",
+    ),
+    "lib/backup_restore/restorer.rb": (
+        6291,
+        "ad002009a0eb446706d8b29a679682f849e506df14fad15f500338b697a5a272",
+    ),
+}
+PINNED_RESTORE_CLI_OPTION_BLOCK = b'''  desc "restore", "Restore a Discourse backup"
+  option :disable_emails,
+         type: :boolean,
+         default: true,
+         desc: "Disable outgoing emails for non-staff users after restore"
+'''
+PINNED_RESTORE_CLI_PASS_THROUGH_BLOCK = b'''      restorer =
+        BackupRestore::Restorer.new(
+          user_id: Discourse.system_user.id,
+          filename: filename,
+          disable_emails: options[:disable_emails],
+          location: options[:location],
+          factory: BackupRestore::Factory.new(user_id: Discourse.system_user.id),
+          interactive: options[:pause],
+        )
+'''
+PINNED_RESTORER_INITIALIZER_BLOCK = b'''    def initialize(
+      user_id:,
+      filename:,
+      factory:,
+      disable_emails: true,
+      location: nil,
+      interactive: false
+    )
+      @user_id = user_id
+      @filename = filename
+      @factory = factory
+      @logger = factory.logger
+      @disable_emails = disable_emails
+      @interactive = interactive
+'''
+PINNED_RESTORER_MAIL_SUPPRESSION_BLOCK = b'''      if @disable_emails && SiteSetting.disable_emails == "no"
+        log "Disabling outgoing emails for non-staff users..."
+        user = User.find_by_email(@user_info[:email]) || Discourse.system_user
+        SiteSetting.set_and_log(:disable_emails, "non-staff", user)
+      end
+'''
 PINNED_ADMIN_QUICK_START_POST_RAW = (
     1904,
     "2416035d0c2dedd589a39005285277b181cf1723dd8cbf113e45f9175df12a12",
@@ -1011,6 +1058,25 @@ def verify_topic_seed_evidence_manifest(components: dict) -> None:
             raise RuntimeError(f"Pinned topic-seed semantic evidence changed: {path}")
 
 
+def verify_restore_evidence_manifest(components: dict) -> None:
+    entries = components.get("application", {}).get("semanticEvidenceFiles")
+    if not isinstance(entries, list):
+        raise RuntimeError("Pinned restore semantic evidence inventory is absent.")
+    for path, (expected_bytes, expected_sha256) in PINNED_RESTORE_EVIDENCE.items():
+        matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("path") == path]
+        if len(matches) != 1:
+            raise RuntimeError(f"Pinned restore semantic evidence is not unique: {path}")
+        entry = matches[0]
+        if (
+            set(entry) != {"path", "bytes", "sha256"}
+            or type(entry["bytes"]) is not int
+            or entry["bytes"] != expected_bytes
+            or not isinstance(entry["sha256"], str)
+            or entry["sha256"] != expected_sha256
+        ):
+            raise RuntimeError(f"Pinned restore semantic evidence changed: {path}")
+
+
 def verify_opensearch_evidence_manifest(components: dict) -> None:
     entries = components.get("application", {}).get("semanticEvidenceFiles")
     if not isinstance(entries, list):
@@ -1219,6 +1285,26 @@ def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:
         raise RuntimeError("The pinned administrator quick-start guide semantics changed.")
 
 
+def verify_restore_semantics(core: dict[str, bytes]) -> None:
+    for path, (expected_bytes, expected_sha256) in PINNED_RESTORE_EVIDENCE.items():
+        source = core.get(path)
+        if source is None:
+            raise RuntimeError(f"Pinned restore semantic source is absent: {path}")
+        if len(source) != expected_bytes or hashlib.sha256(source).hexdigest() != expected_sha256:
+            raise RuntimeError(f"Pinned restore semantic source changed: {path}")
+
+    discourse_cli = core["script/discourse"]
+    restorer = core["lib/backup_restore/restorer.rb"]
+    for source, block, label in (
+        (discourse_cli, PINNED_RESTORE_CLI_OPTION_BLOCK, "restore CLI mail-suppression default"),
+        (discourse_cli, PINNED_RESTORE_CLI_PASS_THROUGH_BLOCK, "restore CLI mail-suppression pass-through"),
+        (restorer, PINNED_RESTORER_INITIALIZER_BLOCK, "restorer mail-suppression initializer"),
+        (restorer, PINNED_RESTORER_MAIL_SUPPRESSION_BLOCK, "restorer non-staff mail-suppression transition"),
+    ):
+        if source.count(block) != 1:
+            raise RuntimeError(f"The pinned {label} changed.")
+
+
 def verify_gravatar_semantics(core: dict[str, bytes]) -> None:
     for path, (expected_bytes, expected_sha256) in PINNED_GRAVATAR_EVIDENCE.items():
         source = core[path]
@@ -1305,6 +1391,7 @@ def verify_semantics(docker: dict[str, bytes], core: dict[str, bytes]) -> None:
     verify_email_semantics(core["lib/email.rb"])
     verify_mail_semantics(core)
     verify_topic_seed_semantics(core)
+    verify_restore_semantics(core)
     verify_gravatar_semantics(core)
     require(
         core,
@@ -1389,6 +1476,7 @@ def main() -> int:
     identity = load("docs/operations/forum-central-identity.consumer.v1.json")
     verify_mail_evidence_manifest(components)
     verify_topic_seed_evidence_manifest(components)
+    verify_restore_evidence_manifest(components)
     verify_opensearch_evidence_manifest(components)
     if not args.online:
         print("Pinned-source manifest structure passed; online bytes were not requested.")

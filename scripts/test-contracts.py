@@ -2859,6 +2859,14 @@ def test_branding_email_renderer_contract() -> None:
     ]
     if topic_seed_evidence != VALIDATOR.PINNED_TOPIC_SEED_EVIDENCE:
         raise RuntimeError("Pinned topic-seed and administrator-guide evidence differs.")
+    restore_paths = {entry["path"] for entry in VALIDATOR.PINNED_RESTORE_EVIDENCE}
+    restore_evidence = [
+        entry
+        for entry in components["application"]["semanticEvidenceFiles"]
+        if entry.get("path") in restore_paths
+    ]
+    if restore_evidence != VALIDATOR.PINNED_RESTORE_EVIDENCE:
+        raise RuntimeError("Pinned restore mail-suppression evidence differs.")
 
     fixture = (ROOT / "scripts/test-admin-login-link.rb").read_text(encoding="utf-8")
     VALIDATOR.validate_admin_login_link_fixture(fixture)
@@ -2935,9 +2943,16 @@ def test_branding_email_renderer_contract() -> None:
         "def verify_email_semantics(source: bytes) -> None:",
         "def verify_mail_evidence_manifest(components: dict) -> None:",
         "def verify_topic_seed_evidence_manifest(components: dict) -> None:",
+        "def verify_restore_evidence_manifest(components: dict) -> None:",
         "def verify_mail_semantics(core: dict[str, bytes]) -> None:",
         "def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:",
+        "def verify_restore_semantics(core: dict[str, bytes]) -> None:",
         "PINNED_TOPIC_SEED_EVIDENCE = {",
+        "PINNED_RESTORE_EVIDENCE = {",
+        "PINNED_RESTORE_CLI_OPTION_BLOCK = b'''",
+        "PINNED_RESTORE_CLI_PASS_THROUGH_BLOCK = b'''",
+        "PINNED_RESTORER_INITIALIZER_BLOCK = b'''",
+        "PINNED_RESTORER_MAIL_SUPPRESSION_BLOCK = b'''",
         "PINNED_TOPIC_FIXTURE_SOURCE = b'''",
         "PINNED_ADMIN_QUICK_START_TOPIC_BLOCK = b'''",
         "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
@@ -2952,6 +2967,8 @@ def test_branding_email_renderer_contract() -> None:
         "verify_mail_semantics(core)",
         "verify_topic_seed_evidence_manifest(components)",
         "verify_topic_seed_semantics(core)",
+        "verify_restore_evidence_manifest(components)",
+        "verify_restore_semantics(core)",
     ):
         if upstream.count(canary) != 1:
             raise RuntimeError("Pinned email extraction semantic gate differs.")
@@ -3216,6 +3233,59 @@ def test_branding_email_renderer_contract() -> None:
         UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE = original_topic_seed_evidence
         UPSTREAM.PINNED_ADMIN_QUICK_START_POST_RAW = original_admin_quick_start_post_raw
 
+    synthetic_restore_core = {
+        "script/discourse":
+            UPSTREAM.PINNED_RESTORE_CLI_OPTION_BLOCK
+            + UPSTREAM.PINNED_RESTORE_CLI_PASS_THROUGH_BLOCK,
+        "lib/backup_restore/restorer.rb":
+            UPSTREAM.PINNED_RESTORER_INITIALIZER_BLOCK
+            + UPSTREAM.PINNED_RESTORER_MAIL_SUPPRESSION_BLOCK,
+    }
+    original_restore_evidence = UPSTREAM.PINNED_RESTORE_EVIDENCE
+    try:
+        UPSTREAM.PINNED_RESTORE_EVIDENCE = synthetic_evidence(synthetic_restore_core)
+        UPSTREAM.verify_restore_semantics(synthetic_restore_core)
+        restore_hostiles = (
+            (
+                "script/discourse",
+                b"default: true",
+                b"default: false",
+            ),
+            (
+                "script/discourse",
+                b"disable_emails: options[:disable_emails]",
+                b"disable_emails: false",
+            ),
+            (
+                "lib/backup_restore/restorer.rb",
+                b"disable_emails: true",
+                b"disable_emails: false",
+            ),
+            (
+                "lib/backup_restore/restorer.rb",
+                b'SiteSetting.disable_emails == "no"',
+                b'SiteSetting.disable_emails == "yes"',
+            ),
+            (
+                "lib/backup_restore/restorer.rb",
+                b'SiteSetting.set_and_log(:disable_emails, "non-staff", user)',
+                b'SiteSetting.set_and_log(:disable_emails, "no", user)',
+            ),
+        )
+        for path, current, hostile_value in restore_hostiles:
+            hostile_core = dict(synthetic_restore_core)
+            hostile_core[path] = hostile_core[path].replace(current, hostile_value, 1)
+            if hostile_core[path] == synthetic_restore_core[path]:
+                raise RuntimeError("Pinned restore semantic hostile mutation anchor is absent.")
+            UPSTREAM.PINNED_RESTORE_EVIDENCE = synthetic_evidence(hostile_core)
+            try:
+                UPSTREAM.verify_restore_semantics(hostile_core)
+            except RuntimeError:
+                continue
+            raise RuntimeError("Pinned restore semantic gate accepted a hostile implementation.")
+    finally:
+        UPSTREAM.PINNED_RESTORE_EVIDENCE = original_restore_evidence
+
     verifier_hostiles = (
         upstream.replace(
             '    verify_email_semantics(core["lib/email.rb"])\n',
@@ -3245,6 +3315,16 @@ def test_branding_email_renderer_contract() -> None:
         upstream.replace(
             "    verify_topic_seed_evidence_manifest(components)\n",
             "    if False:\n        verify_topic_seed_evidence_manifest(components)\n",
+            1,
+        ),
+        upstream.replace(
+            "    verify_restore_semantics(core)\n",
+            "    if False:\n        verify_restore_semantics(core)\n",
+            1,
+        ),
+        upstream.replace(
+            "    verify_restore_evidence_manifest(components)\n",
+            "    if False:\n        verify_restore_evidence_manifest(components)\n",
             1,
         ),
     )
@@ -6848,6 +6928,53 @@ return -1""",
         raise RuntimeError("Runtime verifier accepted a pre-processing Sidekiq registration sample.")
 
 
+def test_restored_mail_suppression_contract() -> None:
+    restored = (ROOT / "scripts/verify-restored-backup.rb").read_text(encoding="utf-8")
+    VALIDATOR.validate_restored_mail_suppression_contract(restored)
+    hostiles = (
+        restored.replace(
+            'runtime_mail_suppression = ENV.fetch("DISCOURSE_DISABLE_EMAILS")',
+            'runtime_mail_suppression = "yes"',
+            1,
+        ),
+        restored.replace("%w[yes non-staff]", "%w[yes non-staff no]", 1),
+        restored.replace(
+            "SiteSetting.disable_emails == runtime_mail_suppression",
+            "true",
+            1,
+        ),
+        restored.replace(
+            "    %w[yes non-staff].include?(runtime_mail_suppression) &&",
+            "    true ||\n    %w[yes non-staff].include?(runtime_mail_suppression) &&",
+            1,
+        ),
+        restored.replace("mail_suppression_matches_runtime:", "all_mail_disabled:", 1),
+        restored.replace(
+            "SiteSetting.disable_emails == runtime_mail_suppression",
+            "SiteSetting.disable_emails = runtime_mail_suppression",
+            1,
+        ),
+    )
+    for hostile in hostiles:
+        if hostile == restored:
+            raise RuntimeError("Restored mail-suppression hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_restored_mail_suppression_contract(hostile)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Restored-backup verifier accepted unsafe or unbound mail suppression.")
+
+    validation = (ROOT / "docs/operations/VALIDATION.md").read_text(encoding="utf-8")
+    for required in (
+        "The disposable\n  restore requires exact `non-staff` mail suppression",
+        "protected recovery may\n  require exact `yes`",
+        "requires the restored site setting to equal the selected value",
+        "the Restorer changes a restored `no` setting to `non-staff`",
+    ):
+        if required not in validation:
+            raise RuntimeError("Restore mail-suppression documentation differs.")
+
+
 def test_backup_restore_normal_upload_contract() -> None:
     marker = (ROOT / "scripts/prepare-backup-marker.rb").read_text(encoding="utf-8")
     restored = (ROOT / "scripts/verify-restored-backup.rb").read_text(encoding="utf-8")
@@ -8503,6 +8630,7 @@ def main() -> int:
     test_host_containment_contract()
     test_process_group_timeout()
     test_sidekiq_processing_contract()
+    test_restored_mail_suppression_contract()
     test_backup_restore_normal_upload_contract()
     test_public_branding_signed_credential_boundary()
     test_atomic_operator_evidence_publication_contract()

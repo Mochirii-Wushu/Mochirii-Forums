@@ -146,6 +146,16 @@
         "sha256": "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a"
       },
       {
+        "path": "script/discourse",
+        "bytes": 12564,
+        "sha256": "417622a3df71fe50f4e0405dc20ba6abf0eeb2bf387ad1c132beb58684649e9e"
+      },
+      {
+        "path": "lib/backup_restore/restorer.rb",
+        "bytes": 6291,
+        "sha256": "ad002009a0eb446706d8b29a679682f849e506df14fad15f500338b697a5a272"
+      },
+      {
         "path": "app/mailers/admin_confirmation_mailer.rb",
         "bytes": 438,
         "sha256": "409f849e00ee2d001c2106e5c2aacdb15c448a9aee246005381b735194347849"

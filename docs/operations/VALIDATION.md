@@ -114,7 +114,12 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
   digest query produces a real `Mail::Message` without retaining fixture state;
 - one local application backup is created in the fixture, a protected marker is
   changed, the exact local backup is destructively restored with
-  `--location local`, and the restored marker is verified; and
+  `--location local`, and the restored marker is verified. The disposable
+  restore requires exact `non-staff` mail suppression; protected recovery may
+  require exact `yes`. The verifier accepts only those two runtime values and
+  requires the restored site setting to equal the selected value. Pinned
+  Discourse source proves the restore CLI enables suppression by default and
+  the Restorer changes a restored `no` setting to `non-staff`; and
 - PostgreSQL, Redis, a registered Sidekiq process plus one exact bounded
   first-party probe job, and persistent `/shared` data survive one supported
   restart and `launcher rebuild app` after that local restore. The job uses one

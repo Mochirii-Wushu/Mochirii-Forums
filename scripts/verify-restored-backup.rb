@@ -62,6 +62,7 @@ unless expected_inventory_count.nil?
     inventory["normalUploadInventoryCount"] == expected_count &&
       inventory["normalUploadInventorySha256"] == expected_inventory_sha256
 end
+runtime_mail_suppression = ENV.fetch("DISCOURSE_DISABLE_EMAILS")
 sidekiq_probe_state = "completed"
 begin
   sidekiq_processing = MochiriiEmailMetadata.verify_sidekiq_processing!
@@ -82,7 +83,9 @@ checks = {
   redis: Discourse.redis.ping == "PONG",
   sidekiq_process_present: Sidekiq::ProcessSet.new.any?,
   sidekiq_processing: sidekiq_processing,
-  all_mail_disabled: SiteSetting.disable_emails == "yes" && ENV.fetch("DISCOURSE_DISABLE_EMAILS") == "yes",
+  mail_suppression_matches_runtime:
+    %w[yes non-staff].include?(runtime_mail_suppression) &&
+      SiteSetting.disable_emails == runtime_mail_suppression,
   central_login_disabled: SiteSetting.enable_discourse_connect == false,
   secure_uploads_absent: Upload.where(secure: true).none?,
   normal_upload_inventory: normal_upload_inventory_matches,
