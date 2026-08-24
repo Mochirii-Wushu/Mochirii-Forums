@@ -11,6 +11,8 @@ readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
 readonly pending_journal="${state_root}/control-upgrade.pending.json"
 readonly control_pointer="${state_root}/current-host-control.json"
+readonly ssh_generator_parent="/etc/systemd/system-generators"
+readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"
 active_transaction=""
 upgrade_complete=false
 
@@ -41,8 +43,91 @@ finally:
 PY
 }
 
+systemd_unit_state() {
+  local verb="$1" unit="$2" output
+  output="$(bounded 15s systemctl "${verb}" "${unit}" 2>/dev/null || true)"
+  (( ${#output} <= 32 )) || return 1
+  printf '%s\n' "${output}"
+}
+
+ssh_generator_mask_is_exact() {
+  [[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]] || return 1
+  [[ "$(stat -c '%U:%G %a' -- "${ssh_generator_parent}")" == "root:root 755" ]] || return 1
+  [[ -L ${ssh_generator_mask} && "$(readlink -- "${ssh_generator_mask}")" == /dev/null ]] || return 1
+  [[ "$(stat -c '%U:%G' -- "${ssh_generator_mask}")" == root:root ]]
+}
+
+ssh_service_activation_is_exact() {
+  ssh_generator_mask_is_exact || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.service)" == enabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.service)" == active ]] || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.socket)" == disabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.socket)" == inactive ]]
+}
+
+ssh_socket_activation_is_exact_predecessor() {
+  [[ ! -e ${ssh_generator_mask} && ! -L ${ssh_generator_mask} ]] || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.service)" == disabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.service)" == active ]] || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.socket)" == enabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.socket)" == active ]]
+}
+
+ssh_activation_predecessor() {
+  if ssh_service_activation_is_exact; then printf '%s\n' service
+  elif ssh_socket_activation_is_exact_predecessor; then printf '%s\n' socket
+  else return 1
+  fi
+}
+
+publish_ssh_generator_mask() {
+  local staging
+  if [[ -e ${ssh_generator_parent} || -L ${ssh_generator_parent} ]]; then
+    [[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]] || return 1
+    [[ "$(stat -c '%U:%G %a' -- "${ssh_generator_parent}")" == "root:root 755" ]] || return 1
+  else
+    install -d -m 0755 -o root -g root "${ssh_generator_parent}" || return 1
+  fi
+  [[ ! -e ${ssh_generator_mask} && ! -L ${ssh_generator_mask} ]] || return 1
+  staging="$(mktemp -d "${ssh_generator_parent}/.sshd-socket-generator.XXXXXXXX")" || return 1
+  chmod 0700 "${staging}" || { rmdir -- "${staging}"; return 1; }
+  ln -s /dev/null "${staging}/mask" || { rmdir -- "${staging}"; return 1; }
+  mv -T -- "${staging}/mask" "${ssh_generator_mask}" || { rm -f -- "${staging}/mask"; rmdir -- "${staging}"; return 1; }
+  rmdir -- "${staging}" || return 1
+  sync -d "${ssh_generator_parent}" 2>/dev/null || true
+  ssh_generator_mask_is_exact
+}
+
+ensure_ssh_service_activation() {
+  ssh_service_activation_is_exact && return 0
+  ssh_socket_activation_is_exact_predecessor || return 1
+  publish_ssh_generator_mask || return 1
+  bounded 60s systemctl daemon-reload >/dev/null 2>&1 || return 1
+  bounded 60s systemctl disable --now ssh.socket >/dev/null 2>&1 || return 1
+  bounded 60s systemctl enable --now ssh.service >/dev/null 2>&1 || return 1
+  ssh_service_activation_is_exact
+}
+
+restore_ssh_activation_predecessor() {
+  local predecessor="$1"
+  case "${predecessor}" in
+    service)
+      ensure_ssh_service_activation
+      ;;
+    socket)
+      bounded 60s systemctl disable ssh.service >/dev/null 2>&1 || return 1
+      durable_remove "${ssh_generator_mask}" || return 1
+      bounded 60s systemctl daemon-reload >/dev/null 2>&1 || return 1
+      bounded 60s systemctl enable --now ssh.socket >/dev/null 2>&1 || return 1
+      bounded 60s systemctl start ssh.service >/dev/null 2>&1 || return 1
+      ssh_socket_activation_is_exact_predecessor
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 durable_remove_workdir() {
-  python3 -B - "$1" "${upgrades_root}" <<'PY'
+  python3 -B - "$1" "${upgrades_root}" "${state_root}" <<'PY'
 import os
 import pathlib
 import re
@@ -52,16 +137,16 @@ import sys
 
 path = pathlib.Path(sys.argv[1])
 root = pathlib.Path(sys.argv[2])
-if path.parent != root or not (
-    re.fullmatch(r"[0-9a-f]{40}-[0-9a-f]{64}", path.name)
-    or re.fullmatch(r"[.]staging-[0-9a-f]{40}[.][A-Za-z0-9]{8}", path.name)
-):
+state_root = pathlib.Path(sys.argv[3])
+upgrade_path = path.parent == root and re.fullmatch(r"[0-9a-f]{40}-[0-9a-f]{64}", path.name)
+staging_path = path.parent == state_root and re.fullmatch(r"[.]control-upgrade-staging-[0-9a-f]{40}[.][A-Za-z0-9]{8}", path.name)
+if not (upgrade_path or staging_path):
     raise SystemExit("host-control work directory identity differs")
 metadata = path.lstat()
 if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o700:
     raise SystemExit("host-control work directory is unsafe")
 shutil.rmtree(path)
-parent = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+parent = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
 try:
     os.fsync(parent)
 finally:
@@ -75,7 +160,11 @@ reconcile_unjournaled_workdirs() {
   while IFS= read -r -d '' path; do
     durable_remove_workdir "${path}" || return 1
   done < <(find "${upgrades_root}" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
-  [[ -z "$(find "${upgrades_root}" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+  while IFS= read -r -d '' path; do
+    durable_remove_workdir "${path}" || return 1
+  done < <(find "${state_root}" -mindepth 1 -maxdepth 1 -name '.control-upgrade-staging-*' -print0 | LC_ALL=C sort -z)
+  [[ -z "$(find "${upgrades_root}" -mindepth 1 -maxdepth 1 -print -quit)" ]] &&
+    [[ -z "$(find "${state_root}" -mindepth 1 -maxdepth 1 -name '.control-upgrade-staging-*' -print -quit)" ]]
 }
 
 atomic_install() {
@@ -263,6 +352,18 @@ clear_transaction() {
 
 rollback_transaction() {
   local transaction="$1"
+  local ssh_predecessor
+  ssh_predecessor="$(python3 -B - "${pending_journal}" <<'PY'
+import json
+import pathlib
+import sys
+
+value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")).get("sshActivationPredecessor")
+if value not in {"service", "socket"}:
+    raise SystemExit("control journal SSH activation predecessor differs")
+print(value)
+PY
+)" || return 1
   python3 -B - "${pending_journal}" "${transaction}" "${control_pointer}" <<'PY'
 import hashlib
 import json
@@ -333,6 +434,20 @@ finally:
     except FileNotFoundError:
         pass
 PY
+  restore_ssh_activation_predecessor "${ssh_predecessor}"
+}
+
+verify_previous_host_controls() {
+  local previous_commit="$1" previous_source="$2" candidate_source="$3" ssh_predecessor="$4"
+  case "${ssh_predecessor}" in
+    service)
+      bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction >/dev/null 2>&1
+      ;;
+    socket)
+      bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-socket-activation-recovery >/dev/null 2>&1
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 read_journal() {
@@ -351,7 +466,7 @@ document = json.loads(path.read_text(encoding="utf-8"))
 keys = {
     "schemaVersion", "operation", "phase", "repositoryCommit", "manifestSha256",
     "transactionDirectory", "certificateAutomationInstalled", "certificateTimerEnabled",
-    "certificateTimerActive", "previousControlEvidenceSha256", "targets",
+    "certificateTimerActive", "previousControlEvidenceSha256", "sshActivationPredecessor", "targets",
 }
 if set(document) != keys or document.get("schemaVersion") != 1 or document.get("operation") != "host-control-upgrade" or document.get("phase") != "installing":
     raise SystemExit("control journal schema differs")
@@ -368,6 +483,9 @@ if document["certificateAutomationInstalled"] is False and (document["certificat
 previous = document.get("previousControlEvidenceSha256", "")
 if not re.fullmatch(r"[0-9a-f]{64}", previous):
     raise SystemExit("control journal predecessor differs")
+ssh_predecessor = document.get("sshActivationPredecessor")
+if ssh_predecessor not in {"service", "socket"}:
+    raise SystemExit("control journal SSH activation predecessor differs")
 rows = document.get("targets")
 if not isinstance(rows, list) or not rows:
     raise SystemExit("control journal target inventory differs")
@@ -381,6 +499,7 @@ print("true" if document["certificateAutomationInstalled"] else "false")
 print("true" if document["certificateTimerEnabled"] else "false")
 print("true" if document["certificateTimerActive"] else "false")
 print(previous)
+print(ssh_predecessor)
 PY
 }
 
@@ -408,14 +527,26 @@ PY
 reconcile_pending() {
   local requested_commit="$1"
   readarray -t state < <(read_journal) || fail "Pending host-control upgrade journal is invalid."
-  [[ ${#state[@]} -eq 7 ]] || fail "Pending host-control upgrade state is malformed."
-  local commit="${state[0]}" transaction="${state[2]}" certificate="${state[3]}" timer_enabled="${state[4]}" timer_active="${state[5]}" previous_sha="${state[6]}"
+  [[ ${#state[@]} -eq 8 ]] || fail "Pending host-control upgrade state is malformed."
+  local commit="${state[0]}" transaction="${state[2]}" certificate="${state[3]}" timer_enabled="${state[4]}" timer_active="${state[5]}" previous_sha="${state[6]}" ssh_predecessor="${state[7]}"
   [[ ${commit} == "${requested_commit}" ]] || fail "Pending host-control upgrade belongs to another exact canonical commit."
   local candidate="${transaction}/source"
   if targets_are_new; then
+    if ! ensure_ssh_service_activation; then
+      rollback_transaction "${transaction}" || fail "OpenSSH activation commit-forward failed and exact rollback is blocked."
+      previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
+      previous_source="/opt/mochirii/forums/releases/${previous_commit}"
+      post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "OpenSSH activation rollback service readback failed."
+      verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "OpenSSH activation rollback verification failed."
+      clear_transaction "${transaction}" || fail "OpenSSH activation rollback journal could not be cleared."
+      fail "OpenSSH service activation failed and restored the exact prior state."
+    fi
     if ! post_install_readback "${candidate}" "${certificate}" "${timer_enabled}" "${timer_active}"; then
       rollback_transaction "${transaction}" || fail "Host-control commit-forward failed and exact rollback is blocked."
-      post_install_readback /opt/mochirii/forums/releases/"$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Host-control rollback service readback failed."
+      previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
+      previous_source="/opt/mochirii/forums/releases/${previous_commit}"
+      post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Host-control rollback service readback failed."
+      verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Host-control rollback verification failed."
       clear_transaction "${transaction}" || fail "Rolled-back host-control journal could not be cleared."
       fail "Host-control upgrade failed post-install verification and restored the exact prior controls."
     fi
@@ -425,7 +556,7 @@ reconcile_pending() {
       previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
       previous_source="/opt/mochirii/forums/releases/${previous_commit}"
       post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Terminal host-control rollback service readback failed."
-      bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction >/dev/null 2>&1 || fail "Terminal host-control rollback verification failed."
+      verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Terminal host-control rollback verification failed."
       clear_transaction "${transaction}" || fail "Terminally rolled-back host-control journal could not be cleared."
       fail "Committed host controls failed terminal verification; the exact prior controls were restored."
     fi
@@ -437,7 +568,7 @@ reconcile_pending() {
   previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
   previous_source="/opt/mochirii/forums/releases/${previous_commit}"
   post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Interrupted host-control rollback service readback failed."
-  bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction >/dev/null 2>&1 || fail "Interrupted host-control rollback failed terminal security verification."
+  verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Interrupted host-control rollback failed terminal security verification."
   clear_transaction "${transaction}" || fail "Rolled-back host-control journal could not be cleared."
   fail "Interrupted host-control upgrade was rolled back exactly; rerun the approved upgrade."
 }
@@ -522,7 +653,6 @@ previous_commit="${previous_state[0]}"
 previous_evidence_sha="${previous_state[1]}"
 previous_source="/opt/mochirii/forums/releases/${previous_commit}"
 [[ -d ${previous_source} && ! -L ${previous_source} ]] || fail "Current trusted host-control source release is absent."
-bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" >/dev/null 2>&1 || fail "Current host controls failed the pre-upgrade security gate."
 
 trusted_git_options=(
   -c credential.helper=
@@ -536,9 +666,9 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OB
 unset GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_PROTOCOL_FROM_USER
 export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0
 
-staging="$(mktemp -d "${upgrades_root}/.staging-${expected_commit}.XXXXXXXX")"
+staging="$(mktemp -d "${state_root}/.control-upgrade-staging-${expected_commit}.XXXXXXXX")"
 cleanup_staging() {
-  [[ -z ${staging:-} || ! -d ${staging} ]] || rm -rf -- "${staging}"
+  [[ -z ${staging:-} || ! -d ${staging} ]] || durable_remove_workdir "${staging}"
 }
 trap cleanup_staging EXIT
 bare="${staging}/trusted.git"
@@ -575,6 +705,13 @@ done
 bounded 20s visudo -cf "${candidate}/config/sudoers-forums" >/dev/null 2>&1 || fail "Candidate deploy sudoers policy is invalid."
 bounded 20s visudo -cf "${candidate}/config/sudoers-forums-operator" >/dev/null 2>&1 || fail "Candidate operator sudoers policy is invalid."
 
+ssh_predecessor="$(ssh_activation_predecessor)" || fail "OpenSSH activation state is neither the reviewed service state nor the exact Ubuntu socket-activation predecessor."
+if [[ ${ssh_predecessor} == service ]]; then
+  bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" >/dev/null 2>&1 || fail "Current host controls failed the pre-upgrade security gate."
+else
+  bash "${candidate}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --socket-activation-recovery >/dev/null 2>&1 || fail "Current host controls failed the exact socket-activation recovery gate."
+fi
+
 certificate_count=0
 certificate_present=0
 for record in "${records[@]}"; do
@@ -601,11 +738,13 @@ transaction="${upgrades_root}/${expected_commit}-${manifest_sha}"
 mv -- "${staging}" "${transaction}"
 staging=""
 candidate="${transaction}/source"
+sync -d "${state_root}" 2>/dev/null || true
+sync -d "${upgrades_root}" 2>/dev/null || true
 install -d -m 0700 -o root -g root "${transaction}/backup"
 install -m 0600 -o root -g root "${control_pointer}" "${transaction}/backup/current-host-control.json"
 sync -d "${transaction}/backup" 2>/dev/null || true
 
-python3 -B - "${candidate}" "${transaction}" "${pending_journal}" "${expected_commit}" "${manifest_sha}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" "${previous_evidence_sha}" <<'PY'
+python3 -B - "${candidate}" "${transaction}" "${pending_journal}" "${expected_commit}" "${manifest_sha}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" "${previous_evidence_sha}" "${ssh_predecessor}" <<'PY'
 import hashlib
 import json
 import os
@@ -619,6 +758,9 @@ journal_path = pathlib.Path(sys.argv[3])
 commit, manifest_sha = sys.argv[4:6]
 certificate, timer_enabled, timer_active = (value == "true" for value in sys.argv[6:9])
 previous = sys.argv[9]
+ssh_predecessor = sys.argv[10]
+if ssh_predecessor not in {"service", "socket"}:
+    raise SystemExit("SSH activation predecessor differs")
 manifest = json.loads((root / "config/host-control-manifest.v1.json").read_text(encoding="utf-8"))
 rows = []
 index = 0
@@ -661,7 +803,8 @@ document = {
     "repositoryCommit": commit, "manifestSha256": manifest_sha,
     "transactionDirectory": str(transaction), "certificateAutomationInstalled": certificate,
     "certificateTimerEnabled": timer_enabled, "certificateTimerActive": timer_active,
-    "previousControlEvidenceSha256": previous, "targets": rows,
+    "previousControlEvidenceSha256": previous, "sshActivationPredecessor": ssh_predecessor,
+    "targets": rows,
 }
 descriptor, candidate = tempfile.mkstemp(prefix=".control-upgrade.", suffix=".json", dir=journal_path.parent)
 try:
@@ -701,9 +844,18 @@ for record in "${records[@]}"; do
   [[ "$(sha256sum -- "${target}" | awk '{print $1}')" == "${digest}" ]] || fail "Published host-control target digest differs; the durable journal was retained."
 done
 
+ensure_ssh_service_activation || {
+  rollback_transaction "${transaction}" || fail "OpenSSH service activation failed and exact rollback is blocked."
+  post_install_readback "${previous_source}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" || fail "OpenSSH activation rollback service readback failed."
+  verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "OpenSSH activation rollback verification failed."
+  clear_transaction "${transaction}" || fail "OpenSSH activation rollback journal could not be cleared."
+  fail "OpenSSH service activation failed; the exact prior controls were restored."
+}
+
 post_install_readback "${candidate}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" || {
   rollback_transaction "${transaction}" || fail "Host-control post-install readback failed and rollback is blocked."
   post_install_readback "${previous_source}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" || fail "Host-control rollback service readback failed."
+  verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Host-control rollback verification failed."
   clear_transaction "${transaction}" || fail "Rolled-back host-control journal could not be cleared."
   fail "Host-control post-install readback failed; the exact prior controls were restored."
 }
@@ -711,7 +863,7 @@ seal_control_state upgrade "${expected_commit}" "${candidate}" "${previous_evide
 if ! bash "${candidate}/scripts/verify-host-security.sh" "${expected_commit}" "${candidate}" --upgrade-transaction >/dev/null 2>&1; then
   rollback_transaction "${transaction}" || fail "Upgraded host controls failed terminal verification and exact rollback is blocked."
   post_install_readback "${previous_source}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" || fail "Terminal host-control rollback service readback failed."
-  bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction >/dev/null 2>&1 || fail "Terminal host-control rollback verification failed."
+  verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Terminal host-control rollback verification failed."
   clear_transaction "${transaction}" || fail "Terminally rolled-back host-control journal could not be cleared."
   fail "Upgraded host controls failed terminal verification; the exact prior controls were restored."
 fi

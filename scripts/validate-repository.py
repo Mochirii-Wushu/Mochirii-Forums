@@ -6146,6 +6146,15 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'ls-remote --refs "${canonical_repository}" refs/heads/main',
             'timeout --signal=TERM --kill-after=5s 15s sshd -T',
             'run_bounded_host_operation 60 systemctl reload ssh',
+            'readonly ssh_generator_parent="/etc/systemd/system-generators"',
+            'readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"',
+            '[[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]]',
+            'stat -c \'%U:%G %a\' -- "${ssh_generator_parent}")" == "root:root 755"',
+            'ln -s /dev/null "${staging}/mask"',
+            'restore_ssh_socket_activation_predecessor()',
+            'ensure_ssh_service_activation()',
+            'run_bounded_host_operation 60 systemctl disable --now ssh.socket',
+            'run_bounded_host_operation 60 systemctl enable --now ssh.service',
             'authorizedkeyscommanduser',
             'authorizedprincipalscommanduser',
             'permituserenvironment',
@@ -6228,9 +6237,21 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'certificate automation target set is partial',
             'service_state mochirii-forums-media-certificate-renew.timer',
             '--upgrade-transaction',
+            '--socket-activation-recovery',
+            '--upgrade-socket-activation-recovery',
+            'ssh_generator_parent=/etc/systemd/system-generators',
+            'OpenSSH socket-generator parent is unsafe.',
+            'ssh_generator_mask=/etc/systemd/system-generators/sshd-socket-generator',
+            'OpenSSH socket-activation recovery service-enable state differs.',
+            'OpenSSH socket-activation recovery socket-active state differs.',
+            'service_state ssh.service || fail "OpenSSH service is not enabled and active."',
+            'OpenSSH socket remains enabled.',
+            'OpenSSH socket remains active.',
         ],
         "hosted host-security verification",
     )
+    if 'service_state ssh.socket || fail "OpenSSH service is not enabled and active."' in host_security:
+        fail("Hosted host-security verification permits socket activation as a terminal state.")
     require_text(
         control_upgrade,
         [
@@ -6250,10 +6271,65 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'seal_control_state upgrade',
             'verify-host-security.sh',
             '--upgrade-transaction',
+            '--socket-activation-recovery',
+            '--upgrade-socket-activation-recovery',
+            'readonly ssh_generator_parent="/etc/systemd/system-generators"',
+            'readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"',
+            '[[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]]',
+            'stat -c \'%U:%G %a\' -- "${ssh_generator_parent}")" == "root:root 755"',
+            'ssh_activation_predecessor()',
+            'restore_ssh_activation_predecessor()',
+            'verify_previous_host_controls()',
+            '"sshActivationPredecessor"',
+            '.control-upgrade-staging-${expected_commit}.XXXXXXXX',
+            'bounded 60s systemctl disable --now ssh.socket',
+            'bounded 60s systemctl enable --now ssh.service',
+            'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction',
+            'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-socket-activation-recovery',
+            'bash "${candidate}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --socket-activation-recovery',
             '${SUDO_USER:-} == mochirii-forums-operator',
         ],
         "transactional host-control upgrade",
     )
+    candidate_validation = control_upgrade.index(
+        'bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'
+    )
+    predecessor_gate = control_upgrade.index(
+        'ssh_predecessor="$(ssh_activation_predecessor)"', candidate_validation
+    )
+    recovery_gate = control_upgrade.index('--socket-activation-recovery', predecessor_gate)
+    journal_position = control_upgrade.index(
+        'os.link(candidate, journal_path, follow_symlinks=False)', recovery_gate
+    )
+    first_publication = control_upgrade.index(
+        'atomic_install "${candidate}/${relative}"', journal_position
+    )
+    activation_commit = control_upgrade.index(
+        'ensure_ssh_service_activation || {', first_publication
+    )
+    first_readback = control_upgrade.index(
+        'post_install_readback "${candidate}"', activation_commit
+    )
+    terminal_verification = control_upgrade.index(
+        'bash "${candidate}/scripts/verify-host-security.sh" "${expected_commit}" "${candidate}" --upgrade-transaction',
+        first_readback,
+    )
+    if not (
+        candidate_validation
+        < predecessor_gate
+        < recovery_gate
+        < journal_position
+        < first_publication
+        < activation_commit
+        < first_readback
+        < terminal_verification
+    ):
+        fail("SSH service activation can bypass validation, journaling, publication, readback, or terminal verification.")
+    rollback_verifier_start = control_upgrade.index("verify_previous_host_controls() {")
+    rollback_verifier_end = control_upgrade.index("\n}\n", rollback_verifier_start)
+    rollback_verifier = control_upgrade[rollback_verifier_start:rollback_verifier_end]
+    if '${previous_source}/scripts/verify-host-security.sh' in rollback_verifier:
+        fail("SSH activation rollback uses the schema-incompatible predecessor verifier.")
     require_text(
         control_evidence,
         [

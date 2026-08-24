@@ -8,6 +8,8 @@ readonly deploy_group="mochirii-forums-deploy"
 readonly operator_user="mochirii-forums-operator"
 readonly operator_group="mochirii-forums-operator"
 readonly state_root="/var/lib/mochirii/forums"
+readonly ssh_generator_parent="/etc/systemd/system-generators"
+readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"
 readonly canonical_repository="https://github.com/Mochirii-Wushu/Mochirii-Forums.git"
 readonly deployment_source_commit="ed9f680b0df1de28f062de1769d89d22b2644d1b"
 readonly deployment_source_tree="588498dffbea91592fd4e2f10166bc11c8fe7a61"
@@ -158,6 +160,77 @@ parent = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
 try: os.fsync(parent)
 finally: os.close(parent)
 PY
+}
+
+systemd_unit_state() {
+  local verb="$1" unit="$2" output
+  output="$(timeout --signal=TERM --kill-after=5s 15s systemctl "${verb}" "${unit}" 2>/dev/null || true)"
+  (( ${#output} <= 32 )) || return 1
+  printf '%s\n' "${output}"
+}
+
+ssh_generator_mask_is_exact() {
+  [[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]] || return 1
+  [[ "$(stat -c '%U:%G %a' -- "${ssh_generator_parent}")" == "root:root 755" ]] || return 1
+  [[ -L ${ssh_generator_mask} && "$(readlink -- "${ssh_generator_mask}")" == /dev/null ]] || return 1
+  [[ "$(stat -c '%U:%G' -- "${ssh_generator_mask}")" == root:root ]]
+}
+
+ssh_service_activation_is_exact() {
+  ssh_generator_mask_is_exact || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.service)" == enabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.service)" == active ]] || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.socket)" == disabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.socket)" == inactive ]]
+}
+
+ssh_socket_activation_is_exact_predecessor() {
+  [[ ! -e ${ssh_generator_mask} && ! -L ${ssh_generator_mask} ]] || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.service)" == disabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.service)" == active ]] || return 1
+  [[ "$(systemd_unit_state is-enabled ssh.socket)" == enabled ]] || return 1
+  [[ "$(systemd_unit_state is-active ssh.socket)" == active ]]
+}
+
+publish_ssh_generator_mask() {
+  local staging
+  if [[ -e ${ssh_generator_parent} || -L ${ssh_generator_parent} ]]; then
+    [[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} ]] || return 1
+    [[ "$(stat -c '%U:%G %a' -- "${ssh_generator_parent}")" == "root:root 755" ]] || return 1
+  else
+    install -d -m 0755 -o root -g root "${ssh_generator_parent}" || return 1
+  fi
+  [[ ! -e ${ssh_generator_mask} && ! -L ${ssh_generator_mask} ]] || return 1
+  staging="$(mktemp -d "${ssh_generator_parent}/.sshd-socket-generator.XXXXXXXX")" || return 1
+  chmod 0700 "${staging}" || { rmdir -- "${staging}"; return 1; }
+  ln -s /dev/null "${staging}/mask" || { rmdir -- "${staging}"; return 1; }
+  mv -T -- "${staging}/mask" "${ssh_generator_mask}" || { rm -f -- "${staging}/mask"; rmdir -- "${staging}"; return 1; }
+  rmdir -- "${staging}" || return 1
+  sync -d "${ssh_generator_parent}" 2>/dev/null || true
+  ssh_generator_mask_is_exact
+}
+
+restore_ssh_socket_activation_predecessor() {
+  run_bounded_host_cleanup systemctl disable ssh.service || return 1
+  durable_remove "${ssh_generator_mask}" || return 1
+  run_bounded_host_cleanup systemctl daemon-reload || return 1
+  run_bounded_host_cleanup systemctl enable --now ssh.socket || return 1
+  run_bounded_host_cleanup systemctl start ssh.service || return 1
+  ssh_socket_activation_is_exact_predecessor
+}
+
+ensure_ssh_service_activation() {
+  ssh_service_activation_is_exact && return 0
+  ssh_socket_activation_is_exact_predecessor || return 1
+  publish_ssh_generator_mask || return 1
+  if run_bounded_host_operation 60 systemctl daemon-reload &&
+    run_bounded_host_operation 60 systemctl disable --now ssh.socket &&
+    run_bounded_host_operation 60 systemctl enable --now ssh.service &&
+    ssh_service_activation_is_exact; then
+    return 0
+  fi
+  restore_ssh_socket_activation_predecessor || fail "OpenSSH service-activation conversion failed and exact rollback is blocked."
+  fail "OpenSSH service-activation conversion failed; the exact socket-activated predecessor was restored."
 }
 
 manifest_records() {
@@ -434,6 +507,7 @@ PY
     rm -f -- "${proof_candidate}"
   fi
   install_sshd_policy "${repository_root}/config/sshd-forums.conf" validate_hardened_ssh
+  ensure_ssh_service_activation || fail "OpenSSH could not be converted from socket activation to the reviewed service contract."
   validate_hardened_ssh || fail "Effective SSH authentication settings differ after reload."
   /usr/local/libexec/mochirii-forums/host-control-evidence.py seal-access >/dev/null
   /usr/local/libexec/mochirii-forums/host-control-evidence.py seal-control --operation initial-install \

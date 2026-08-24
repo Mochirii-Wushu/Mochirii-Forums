@@ -13,11 +13,13 @@ bounded() {
 }
 
 [[ ${EUID} -eq 0 ]] || fail "Host-security verification must run as root."
-[[ $# -eq 2 || ( $# -eq 3 && $3 == --upgrade-transaction ) ]] || fail "Usage: verify-host-security.sh EXPECTED_COMMIT TRUSTED_SOURCE_ROOT [--upgrade-transaction]"
+[[ $# -eq 2 || ( $# -eq 3 && ( $3 == --upgrade-transaction || $3 == --socket-activation-recovery || $3 == --upgrade-socket-activation-recovery ) ) ]] || fail "Usage: verify-host-security.sh EXPECTED_COMMIT TRUSTED_SOURCE_ROOT [--upgrade-transaction|--socket-activation-recovery|--upgrade-socket-activation-recovery]"
 expected_commit="$1"
 source_root="$2"
 transaction_mode=false
-[[ ${3:-} != --upgrade-transaction ]] || transaction_mode=true
+socket_activation_recovery=false
+[[ ${3:-} != --upgrade-transaction && ${3:-} != --upgrade-socket-activation-recovery ]] || transaction_mode=true
+[[ ${3:-} != --socket-activation-recovery && ${3:-} != --upgrade-socket-activation-recovery ]] || socket_activation_recovery=true
 [[ ${expected_commit} =~ ^[0-9a-f]{40}$ ]] || fail "Expected host-control commit is malformed."
 [[ -d ${source_root} && ! -L ${source_root} ]] || fail "Trusted host-control source root is absent or linked."
 source_root="$(readlink -f -- "${source_root}")"
@@ -66,7 +68,7 @@ document = json.loads(journal_path.read_text(encoding="utf-8"))
 keys = {
     "schemaVersion", "operation", "phase", "repositoryCommit", "manifestSha256",
     "transactionDirectory", "certificateAutomationInstalled", "certificateTimerEnabled",
-    "certificateTimerActive", "previousControlEvidenceSha256", "targets",
+    "certificateTimerActive", "previousControlEvidenceSha256", "sshActivationPredecessor", "targets",
 }
 if set(document) != keys or document.get("schemaVersion") != 1 or document.get("operation") != "host-control-upgrade" or document.get("phase") != "installing":
     raise SystemExit("host-control upgrade journal schema differs")
@@ -75,6 +77,8 @@ manifest_sha = document.get("manifestSha256", "")
 transaction = pathlib.Path(document.get("transactionDirectory", ""))
 if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha) or transaction != upgrades_root / f"{commit}-{manifest_sha}":
     raise SystemExit("host-control upgrade journal identity differs")
+if document.get("sshActivationPredecessor") not in {"service", "socket"}:
+    raise SystemExit("host-control upgrade SSH activation predecessor differs")
 metadata = transaction.lstat()
 if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o700:
     raise SystemExit("host-control upgrade transaction directory is unsafe")
@@ -503,7 +507,25 @@ service_state() {
   [[ "$(bounded 15s systemctl is-active "${unit}" 2>/dev/null)" == active ]]
 }
 
-service_state ssh || fail "OpenSSH service is not enabled and active."
+ssh_generator_parent=/etc/systemd/system-generators
+ssh_generator_mask=/etc/systemd/system-generators/sshd-socket-generator
+if [[ ${socket_activation_recovery} == true ]]; then
+  if [[ -e ${ssh_generator_parent} || -L ${ssh_generator_parent} ]]; then
+    [[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} && "$(stat -c '%U:%G %a' -- "${ssh_generator_parent}")" == "root:root 755" ]] || fail "OpenSSH socket-generator parent is unsafe."
+  fi
+  [[ ! -e ${ssh_generator_mask} && ! -L ${ssh_generator_mask} ]] || fail "OpenSSH socket-activation recovery mask state differs."
+  [[ "$(bounded 15s systemctl is-enabled ssh.service 2>/dev/null || true)" == disabled ]] || fail "OpenSSH socket-activation recovery service-enable state differs."
+  [[ "$(bounded 15s systemctl is-active ssh.service 2>/dev/null || true)" == active ]] || fail "OpenSSH socket-activation recovery service-active state differs."
+  [[ "$(bounded 15s systemctl is-enabled ssh.socket 2>/dev/null || true)" == enabled ]] || fail "OpenSSH socket-activation recovery socket-enable state differs."
+  [[ "$(bounded 15s systemctl is-active ssh.socket 2>/dev/null || true)" == active ]] || fail "OpenSSH socket-activation recovery socket-active state differs."
+else
+  [[ -d ${ssh_generator_parent} && ! -L ${ssh_generator_parent} && "$(stat -c '%U:%G %a' -- "${ssh_generator_parent}")" == "root:root 755" ]] || fail "OpenSSH socket-generator parent is unsafe."
+  [[ -L ${ssh_generator_mask} && "$(readlink -- "${ssh_generator_mask}")" == /dev/null ]] || fail "OpenSSH socket generator is not exactly masked."
+  [[ "$(stat -c '%U:%G' -- "${ssh_generator_mask}")" == root:root ]] || fail "OpenSSH socket-generator mask ownership differs."
+  service_state ssh.service || fail "OpenSSH service is not enabled and active."
+  [[ "$(bounded 15s systemctl is-enabled ssh.socket 2>/dev/null || true)" == disabled ]] || fail "OpenSSH socket remains enabled."
+  [[ "$(bounded 15s systemctl is-active ssh.socket 2>/dev/null || true)" == inactive ]] || fail "OpenSSH socket remains active."
+fi
 service_state docker || fail "Docker service is not enabled and active."
 service_state fail2ban || fail "fail2ban service is not enabled and active."
 service_state unattended-upgrades || fail "Unattended-upgrades service is not enabled and active."
