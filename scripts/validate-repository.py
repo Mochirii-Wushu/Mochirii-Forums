@@ -197,7 +197,7 @@ checks["narrative_system_user_branded"] =
 ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9eb5ee81a931a5492d03f5c"
 ADMIN_QUICK_START_STORED_TEMPLATE_BYTES = 1305
 ADMIN_QUICK_START_STORED_TEMPLATE_SHA256 = "797e8a4616d96ed775fc51b1df92ee3d6bac0ce1b431050ba2af306894bdc766"
-RUNTIME_VERIFIER_SHA256 = "5fdd719f737b67a6ed1dfd544e75a9073ef0a0d5d0048907dc3c838b210f1f2e"
+RUNTIME_VERIFIER_SHA256 = "8bbef62aa9f74ce8372292a784d30c2ad5b0da9d4061e8a4184b128f499e0896"
 RESTORED_BACKUP_VERIFIER_SHA256 = "2804d9bfc738ff083f6a286bfa0fbca6bbe0c986e29d69dd732ab9453f832189"
 RESTORED_CHECK_EXIT_CODES = (
     ("repository_revision", 64, "repository-revision"),
@@ -213,7 +213,7 @@ RESTORED_CHECK_EXIT_CODES = (
     ("normal_upload_inventory", 74, "normal-upload-inventory"),
 )
 CONFIGURE_SITE_SHA256 = "b4c38e0c734ce7b1300756beee970578ee7f1521d10497a0820880808c714dd3"
-APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
+APP_TEMPLATE_SHA256 = "889de69b3a2f9e82a9d1ca33034d7cf6ec3717a124a767ad9028af3499313ccf"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "dcd105f619674983c42c92eeff2f06dbdc37fca3779aa5e13acdbc8b80ffc09c"
 SENSITIVE_LOG_EXECUTABLE_SHA256 = "3e9ca44f8d9f4e2f89463fca323ba63388f2c059664cc4e0d25ebd1c9fcad6fa"
@@ -3649,8 +3649,129 @@ if current_status != 404:
         fail("DiscourseConnect fixture HTTPS setup or restoration order differs.")
 
 
+SMTP_REQUIRED_STARTTLS_INITIALIZER = '''  - file:
+      path: /var/www/discourse/config/initializers/mochirii_required_starttls.rb
+      contents: |
+        # frozen_string_literal: true
+
+        Rails.application.config.after_initialize do
+          configured = ActionMailer::Base.smtp_settings
+          unless configured.is_a?(Hash) &&
+            configured[:enable_starttls_auto] == true &&
+            !configured.key?(:enable_starttls) &&
+            !configured.key?(:tls) &&
+            !configured.key?(:ssl) &&
+            configured[:openssl_verify_mode].to_s == "peer"
+            raise "SMTP STARTTLS input contract differs"
+          end
+
+          required = configured.dup
+          required.delete(:enable_starttls_auto)
+          required[:enable_starttls] = true
+          ActionMailer::Base.smtp_settings = required.freeze
+        end
+'''
+SMTP_RUNTIME_TRANSPORT_VERIFIER = '''smtp_source = GlobalSetting.smtp_settings
+smtp = ActionMailer::Base.smtp_settings
+checks["smtp_transport_fail_closed"] =
+  smtp_source.is_a?(Hash) &&
+    smtp_source[:enable_starttls_auto] == true &&
+    !smtp_source.key?(:enable_starttls) &&
+    !smtp_source.key?(:tls) &&
+    !smtp_source.key?(:ssl) &&
+    smtp_source[:openssl_verify_mode].to_s == "peer" &&
+    smtp.is_a?(Hash) &&
+    smtp[:address] == ENV.fetch("DISCOURSE_SMTP_ADDRESS") &&
+    smtp[:port] == ENV.fetch("DISCOURSE_SMTP_PORT").to_i &&
+    smtp[:domain] == "forums.mochirii.com" &&
+    smtp[:authentication].to_s == ENV.fetch("DISCOURSE_SMTP_AUTHENTICATION") &&
+    smtp[:enable_starttls] == true &&
+    !smtp.key?(:enable_starttls_auto) &&
+    !smtp.key?(:tls) &&
+    !smtp.key?(:ssl) &&
+    smtp[:openssl_verify_mode].to_s == "peer"
+'''
+
+
+def validate_smtp_transport_contract(app: str, runtime_verifier: str) -> None:
+    environment_start = "\nenv:\n"
+    environment_end = "\nvolumes:\n"
+    if app.count(environment_start) != 1 or app.count(environment_end) != 1:
+        fail("Application SMTP environment boundary differs.")
+    environment = app[
+        app.index(environment_start) + len(environment_start) : app.index(environment_end)
+    ]
+    required_environment = (
+        '  DISCOURSE_SMTP_FORCE_TLS: "false"\n',
+        '  DISCOURSE_SMTP_ENABLE_START_TLS: "true"\n',
+        '  DISCOURSE_SMTP_OPENSSL_VERIFY_MODE: "peer"\n',
+    )
+    if any(environment.count(value) != 1 for value in required_environment):
+        fail("Application SMTP transport flags are not exact singletons.")
+    for key in (
+        "DISCOURSE_SMTP_FORCE_TLS",
+        "DISCOURSE_SMTP_ENABLE_START_TLS",
+        "DISCOURSE_SMTP_OPENSSL_VERIFY_MODE",
+    ):
+        if len(re.findall(rf"(?m)^  {key}[ \t]*:", environment)) != 1:
+            fail("Application SMTP transport contains an alternate or duplicate key.")
+
+    initializer_start = (
+        "  - file:\n"
+        "      path: /var/www/discourse/config/initializers/mochirii_required_starttls.rb\n"
+    )
+    initializer_end = (
+        "  - file:\n"
+        "      path: /var/www/discourse/config/initializers/mochirii_sensitive_parameter_filter.rb\n"
+    )
+    if app.count(initializer_start) != 1 or app.count(initializer_end) != 1:
+        fail("Required STARTTLS initializer boundary differs.")
+    initializer = app[app.index(initializer_start) : app.index(initializer_end)]
+    if initializer != SMTP_REQUIRED_STARTTLS_INITIALIZER:
+        fail("Required STARTTLS initializer differs from the reviewed fail-closed source.")
+
+    runtime_start = "smtp_source = GlobalSetting.smtp_settings\n"
+    runtime_end = 'checks["notification_sender_runtime_bound"] =\n'
+    if (
+        runtime_verifier.count(runtime_start) != 1
+        or runtime_verifier.count(runtime_end) != 1
+        or runtime_verifier.index(runtime_start) >= runtime_verifier.index(runtime_end)
+    ):
+        fail("Runtime SMTP transport verifier boundary differs.")
+    runtime = runtime_verifier[
+        runtime_verifier.index(runtime_start) : runtime_verifier.index(runtime_end)
+    ]
+    if runtime != SMTP_RUNTIME_TRANSPORT_VERIFIER:
+        fail("Runtime SMTP transport verifier differs from the reviewed fail-closed source.")
+
+    documentation_contract = {
+        "docs/operations/DEPLOYMENT.md": (
+            "mandatory STARTTLS with peer certificate verification",
+            "authenticated submission, branded test delivery",
+        ),
+        "docs/operations/PROVIDER-DNS-TLS.md": (
+            "mandatory STARTTLS with peer certificate verification",
+            "authenticated\n   submission, and branded test delivery",
+        ),
+        "docs/operations/RUNTIME-READINESS.md": (
+            "mandatory STARTTLS with peer certificate verification",
+            "authenticated submission, and branded test delivery",
+        ),
+        "docs/operations/SECRETS.md": (
+            "Existing authenticated STARTTLS submission port",
+            "STARTTLS required rather than opportunistic",
+            "peer verification enabled",
+        ),
+    }
+    for relative, required in documentation_contract.items():
+        source = read(relative)
+        if any(value not in source for value in required):
+            fail(f"Required STARTTLS documentation differs: {relative}")
+
+
 def validate_template() -> None:
     app = read("config/app.yml.example")
+    validate_smtp_transport_contract(app, read("scripts/verify-site.rb"))
     validate_disposable_nginx_fixture_final_command_contract(
         read("scripts/test-disposable-launcher-guard.py")
     )
@@ -3672,8 +3793,8 @@ def validate_template() -> None:
             'DISCOURSE_DISCOURSE_CONNECT_CSRF_PROTECTION: "true"',
             'DISCOURSE_VERBOSE_DISCOURSE_CONNECT_LOGGING: "false"',
             'DISCOURSE_DISABLE_EMAILS: __MOCHIRII_DISABLE_EMAILS__',
-            'DISCOURSE_SMTP_FORCE_TLS: "true"',
-            'DISCOURSE_SMTP_ENABLE_START_TLS: "false"',
+            'DISCOURSE_SMTP_FORCE_TLS: "false"',
+            'DISCOURSE_SMTP_ENABLE_START_TLS: "true"',
             'DISCOURSE_SMTP_DOMAIN: "forums.mochirii.com"',
             'DISCOURSE_SMTP_OPENSSL_VERIFY_MODE: "peer"',
             'DISCOURSE_SIMPLE_EMAIL_SUBJECT: "false"',

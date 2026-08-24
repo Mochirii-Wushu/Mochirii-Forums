@@ -38,8 +38,9 @@ Perform the following steps in order. A failed item stops the deployment.
 3. Freeze the reviewed repository commit and release archive.
 4. Before any paid creation, verify an existing, already authorized SMTP path:
    a Mochirii-owned sender on `mochirii.com` or an already authorized
-   subdomain, implicit TLS, authenticated submission, branded test delivery,
-   and no new provider, account, subscription, or mail DNS change.
+   subdomain, mandatory STARTTLS with peer certificate verification,
+   authenticated submission, branded test delivery, and no new provider,
+   account, subscription, or mail DNS change.
 5. Immediately before creation, collect protected live provider readback and
    pass `scripts/verify-cost-evidence.py`. It must prove SGP1 availability, the
    exact `$12.00` plan, weekly backups at 20 percent (`$2.40`), an active

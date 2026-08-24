@@ -2318,6 +2318,132 @@ def test_https_consumer_fixture_contract() -> None:
         CONNECT_FIXTURE.container_operation_absent = original_absence
 
 
+def test_smtp_transport_contract() -> None:
+    template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
+    verifier = (ROOT / "scripts/verify-site.rb").read_text(encoding="utf-8")
+    VALIDATOR.validate_smtp_transport_contract(template, verifier)
+
+    template_hostiles = (
+        template.replace(
+            '  DISCOURSE_SMTP_FORCE_TLS: "false"\n',
+            '  DISCOURSE_SMTP_FORCE_TLS: "true"\n',
+            1,
+        ),
+        template.replace(
+            '  DISCOURSE_SMTP_ENABLE_START_TLS: "true"\n',
+            '  DISCOURSE_SMTP_ENABLE_START_TLS: "false"\n',
+            1,
+        ),
+        template.replace(
+            '  DISCOURSE_SMTP_OPENSSL_VERIFY_MODE: "peer"\n',
+            '  DISCOURSE_SMTP_OPENSSL_VERIFY_MODE: "none"\n',
+            1,
+        ),
+        template.replace(
+            '  DISCOURSE_SMTP_ENABLE_START_TLS: "true"\n',
+            '  DISCOURSE_SMTP_ENABLE_START_TLS: "true"\n'
+            '  DISCOURSE_SMTP_ENABLE_START_TLS: "false"\n',
+            1,
+        ),
+        template.replace(
+            "          required.delete(:enable_starttls_auto)\n",
+            "",
+            1,
+        ),
+        template.replace(
+            "          required[:enable_starttls] = true\n",
+            "          required[:enable_starttls_auto] = true\n",
+            1,
+        ),
+        template.replace(
+            "            !configured.key?(:ssl) &&\n",
+            "            true &&\n",
+            1,
+        ),
+        template.replace(
+            "          required[:enable_starttls] = true\n",
+            "          required[:enable_starttls] = false\n",
+            1,
+        ) + "\n# inert decoy\n" + VALIDATOR.SMTP_REQUIRED_STARTTLS_INITIALIZER,
+    )
+    for hostile in template_hostiles:
+        if hostile == template:
+            raise RuntimeError("SMTP template hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_smtp_transport_contract(hostile, verifier)
+        except RuntimeError:
+            continue
+        raise RuntimeError("SMTP template hostile mutation was accepted.")
+
+    verifier_hostiles = (
+        verifier.replace(
+            "smtp = ActionMailer::Base.smtp_settings\n",
+            "smtp = GlobalSetting.smtp_settings\n",
+            1,
+        ),
+        verifier.replace(
+            "    smtp[:enable_starttls] == true &&\n",
+            "    smtp[:enable_starttls_auto] == true &&\n",
+            1,
+        ),
+        verifier.replace(
+            "    !smtp.key?(:enable_starttls_auto) &&\n",
+            "    smtp[:enable_starttls_auto] == true &&\n",
+            1,
+        ),
+        verifier.replace(
+            "    !smtp.key?(:tls) &&\n",
+            "    smtp[:tls] == true &&\n",
+            1,
+        ),
+        verifier.replace(
+            '    smtp[:openssl_verify_mode].to_s == "peer"\n',
+            '    smtp[:openssl_verify_mode].to_s == "none"\n',
+            1,
+        ),
+        verifier.replace(
+            "    smtp[:enable_starttls] == true &&\n",
+            "    smtp[:enable_starttls] == false &&\n",
+            1,
+        ) + "\n# inert decoy\n" + VALIDATOR.SMTP_RUNTIME_TRANSPORT_VERIFIER,
+    )
+    for hostile in verifier_hostiles:
+        if hostile == verifier:
+            raise RuntimeError("SMTP runtime-verifier hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_smtp_transport_contract(template, hostile)
+        except RuntimeError:
+            continue
+        raise RuntimeError("SMTP runtime-verifier hostile mutation was accepted.")
+
+    original_read = VALIDATOR.read
+    try:
+        documentation_hostiles = {
+            "docs/operations/DEPLOYMENT.md": original_read(
+                "docs/operations/DEPLOYMENT.md"
+            ).replace("mandatory STARTTLS", "opportunistic STARTTLS", 1),
+            "docs/operations/PROVIDER-DNS-TLS.md": original_read(
+                "docs/operations/PROVIDER-DNS-TLS.md"
+            ).replace("peer certificate verification", "certificate verification optional", 1),
+            "docs/operations/SECRETS.md": original_read(
+                "docs/operations/SECRETS.md"
+            ).replace("STARTTLS required rather than opportunistic", "STARTTLS opportunistic", 1),
+        }
+        for relative, hostile in documentation_hostiles.items():
+            VALIDATOR.read = (
+                lambda path, relative=relative, hostile=hostile: hostile
+                if path == relative
+                else original_read(path)
+            )
+            try:
+                VALIDATOR.validate_smtp_transport_contract(template, verifier)
+            except RuntimeError:
+                continue
+            raise RuntimeError("SMTP documentation hostile mutation was accepted.")
+    finally:
+        VALIDATOR.read = original_read
+
+
 def test_theme_archive() -> None:
     with tempfile.TemporaryDirectory(prefix="mochirii-theme-test-") as directory:
         first = Path(directory) / "one.zip"
@@ -8689,6 +8815,7 @@ def main() -> int:
     test_login_code_denial_contract()
     test_sensitive_response_header_contract()
     test_https_consumer_fixture_contract()
+    test_smtp_transport_contract()
     test_theme_archive()
     test_narrative_avatar_contract()
     test_branding_email_renderer_contract()

@@ -64,9 +64,9 @@ Before any paid creation:
 1. Social remains successfully cut over and healthy.
 2. The exact Forums source gate and required CI are green.
 3. An existing, already authorized SMTP authority and Mochirii-owned sender
-   pass implicit-TLS submission, sender authorization, and branded test
-   delivery. No new mail provider/account, mail DNS record, or fixed mail cost
-   is within scope.
+   pass mandatory STARTTLS with peer certificate verification, sender
+   authorization, authenticated submission, and branded test delivery. No new
+   mail provider/account, mail DNS record, or fixed mail cost is within scope.
 4. Protected live evidence no older than the validator limit passes
    `scripts/verify-cost-evidence.py`: the SGP1 plan is available at `$12.00`,
    weekly backups are 20 percent (`$2.40`), the existing Spaces subscription is
