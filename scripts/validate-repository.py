@@ -6125,6 +6125,14 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'config/sshd-forums-prepared.conf',
             'config/sshd-forums.conf',
             'Prepared installation cannot replace an already hardened host',
+            'for hardened_record in "${state_root}/current-host-access.json" "${state_root}/current-host-control.json"',
+            'validate_operator_proof() {',
+            'getattr(os, "O_NOFOLLOW", 0)',
+            'getattr(os, "O_NONBLOCK", 0)',
+            'stat.S_IMODE(metadata.st_mode) != 0o600',
+            'metadata.st_nlink != 1',
+            'expected = b"operatorSshAndSudoVerified=true\\n"',
+            'validate_operator_proof "${proof}" || fail "Existing operator SSH proof is unsafe."',
             'install -d -m 0755 -o root -g root /var/lib/mochirii "${state_root}"',
             'install -d -m 0755 -o root -g root "${state_root}/deploy/.ssh"',
             'atomic_install "${candidate}" "${target}" 0644',
@@ -6144,6 +6152,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ],
         "host SSH boundary",
     )
+    if installer.count('validate_operator_proof "${proof}" || fail "Existing operator SSH proof is unsafe."') != 2:
+        fail("Host SSH boundary does not bind both partial-proof recovery consumers.")
     require_text(
         hardened_ssh,
         [

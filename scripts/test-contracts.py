@@ -8590,6 +8590,13 @@ def test_host_security_control_plane_contract() -> None:
         raise RuntimeError("Installer does not prove the deploy principal lacks control-upgrade authority.")
     if not all(value in installer for value in (
         'Prepared installation cannot replace an already hardened host',
+        'for hardened_record in "${state_root}/current-host-access.json" "${state_root}/current-host-control.json"',
+        'validate_operator_proof() {',
+        'getattr(os, "O_NOFOLLOW", 0)',
+        'getattr(os, "O_NONBLOCK", 0)',
+        'metadata.st_uid != 0', 'metadata.st_gid != 0',
+        'stat.S_IMODE(metadata.st_mode) != 0o600', 'metadata.st_nlink != 1',
+        'expected = b"operatorSshAndSudoVerified=true\\n"',
         'host-access-install.pending.json', 'os.fsync(writer.fileno())',
         'install -d -m 0755 -o root -g root /var/lib/mochirii "${state_root}"',
         'install -d -m 0755 -o root -g root "${state_root}/deploy/.ssh"',
@@ -8601,6 +8608,13 @@ def test_host_security_control_plane_contract() -> None:
         'permituserenvironment',
     )):
         raise RuntimeError("Initial host-control publication or hardened-retry boundary differs.")
+    if installer.count('validate_operator_proof "${proof}" || fail "Existing operator SSH proof is unsafe."') != 2:
+        raise RuntimeError("Initial host-control publication does not validate the exact partial operator proof in both recovery paths.")
+    hardened_gate = installer.index('for hardened_record in "${state_root}/current-host-access.json" "${state_root}/current-host-control.json"')
+    partial_proof_gate = installer.index('proof="${state_root}/operator-ssh-proved"', hardened_gate)
+    key_source_gate = installer.index('for source in "${authorized_keys_source}" "${operator_keys_source}"', partial_proof_gate)
+    if not hardened_gate < partial_proof_gate < key_source_gate:
+        raise RuntimeError("Initial host-control partial-proof recovery runs outside the hardened-state stop boundary.")
     if 'install -d -m 0700 -o root -g root "${state_root}/deploy/.ssh"' in installer:
         raise RuntimeError("Initial host-control publication restored an unreadable SSH directory mode.")
     access_evidence = (ROOT / "scripts/host-control-evidence.py").read_text(encoding="utf-8")
