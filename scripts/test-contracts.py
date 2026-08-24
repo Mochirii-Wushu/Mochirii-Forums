@@ -2642,6 +2642,28 @@ def test_narrative_avatar_contract() -> None:
         (
             template,
             configure.replace(
+                '  TextCleaner.normalize_whitespaces(\n'
+                '    mochirii_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url),\n'
+                '  ).rstrip',
+                '  mochirii_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url)',
+                1,
+            ),
+            verifier,
+        ),
+        (
+            template,
+            configure,
+            verifier.replace(
+                '  TextCleaner.normalize_whitespaces(\n'
+                '    expected_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url),\n'
+                '  ).rstrip',
+                '  expected_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url)',
+                1,
+            ),
+        ),
+        (
+            template,
+            configure.replace(
                 "normalized_upstream_admin_quick_start.bytesize == 1904 &&",
                 "true &&",
                 1,
@@ -2921,6 +2943,7 @@ def test_branding_email_renderer_contract() -> None:
         "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
         "PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''",
         "PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK = b'''",
+        "PINNED_POST_REVISOR_RAW_NORMALIZATION_BLOCK = b'''",
         "PINNED_TEXT_CLEANER_WHITESPACE_BLOCK = b'''",
         "PINNED_ADMIN_QUICK_START_POST_RAW = (",
         'hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256',
@@ -3123,6 +3146,7 @@ def test_branding_email_renderer_contract() -> None:
             + UPSTREAM.PINNED_ADMIN_QUICK_START_RAW_BLOCK
         ),
         "lib/post_creator.rb": UPSTREAM.PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK,
+        "lib/post_revisor.rb": UPSTREAM.PINNED_POST_REVISOR_RAW_NORMALIZATION_BLOCK,
         "lib/text_cleaner.rb": UPSTREAM.PINNED_TEXT_CLEANER_WHITESPACE_BLOCK,
     }
     original_topic_seed_evidence = UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE
@@ -3165,6 +3189,11 @@ def test_branding_email_renderer_contract() -> None:
                 "lib/post_creator.rb",
                 b'TextCleaner.normalize_whitespaces(@opts[:raw] || "").rstrip',
                 b'(@opts[:raw] || "").rstrip',
+            ),
+            (
+                "lib/post_revisor.rb",
+                b"TextCleaner.normalize_whitespaces(raw).rstrip",
+                b"raw.rstrip",
             ),
             (
                 "lib/text_cleaner.rb",

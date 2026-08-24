@@ -98,9 +98,10 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
 - the system-owned staff Admin Quick Start topic is revised only from the exact
   pinned upstream seed after the pinned `TextCleaner` and `PostCreator`
   whitespace/`rstrip` storage transformation to the exact reviewed Mochirii
-  guide; source-file and stored-post digests are independently bound, the exact
-  successor is idempotent, and any unexpected staff edit fails closed without
-  overwrite;
+  guide after the pinned `PostRevisor` applies that same transformation;
+  source-file, stored-seed, and stored-successor contracts are independently
+  bound, the exact successor is idempotent, and any unexpected staff edit fails
+  closed without overwrite;
 - the administrator recovery mail contains only the exact fixture-token path
   at the mode-bound Forums origin: HTTP is accepted solely for the explicit
   loopback fixture, while non-fixture verification requires HTTPS; and the

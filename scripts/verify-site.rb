@@ -318,7 +318,9 @@ expected_admin_quick_start_template = <<~MARKDOWN
   Use the approved Mochirii source, validation, backup, recovery, privacy, and moderation runbooks. Keep credentials and private evidence in their designated recovery boundaries.
 MARKDOWN
 expected_admin_quick_start =
-  expected_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url)
+  TextCleaner.normalize_whitespaces(
+    expected_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url),
+  ).rstrip
 admin_quick_start_topic = Topic.find_by(id: SiteSetting.admin_quick_start_topic_id)
 admin_quick_start = admin_quick_start_topic&.first_post
 checks["admin_quick_start_branded"] =

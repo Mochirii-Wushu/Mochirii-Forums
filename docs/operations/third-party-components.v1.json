@@ -136,6 +136,11 @@
         "sha256": "b4cf0a70dde716e8785239498d84a4612fc26f3e9607053abfd64c1edb7a1b52"
       },
       {
+        "path": "lib/post_revisor.rb",
+        "bytes": 29992,
+        "sha256": "f92dfd0ff095b0a72b181e0b5a8d649e331a22cf1a669de98718feecc1a9a2a2"
+      },
+      {
         "path": "lib/text_cleaner.rb",
         "bytes": 3043,
         "sha256": "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a"

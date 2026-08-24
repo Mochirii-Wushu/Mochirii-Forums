@@ -14,6 +14,7 @@ import re
 import stat
 import subprocess
 import symtable
+import textwrap
 from pathlib import Path
 
 
@@ -194,8 +195,10 @@ checks["narrative_system_user_branded"] =
   ).all?
 '''
 ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9eb5ee81a931a5492d03f5c"
-RUNTIME_VERIFIER_SHA256 = "76fb956da7067e253ce71a11c67296b7d9d21302413670ae9964d8e1ddf58b6c"
-CONFIGURE_SITE_SHA256 = "a1fce6a854bb2a2a3dab16065d7f3073f9dc630999c6bafda6681281e8ead505"
+ADMIN_QUICK_START_STORED_TEMPLATE_BYTES = 1305
+ADMIN_QUICK_START_STORED_TEMPLATE_SHA256 = "797e8a4616d96ed775fc51b1df92ee3d6bac0ce1b431050ba2af306894bdc766"
+RUNTIME_VERIFIER_SHA256 = "5fdd719f737b67a6ed1dfd544e75a9073ef0a0d5d0048907dc3c838b210f1f2e"
+CONFIGURE_SITE_SHA256 = "b4c38e0c734ce7b1300756beee970578ee7f1521d10497a0820880808c714dd3"
 APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "dcd105f619674983c42c92eeff2f06dbdc37fca3779aa5e13acdbc8b80ffc09c"
@@ -296,7 +299,7 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
 BRANDING_EMAIL_RENDERER_SHA256 = "0b504c71c1de2053585a20848e0515d2507d6d0b2a41c24eb99b83204b88c15c"
-PINNED_SOURCE_VERIFIER_SHA256 = "f4e408f8dc3552d7c06ba2ac732e8a82ddc17dfa59fa0af32ee0d0ae774f5b7d"
+PINNED_SOURCE_VERIFIER_SHA256 = "633de290378acb7e690f26d6ce761f03ecb07882d6b5603563d02d99fe1295c6"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
@@ -390,6 +393,11 @@ PINNED_TOPIC_SEED_EVIDENCE = [
         "path": "lib/post_creator.rb",
         "bytes": 22044,
         "sha256": "b4cf0a70dde716e8785239498d84a4612fc26f3e9607053abfd64c1edb7a1b52",
+    },
+    {
+        "path": "lib/post_revisor.rb",
+        "bytes": 29992,
+        "sha256": "f92dfd0ff095b0a72b181e0b5a8d649e331a22cf1a669de98718feecc1a9a2a2",
     },
     {
         "path": "lib/text_cleaner.rb",
@@ -597,7 +605,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "60423dba376be32d247e6d2b6a50c4e7a44e8168530656eeeadc2729893e2180",
+    "docs/operations/third-party-components.v1.json": "3b5ee034372328e9c66a6013143dde05ea8c827a9c5bf8c9d9394735c08f7ac0",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -788,8 +796,22 @@ def validate_narrative_avatar_contract(template: str, configure: str, verifier: 
         != ADMIN_QUICK_START_TEMPLATE_SHA256
     ):
         fail("Administrator quick-start replacement differs from the exact reviewed template.")
+    runtime_admin_template = textwrap.dedent(admin_templates[0])
+    stored_admin_template = runtime_admin_template[:-1]
+    if (
+        not runtime_admin_template.endswith("\n")
+        or runtime_admin_template.endswith("\n\n")
+        or len(stored_admin_template.encode("utf-8")) != ADMIN_QUICK_START_STORED_TEMPLATE_BYTES
+        or hashlib.sha256(stored_admin_template.encode("utf-8")).hexdigest()
+        != ADMIN_QUICK_START_STORED_TEMPLATE_SHA256
+    ):
+        fail("Administrator quick-start stored replacement differs from the exact reviewed bytes.")
     configurator_contract = (
         'require "digest"\n',
+        'mochirii_admin_quick_start =\n'
+        '  TextCleaner.normalize_whitespaces(\n'
+        '    mochirii_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url),\n'
+        '  ).rstrip\n',
         "normalized_upstream_admin_quick_start.bytesize == 1904 &&\n",
         '      "2416035d0c2dedd589a39005285277b181cf1723dd8cbf113e45f9175df12a12"\n',
         "if admin_quick_start.raw == mochirii_admin_quick_start\n",
@@ -801,6 +823,10 @@ def validate_narrative_avatar_contract(template: str, configure: str, verifier: 
     if any(configure.count(value) != 1 for value in configurator_contract):
         fail("Administrator quick-start configurator lost its exact fail-closed seed revision contract.")
     runtime_contract = (
+        'expected_admin_quick_start =\n'
+        '  TextCleaner.normalize_whitespaces(\n'
+        '    expected_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url),\n'
+        '  ).rstrip\n',
         'checks["admin_quick_start_branded"] =\n',
         "    admin_quick_start_topic.category_id == SiteSetting.staff_category_id &&\n",
         "    admin_quick_start.user_id == Discourse::SYSTEM_USER_ID &&\n",
@@ -1112,6 +1138,7 @@ def validate_pinned_source_verifier(source: str) -> None:
         "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
         "PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''",
         "PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK = b'''",
+        "PINNED_POST_REVISOR_RAW_NORMALIZATION_BLOCK = b'''",
         "PINNED_TEXT_CLEANER_WHITESPACE_BLOCK = b'''",
         "PINNED_ADMIN_QUICK_START_POST_RAW = (",
         "PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''",

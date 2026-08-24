@@ -251,7 +251,9 @@ mochirii_admin_quick_start_template = <<~MARKDOWN
   Use the approved Mochirii source, validation, backup, recovery, privacy, and moderation runbooks. Keep credentials and private evidence in their designated recovery boundaries.
 MARKDOWN
 mochirii_admin_quick_start =
-  mochirii_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url)
+  TextCleaner.normalize_whitespaces(
+    mochirii_admin_quick_start_template.gsub("%{base_url}", Discourse.base_url),
+  ).rstrip
 normalized_upstream_admin_quick_start =
   admin_quick_start.raw.gsub(Discourse.base_url, "%{base_url}")
 untouched_upstream_admin_quick_start =

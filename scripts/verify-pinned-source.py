@@ -117,6 +117,10 @@ PINNED_TOPIC_SEED_EVIDENCE = {
         22044,
         "b4cf0a70dde716e8785239498d84a4612fc26f3e9607053abfd64c1edb7a1b52",
     ),
+    "lib/post_revisor.rb": (
+        29992,
+        "f92dfd0ff095b0a72b181e0b5a8d649e331a22cf1a669de98718feecc1a9a2a2",
+    ),
     "lib/text_cleaner.rb": (
         3043,
         "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a",
@@ -178,6 +182,10 @@ PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK = b'''  def setup_post
     post =
       Post.new(
         raw: @opts[:raw],
+'''
+PINNED_POST_REVISOR_RAW_NORMALIZATION_BLOCK = b'''  def cleanup_whitespaces(raw)
+    raw.present? ? TextCleaner.normalize_whitespaces(raw).rstrip : ""
+  end
 '''
 PINNED_TEXT_CLEANER_WHITESPACE_BLOCK = b'''  @@whitespaces_regexp =
     Regexp.new(
@@ -1188,6 +1196,8 @@ def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:
 
     if core["lib/post_creator.rb"].count(PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK) != 1:
         raise RuntimeError("The pinned post-creation raw normalization changed.")
+    if core["lib/post_revisor.rb"].count(PINNED_POST_REVISOR_RAW_NORMALIZATION_BLOCK) != 1:
+        raise RuntimeError("The pinned post-revision raw normalization changed.")
     if core["lib/text_cleaner.rb"].count(PINNED_TEXT_CLEANER_WHITESPACE_BLOCK) != 1:
         raise RuntimeError("The pinned post whitespace normalizer changed.")
 
