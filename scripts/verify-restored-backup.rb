@@ -6,6 +6,20 @@ require "digest"
 require "uri"
 require_relative "normal-upload-inventory"
 
+RESTORED_CHECK_EXIT_CODES = {
+  repository_revision: 64,
+  recovery_marker: 65,
+  recovery_normal_upload: 66,
+  database: 67,
+  redis: 68,
+  sidekiq_process_present: 69,
+  sidekiq_processing: 70,
+  mail_suppression_matches_runtime: 71,
+  central_login_disabled: 72,
+  secure_uploads_absent: 73,
+  normal_upload_inventory: 74,
+}.freeze
+
 def recovery_marker_bytes(commit)
   base = Base64.strict_decode64("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
   comment = "mochirii-recovery-#{commit}".b
@@ -93,4 +107,4 @@ checks = {
 
 failed = checks.select { |_name, passed| !passed }.keys
 puts JSON.generate({ checks: checks, failed: failed, sidekiqProbeState: sidekiq_probe_state })
-raise "Mochirii restored-backup verification failed" if failed.any?
+exit(RESTORED_CHECK_EXIT_CODES.fetch(failed.first)) if failed.any?

@@ -450,8 +450,24 @@ jobs:
             wait "${pid}" >/dev/null 2>&1 || true
             active_pid=""
           }
+          restore_failure_category() {
+            case "$1" in
+              64) printf '%s\n' 'repository-revision' ;;
+              65) printf '%s\n' 'recovery-marker' ;;
+              66) printf '%s\n' 'recovery-normal-upload' ;;
+              67) printf '%s\n' 'database' ;;
+              68) printf '%s\n' 'redis' ;;
+              69) printf '%s\n' 'sidekiq-process-present' ;;
+              70) printf '%s\n' 'sidekiq-processing' ;;
+              71) printf '%s\n' 'mail-suppression-matches-runtime' ;;
+              72) printf '%s\n' 'central-login-disabled' ;;
+              73) printf '%s\n' 'secure-uploads-absent' ;;
+              74) printf '%s\n' 'normal-upload-inventory' ;;
+              *) return 1 ;;
+            esac
+          }
           run_fixture_command() {
-            local inner_seconds="$1" marker="$2" status=0 outer_seconds operation_token
+            local inner_seconds="$1" marker="$2" status=0 outer_seconds operation_token category
             shift 2
             outer_seconds=$((inner_seconds + 30))
             [[ ${marker} =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1
@@ -474,7 +490,12 @@ jobs:
               return 1
             fi
             if (( status != 0 )); then
-              printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\n' "${marker}" >&2
+              if [[ ${marker} =~ ^verify-restored-backup-(initial|after-restart|after-rebuild)$ ]] &&
+                category="$(restore_failure_category "${status}")"; then
+                printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s:%s\n' "${marker}" "${category}" >&2
+              else
+                printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\n' "${marker}" >&2
+              fi
               return 1
             fi
             printf 'DISPOSABLE_FIXTURE_COMMAND_PASSED:%s\n' "${marker}"

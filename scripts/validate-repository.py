@@ -198,7 +198,20 @@ ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9e
 ADMIN_QUICK_START_STORED_TEMPLATE_BYTES = 1305
 ADMIN_QUICK_START_STORED_TEMPLATE_SHA256 = "797e8a4616d96ed775fc51b1df92ee3d6bac0ce1b431050ba2af306894bdc766"
 RUNTIME_VERIFIER_SHA256 = "5fdd719f737b67a6ed1dfd544e75a9073ef0a0d5d0048907dc3c838b210f1f2e"
-RESTORED_BACKUP_VERIFIER_SHA256 = "650ea230080b89a772a4c41cf24cd3e5764ce547da9d23c429bf6f2e75b42034"
+RESTORED_BACKUP_VERIFIER_SHA256 = "dcb4603e8fb414177f53ab174fc29dc67154d618831d81cb06d354337893c645"
+RESTORED_CHECK_EXIT_CODES = (
+    ("repository_revision", 64, "repository-revision"),
+    ("recovery_marker", 65, "recovery-marker"),
+    ("recovery_normal_upload", 66, "recovery-normal-upload"),
+    ("database", 67, "database"),
+    ("redis", 68, "redis"),
+    ("sidekiq_process_present", 69, "sidekiq-process-present"),
+    ("sidekiq_processing", 70, "sidekiq-processing"),
+    ("mail_suppression_matches_runtime", 71, "mail-suppression-matches-runtime"),
+    ("central_login_disabled", 72, "central-login-disabled"),
+    ("secure_uploads_absent", 73, "secure-uploads-absent"),
+    ("normal_upload_inventory", 74, "normal-upload-inventory"),
+)
 CONFIGURE_SITE_SHA256 = "b4c38e0c734ce7b1300756beee970578ee7f1521d10497a0820880808c714dd3"
 APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
@@ -767,11 +780,41 @@ def validate_restored_mail_suppression_contract(source: str) -> None:
         source.count(runtime_binding) != 1
         or source.count(check) != 1
         or source.count("runtime_mail_suppression") != 3
-        or source.count("mail_suppression_matches_runtime") != 1
+        or source.count("mail_suppression_matches_runtime") != 2
         or "all_mail_disabled" in source
         or hashlib.sha256(source.encode("utf-8")).hexdigest() != RESTORED_BACKUP_VERIFIER_SHA256
     ):
         fail("Restored-backup mail suppression is not bound to the exact safe runtime setting.")
+
+
+def validate_restored_failure_exit_contract(source: str) -> None:
+    expected_check_names = tuple(name for name, _status, _category in RESTORED_CHECK_EXIT_CODES)
+    checks_start = "checks = {\n"
+    checks_end = "\n}\n\nfailed = checks.select { |_name, passed| !passed }.keys\n"
+    mapping = "RESTORED_CHECK_EXIT_CODES = {\n" + "".join(
+        f"  {name}: {status},\n" for name, status, _category in RESTORED_CHECK_EXIT_CODES
+    ) + "}.freeze\n"
+    tail = '''failed = checks.select { |_name, passed| !passed }.keys
+puts JSON.generate({ checks: checks, failed: failed, sidekiqProbeState: sidekiq_probe_state })
+exit(RESTORED_CHECK_EXIT_CODES.fetch(failed.first)) if failed.any?
+'''
+    if source.count(checks_start) != 1 or source.count(checks_end) != 1:
+        fail("Restored-backup fixed-check boundary differs.")
+    checks_block = source[
+        source.index(checks_start) + len(checks_start) : source.index(checks_end)
+    ]
+    observed_check_names = tuple(
+        re.findall(r"(?m)^  ([a-z][a-z0-9_]*):", checks_block)
+    )
+    if (
+        source.count(mapping) != 1
+        or source.count(tail) != 1
+        or observed_check_names != expected_check_names
+        or 'raise "Mochirii restored-backup verification failed"' in source
+        or len({status for _name, status, _category in RESTORED_CHECK_EXIT_CODES}) != len(RESTORED_CHECK_EXIT_CODES)
+        or any(status in {0, 1, 124, 137, 143} for _name, status, _category in RESTORED_CHECK_EXIT_CODES)
+    ):
+        fail("Restored-backup fixed-check exit mapping differs.")
 
 
 def validate_narrative_avatar_contract(template: str, configure: str, verifier: str) -> None:
@@ -1157,6 +1200,17 @@ def validate_disposable_restore_command_diagnostics(source: str) -> None:
     helper = step[
         step.index(helper_start) : step.index(helper_end) + len("          }\n")
     ]
+    category_helper = '''          restore_failure_category() {
+            case "$1" in
+''' + "".join(
+        f"              {status}) printf '%s\\n' '{category}' ;;\n"
+        for _name, status, category in RESTORED_CHECK_EXIT_CODES
+    ) + '''              *) return 1 ;;
+            esac
+          }
+'''
+    if step.count(category_helper) != 1:
+        fail("Disposable restore fixed-check category mapping differs.")
     expected_markers = (
         "discourse-disable-restore-on-exit",
         "prepare-backup-marker",
@@ -1181,10 +1235,16 @@ def validate_disposable_restore_command_diagnostics(source: str) -> None:
     suppressed_command = '''timeout "${outer_seconds}" sudo docker exec -e MOCHIRII_OPERATION_TOKEN="${operation_token}" app \\
               timeout --signal=TERM --kill-after=15s "${inner_seconds}" "$@" \\
               >/dev/null 2>&1 &'''
+    restore_failure_output = '''if [[ ${marker} =~ ^verify-restored-backup-(initial|after-restart|after-rebuild)$ ]] &&
+                category="$(restore_failure_category "${status}")"; then
+                printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s:%s\\n' "${marker}" "${category}" >&2
+              else
+                printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\\n' "${marker}" >&2
+              fi'''
     categorical_outputs = (
         "printf 'DISPOSABLE_FIXTURE_COMMAND_CONTAINMENT_FAILED:%s\\n' \"${marker}\" >&2",
         "printf 'DISPOSABLE_FIXTURE_COMMAND_TIMEOUT:%s\\n' \"${marker}\" >&2",
-        "printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\\n' \"${marker}\" >&2",
+        restore_failure_output,
         "printf 'DISPOSABLE_FIXTURE_COMMAND_PASSED:%s\\n' \"${marker}\"",
     )
     required = (marker_guard, suppressed_command, *categorical_outputs)
@@ -1193,7 +1253,10 @@ def validate_disposable_restore_command_diagnostics(source: str) -> None:
     order = [helper.index(value) for value in required]
     if order != sorted(order):
         fail("Disposable restore categorical diagnostics execute out of order.")
-    if re.search(r"(?m)^\s*(?:cat|head|tail|tee)\b", helper):
+    if (
+        re.search(r"(?m)^\s*(?:cat|head|tail|tee)\b", helper)
+        or re.search(r"printf[^\n]*\$\{status\}", helper)
+    ):
         fail("Disposable restore helper can publish raw command output.")
 
 
@@ -4934,6 +4997,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     backup_marker = read("scripts/prepare-backup-marker.rb")
     restored_verifier = read("scripts/verify-restored-backup.rb")
     validate_restored_mail_suppression_contract(restored_verifier)
+    validate_restored_failure_exit_contract(restored_verifier)
     require_text(
         backup_marker,
         [

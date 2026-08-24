@@ -6931,6 +6931,7 @@ return -1""",
 def test_restored_mail_suppression_contract() -> None:
     restored = (ROOT / "scripts/verify-restored-backup.rb").read_text(encoding="utf-8")
     VALIDATOR.validate_restored_mail_suppression_contract(restored)
+    VALIDATOR.validate_restored_failure_exit_contract(restored)
     hostiles = (
         restored.replace(
             'runtime_mail_suppression = ENV.fetch("DISCOURSE_DISABLE_EMAILS")',
@@ -6963,6 +6964,43 @@ def test_restored_mail_suppression_contract() -> None:
         except RuntimeError:
             continue
         raise RuntimeError("Restored-backup verifier accepted unsafe or unbound mail suppression.")
+
+    exit_hostiles = (
+        restored.replace("  recovery_marker: 65,", "  recovery_marker: 64,", 1),
+        restored.replace("  recovery_marker: 65,", "  recovery_marker_changed: 65,", 1),
+        restored.replace(
+            '  database: ActiveRecord::Base.connection.select_value("SELECT 1").to_i == 1,',
+            '  database_changed: ActiveRecord::Base.connection.select_value("SELECT 1").to_i == 1,',
+            1,
+        ),
+        restored.replace("checks = {\n", "checks = {\n  unmapped_check: false,\n", 1),
+        restored.replace(
+            '  database: ActiveRecord::Base.connection.select_value("SELECT 1").to_i == 1,\n'
+            '  redis: Discourse.redis.ping == "PONG",',
+            '  redis: Discourse.redis.ping == "PONG",\n'
+            '  database: ActiveRecord::Base.connection.select_value("SELECT 1").to_i == 1,',
+            1,
+        ),
+        restored.replace(
+            "RESTORED_CHECK_EXIT_CODES.fetch(failed.first)",
+            "RESTORED_CHECK_EXIT_CODES[failed.first]",
+            1,
+        ),
+        restored.replace("failed.first", "failed.last", 1),
+        restored.replace(
+            "exit(RESTORED_CHECK_EXIT_CODES.fetch(failed.first)) if failed.any?",
+            "exit(1) if failed.any?",
+            1,
+        ),
+    )
+    for hostile in exit_hostiles:
+        if hostile == restored:
+            raise RuntimeError("Restored fixed-exit hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_restored_failure_exit_contract(hostile)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Restored-backup verifier accepted a forged or ambiguous failure exit.")
 
     validation = (ROOT / "docs/operations/VALIDATION.md").read_text(encoding="utf-8")
     for required in (
@@ -8538,12 +8576,29 @@ def test_disposable_restore_command_diagnostics() -> None:
     marker_guard = "[[ ${marker} =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1"
     failure_output = "printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\\n' \"${marker}\" >&2"
     suppressed_output = "              >/dev/null 2>&1 &"
+    fixed_category_output = (
+        "printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s:%s\\n' "
+        '"${marker}" "${category}" >&2'
+    )
     hostile_workflows = (
         workflow.replace(marker_guard, "[[ ${marker} != *$'\\n'* ]] || return 1", 1),
         workflow.replace(failure_output, "", 1),
         workflow.replace(suppressed_output, "              2>&1 | tee /tmp/disposable-command.log &", 1),
         workflow.replace("'discourse-backup'", "'discourse backup'", 1),
         workflow.replace("'verify-restored-backup-after-rebuild'", "'verify-restored-backup-after-restart'", 1),
+        workflow.replace(
+            "              64) printf '%s\\n' 'repository-revision' ;;",
+            "              64) printf '%s\\n' 'redis' ;;",
+            1,
+        ),
+        workflow.replace("              *) return 1 ;;", "              *) printf '%s\\n' 'unknown' ;;", 1),
+        workflow.replace(
+            "^verify-restored-backup-(initial|after-restart|after-rebuild)$",
+            "^verify-restored-backup-.*$",
+            1,
+        ),
+        workflow.replace(fixed_category_output, failure_output, 1),
+        workflow.replace('"${marker}" "${category}" >&2', '"${marker}" "${status}" >&2', 1),
     )
     for hostile_workflow in hostile_workflows:
         if hostile_workflow == workflow:
