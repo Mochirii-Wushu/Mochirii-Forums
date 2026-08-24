@@ -6257,6 +6257,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         [
             'canonical_repository="https://github.com/Mochirii-Wushu/Mochirii-Forums.git"',
             'fetch --no-tags --depth=1 --refmap= origin refs/heads/main',
+            'tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}"',
             'Host-control upgrade requires the application to be proved stopped.',
             'assert-held --locks primary,media',
             'run --locks primary,media',

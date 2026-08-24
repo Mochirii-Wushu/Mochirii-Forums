@@ -8832,6 +8832,7 @@ def test_host_control_predecessor_archive_binding() -> None:
             'module.inspect_archive(sealed_archive, commit)',
             'module.extract_exact(sealed_archive, identity, source_root)',
             'module.source_identity(source_root)',
+            'tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}"',
             'bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${candidate}" verify',
             '[[ ${previous_evidence_sha} == "${previous_sha}" ]]',
             'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
@@ -8901,6 +8902,11 @@ def test_host_control_predecessor_archive_binding() -> None:
         upgrade.replace(
             'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
             'json.loads(raw_pointer.decode("utf-8"))',
+            1,
+        ),
+        upgrade.replace(
+            'tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}"',
+            'tar -xf "${archive}" -C "${candidate}"',
             1,
         ),
     )

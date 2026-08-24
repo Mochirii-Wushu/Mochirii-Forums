@@ -1031,7 +1031,7 @@ trusted_commit="$(git "${trusted_git_options[@]}" -C "${bare}" rev-parse --verif
 trusted_tree="$(git "${trusted_git_options[@]}" -C "${bare}" rev-parse --verify "${trusted_commit}^{tree}")" || fail "Canonical host-control main tree did not resolve."
 [[ ${trusted_tree} =~ ^[0-9a-f]{40}$ ]] || fail "Canonical host-control main tree is malformed."
 git "${trusted_git_options[@]}" -c tar.umask=0002 -C "${bare}" archive --format=tar --output="${archive}" "${trusted_commit}" >/dev/null 2>&1 || fail "Canonical host-control archive construction failed."
-tar -xf "${archive}" -C "${candidate}" || fail "Canonical host-control archive extraction failed."
+tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}" || fail "Canonical host-control archive extraction failed."
 bounded 300s python3 -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}" >/dev/null 2>&1 || fail "Canonical host-control repository validation failed."
 mapfile -t records < <(manifest_records "${candidate}") || fail "Canonical host-control manifest validation failed."
 [[ ${#records[@]} -ge 20 ]] || fail "Canonical host-control target inventory is incomplete."
