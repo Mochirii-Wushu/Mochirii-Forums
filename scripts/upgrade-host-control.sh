@@ -453,7 +453,7 @@ if document.get("releaseArchiveFile") != str(archive):
 
 helper_path = candidate_source / "scripts/historical-release-disaster-recovery.py"
 exact_directory(candidate_source, 0o700, "Candidate source root")
-exact_regular(helper_path, 0o644, 2 * 1024 * 1024, "Candidate archive authority")
+exact_regular(helper_path, 0o600, 2 * 1024 * 1024, "Candidate archive authority")
 spec = importlib.util.spec_from_file_location("mochirii_host_control_archive", helper_path)
 if spec is None or spec.loader is None:
     reject("Candidate archive authority could not be loaded")
@@ -909,9 +909,14 @@ reconcile_pending() {
   local commit="${state[0]}" transaction="${state[2]}" certificate="${state[3]}" timer_enabled="${state[4]}" timer_active="${state[5]}" previous_sha="${state[6]}" ssh_predecessor="${state[7]}"
   [[ ${commit} == "${requested_commit}" ]] || fail "Pending host-control upgrade belongs to another exact canonical commit."
   local candidate="${transaction}/source"
-  readarray -t predecessor_state < <(
+  local predecessor_output=""
+  if ! predecessor_output="$(
     bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${candidate}" verify 2>/dev/null
-  ) || fail "Pending host-control predecessor source is invalid."
+  )"; then
+    fail "Pending host-control predecessor source is invalid."
+  fi
+  (( ${#predecessor_output} <= 4096 )) || fail "Pending host-control predecessor output exceeds its boundary."
+  readarray -t predecessor_state <<<"${predecessor_output}"
   [[ ${#predecessor_state[@]} -eq 3 ]] || fail "Pending host-control predecessor state is malformed."
   local previous_commit="${predecessor_state[0]}" previous_evidence_sha="${predecessor_state[1]}" previous_source="${predecessor_state[2]}"
   [[ ${previous_evidence_sha} == "${previous_sha}" ]] || fail "Pending host-control predecessor evidence differs."
@@ -1035,9 +1040,14 @@ tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}" || 
 bounded 300s python3 -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}" >/dev/null 2>&1 || fail "Canonical host-control repository validation failed."
 mapfile -t records < <(manifest_records "${candidate}") || fail "Canonical host-control manifest validation failed."
 [[ ${#records[@]} -ge 20 ]] || fail "Canonical host-control target inventory is incomplete."
-readarray -t previous_state < <(
+previous_state_output=""
+if ! previous_state_output="$(
   bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare 2>/dev/null
-) || fail "Current trusted host-control predecessor archive could not be reconstructed."
+)"; then
+  fail "Current trusted host-control predecessor archive could not be reconstructed."
+fi
+(( ${#previous_state_output} <= 4096 )) || fail "Current host-control predecessor output exceeds its boundary."
+readarray -t previous_state <<<"${previous_state_output}"
 [[ ${#previous_state[@]} -eq 3 ]] || fail "Current host-control predecessor state is malformed."
 previous_commit="${previous_state[0]}"
 previous_evidence_sha="${previous_state[1]}"

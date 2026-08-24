@@ -6292,13 +6292,17 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'bind_previous_source() {',
             'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
             'document.get("releaseArchiveFile") != str(archive)',
-            'exact_regular(helper_path, 0o644, 2 * 1024 * 1024, "Candidate archive authority")',
+            'exact_regular(helper_path, 0o600, 2 * 1024 * 1024, "Candidate archive authority")',
             'module.inspect_archive(sealed_archive, commit)',
             'module.extract_exact(sealed_archive, identity, source_root)',
             'module.source_identity(source_root)',
             'bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${candidate}" verify',
+            'if ! predecessor_output="$(',
+            'readarray -t predecessor_state <<<"${predecessor_output}"',
             '[[ ${previous_evidence_sha} == "${previous_sha}" ]]',
             'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
+            'if ! previous_state_output="$(',
+            'readarray -t previous_state <<<"${previous_state_output}"',
             'previous_source="${transaction}/previous-source/${previous_commit}"',
             '${SUDO_USER:-} == mochirii-forums-operator',
         ],
@@ -6366,6 +6370,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         fail("Host-control upgrade assumes an application release exists for its predecessor.")
     if control_upgrade.count("metadata.st_nlink != 1") != 2:
         fail("Host-control predecessor archive or extracted-source link guard differs.")
+    if re.search(r"readarray -t (?:predecessor_state|previous_state) < <\(\s*bind_previous_source", control_upgrade):
+        fail("Host-control predecessor binding status is hidden by process substitution.")
     rollback_verifier_start = control_upgrade.index("verify_previous_host_controls() {")
     rollback_verifier_end = control_upgrade.index("\n}\n", rollback_verifier_start)
     rollback_verifier = control_upgrade[rollback_verifier_start:rollback_verifier_end]
