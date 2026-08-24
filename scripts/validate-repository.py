@@ -6287,6 +6287,18 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction',
             'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-socket-activation-recovery',
             'bash "${candidate}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --socket-activation-recovery',
+            'readonly host_control_releases_root="/opt/mochirii/forums/host-control-releases"',
+            'bind_previous_source() {',
+            'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
+            'document.get("releaseArchiveFile") != str(archive)',
+            'exact_regular(helper_path, 0o644, 2 * 1024 * 1024, "Candidate archive authority")',
+            'module.inspect_archive(sealed_archive, commit)',
+            'module.extract_exact(sealed_archive, identity, source_root)',
+            'module.source_identity(source_root)',
+            'bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${candidate}" verify',
+            '[[ ${previous_evidence_sha} == "${previous_sha}" ]]',
+            'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
+            'previous_source="${transaction}/previous-source/${previous_commit}"',
             '${SUDO_USER:-} == mochirii-forums-operator',
         ],
         "transactional host-control upgrade",
@@ -6294,12 +6306,23 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     candidate_validation = control_upgrade.index(
         'bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'
     )
+    predecessor_binding = control_upgrade.index(
+        'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
+        candidate_validation,
+    )
     predecessor_gate = control_upgrade.index(
-        'ssh_predecessor="$(ssh_activation_predecessor)"', candidate_validation
+        'ssh_predecessor="$(ssh_activation_predecessor)"', predecessor_binding
     )
     recovery_gate = control_upgrade.index('--socket-activation-recovery', predecessor_gate)
+    retained_archives = control_upgrade.index(
+        'retain_disaster_recovery_sources "${archive}"', recovery_gate
+    )
+    transaction_move = control_upgrade.index('mv -- "${staging}" "${transaction}"', retained_archives)
+    moved_predecessor = control_upgrade.index(
+        'previous_source="${transaction}/previous-source/${previous_commit}"', transaction_move
+    )
     journal_position = control_upgrade.index(
-        'os.link(candidate, journal_path, follow_symlinks=False)', recovery_gate
+        'os.link(candidate, journal_path, follow_symlinks=False)', moved_predecessor
     )
     first_publication = control_upgrade.index(
         'atomic_install "${candidate}/${relative}"', journal_position
@@ -6316,8 +6339,12 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     )
     if not (
         candidate_validation
+        < predecessor_binding
         < predecessor_gate
         < recovery_gate
+        < retained_archives
+        < transaction_move
+        < moved_predecessor
         < journal_position
         < first_publication
         < activation_commit
@@ -6325,6 +6352,19 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         < terminal_verification
     ):
         fail("SSH service activation can bypass validation, journaling, publication, readback, or terminal verification.")
+    reconcile_start = control_upgrade.index("reconcile_pending() {")
+    recovery_predecessor_binding = control_upgrade.index(
+        'bind_previous_source "${transaction}/backup/current-host-control.json"', reconcile_start
+    )
+    recovery_target_classification = control_upgrade.index(
+        "if targets_are_new; then", recovery_predecessor_binding
+    )
+    if not reconcile_start < recovery_predecessor_binding < recovery_target_classification:
+        fail("Interrupted host-control recovery trusts installed targets before predecessor reconstruction.")
+    if '/opt/mochirii/forums/releases/${previous_commit}' in control_upgrade:
+        fail("Host-control upgrade assumes an application release exists for its predecessor.")
+    if control_upgrade.count("metadata.st_nlink != 1") != 2:
+        fail("Host-control predecessor archive or extracted-source link guard differs.")
     rollback_verifier_start = control_upgrade.index("verify_previous_host_controls() {")
     rollback_verifier_end = control_upgrade.index("\n}\n", rollback_verifier_start)
     rollback_verifier = control_upgrade[rollback_verifier_start:rollback_verifier_end]

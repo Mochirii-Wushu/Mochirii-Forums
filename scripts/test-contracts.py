@@ -8816,6 +8816,311 @@ def test_host_security_control_plane_contract() -> None:
         raise RuntimeError("Authentication finalizer state-root traversal and sensitive-directory modes conflict.")
 
 
+def test_host_control_predecessor_archive_binding() -> None:
+    upgrade = (ROOT / "scripts/upgrade-host-control.sh").read_text(encoding="utf-8")
+
+    def assert_contract(source: str) -> None:
+        required = (
+            'readonly host_control_releases_root="/opt/mochirii/forums/host-control-releases"',
+            "bind_previous_source() {",
+            "PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN",
+            '"releaseArchiveFile", "releaseArchiveSha256", "releaseArchiveBytes"',
+            'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
+            'document.get("releaseArchiveFile") != str(archive)',
+            'exact_regular(helper_path, 0o644, 2 * 1024 * 1024, "Candidate archive authority")',
+            'metadata.st_nlink != 1',
+            'module.inspect_archive(sealed_archive, commit)',
+            'module.extract_exact(sealed_archive, identity, source_root)',
+            'module.source_identity(source_root)',
+            'bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${candidate}" verify',
+            '[[ ${previous_evidence_sha} == "${previous_sha}" ]]',
+            'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
+            'previous_source="${transaction}/previous-source/${previous_commit}"',
+        )
+        if any(value not in source for value in required):
+            raise RuntimeError("Host-control predecessor archive binding is incomplete.")
+        if source.count("metadata.st_nlink != 1") != 2:
+            raise RuntimeError("Host-control predecessor link-count coverage differs.")
+        if '/opt/mochirii/forums/releases/${previous_commit}' in source:
+            raise RuntimeError("Host-control upgrade still assumes an application release for its predecessor.")
+        candidate_validation = source.index(
+            'bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'
+        )
+        predecessor_prepare = source.index(
+            'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
+            candidate_validation,
+        )
+        predecessor_gate = source.index(
+            'ssh_predecessor="$(ssh_activation_predecessor)"', predecessor_prepare
+        )
+        retained_archives = source.index(
+            'retain_disaster_recovery_sources "${archive}"', predecessor_gate
+        )
+        transaction_move = source.index('mv -- "${staging}" "${transaction}"', retained_archives)
+        moved_source = source.index(
+            'previous_source="${transaction}/previous-source/${previous_commit}"', transaction_move
+        )
+        journal = source.index('os.link(candidate, journal_path, follow_symlinks=False)', moved_source)
+        first_publication = source.index('atomic_install "${candidate}/${relative}"', journal)
+        if not (
+            candidate_validation
+            < predecessor_prepare
+            < predecessor_gate
+            < retained_archives
+            < transaction_move
+            < moved_source
+            < journal
+            < first_publication
+        ):
+            raise RuntimeError("Host-control predecessor reconstruction ordering differs.")
+        reconcile = source.index("reconcile_pending() {")
+        predecessor_verify = source.index(
+            'bind_previous_source "${transaction}/backup/current-host-control.json"', reconcile
+        )
+        target_classification = source.index("if targets_are_new; then", predecessor_verify)
+        if not reconcile < predecessor_verify < target_classification:
+            raise RuntimeError("Interrupted host-control recovery trusts targets before predecessor binding.")
+
+    assert_contract(upgrade)
+    mutations = (
+        upgrade.replace("module.inspect_archive(sealed_archive, commit)", "module.inspect_archive(sealed_archive)", 1),
+        upgrade.replace("module.extract_exact(sealed_archive, identity, source_root)", "pass", 1),
+        upgrade.replace("module.source_identity(source_root)", "(tree, content_manifest)", 1),
+        upgrade.replace('metadata.st_nlink != 1', 'False', 1),
+        upgrade.replace('document.get("releaseArchiveFile") != str(archive)', 'False', 1),
+        upgrade.replace(
+            'bind_previous_source "${transaction}/backup/current-host-control.json"',
+            'bind_previous_source "${control_pointer}"',
+            1,
+        ),
+        upgrade.replace(
+            'previous_source="${transaction}/previous-source/${previous_commit}"',
+            'previous_source="${staging}/previous-source/${previous_commit}"',
+            1,
+        ),
+        upgrade.replace(
+            'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
+            'json.loads(raw_pointer.decode("utf-8"))',
+            1,
+        ),
+    )
+    for mutant in mutations:
+        try:
+            assert_contract(mutant)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Host-control predecessor archive mutation escaped the contract test.")
+
+    bounded_block = upgrade.split("# PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN", 1)[1].split(
+        "# PREDECESSOR_ARCHIVE_BINDING_PYTHON_END", 1
+    )[0]
+    python_body = bounded_block.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    ast.parse(python_body, filename="upgrade-host-control predecessor archive binding")
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-control-predecessor-") as directory:
+        fixture = Path(directory)
+        source_repository = fixture / "source-repository"
+        source_repository.mkdir()
+        required_files = {
+            "AGENTS.md": "fixture authority\n",
+            "config/app.yml.example": "templates: []\n",
+            "docs/operations/RECOVERY.md": "# Recovery\n",
+            "scripts/render-app-config.py": "#!/usr/bin/env python3\n",
+            "scripts/validate-repository.py": "#!/usr/bin/env python3\n",
+        }
+        for relative, payload in required_files.items():
+            target = source_repository / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(payload, encoding="utf-8", newline="\n")
+            target.chmod(0o755 if relative.endswith(".py") else 0o644)
+        environment = {
+            **os.environ,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_AUTHOR_NAME": "Mochirii Fixture",
+            "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+            "GIT_COMMITTER_NAME": "Mochirii Fixture",
+            "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+        }
+        subprocess.run(["git", "init", "--quiet", str(source_repository)], check=True, env=environment)
+        subprocess.run(["git", "-C", str(source_repository), "add", "."], check=True, env=environment)
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", "-C", str(source_repository), "commit", "--quiet", "-m", "fixture"],
+            check=True,
+            env=environment,
+        )
+        commit = subprocess.run(
+            ["git", "-C", str(source_repository), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        ).stdout.strip()
+
+        archive_root = fixture / "host-control-releases"
+        archive_root.mkdir(mode=0o755)
+        commit_archive_root = archive_root / commit
+        commit_archive_root.mkdir(mode=0o700)
+        archive = commit_archive_root / "mochirii-release.tar"
+        subprocess.run(
+            ["git", "-c", "tar.umask=0002", "-C", str(source_repository), "archive", "--format=tar", f"--output={archive}", commit],
+            check=True,
+            env=environment,
+        )
+        archive.chmod(0o600)
+        helper = ROOT / "scripts/historical-release-disaster-recovery.py"
+        inspection = subprocess.run(
+            [sys.executable, "-B", str(helper), "inspect", "--archive", str(archive), "--expected-commit", commit],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        identity = json.loads(inspection.stdout)
+
+        state_root = fixture / "state"
+        state_root.mkdir(mode=0o755)
+        upgrades_root = state_root / "control-upgrades"
+        upgrades_root.mkdir(mode=0o700)
+        pointer_document = {
+            "schemaVersion": 1,
+            "phase": "hardened",
+            "repositoryCommit": commit,
+            "repositoryTree": identity["repositoryTree"],
+            "manifestSha256": "1" * 64,
+            "targetSetSha256": "2" * 64,
+            "controlEvidenceFile": "/var/lib/mochirii/forums/evidence/fixture.json",
+            "controlEvidenceSha256": "3" * 64,
+            "releaseArchiveFile": str(archive),
+            "releaseArchiveSha256": identity["releaseArchiveSha256"],
+            "releaseArchiveBytes": identity["releaseArchiveBytes"],
+            "releaseArchiveContentManifestSha256": identity["releaseArchiveContentManifestSha256"],
+            "deploymentSourceRevision": "4" * 40,
+            "deploymentSourceTree": "5" * 40,
+            "deploymentSourceArchiveFile": "/opt/mochirii/forums/deployment-source/fixture.tar",
+            "deploymentSourceArchiveSha256": "6" * 64,
+            "deploymentSourceArchiveBytes": 1,
+            "deploymentSourceContentManifestSha256": "7" * 64,
+        }
+        pointer = state_root / "current-host-control.json"
+        pointer.write_text(
+            json.dumps(pointer_document, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        pointer.chmod(0o600)
+        expected_uid = os.getuid() if hasattr(os, "getuid") else 0
+        expected_gid = os.getgid() if hasattr(os, "getgid") else 0
+
+        def make_candidate(work_root: Path) -> Path:
+            candidate = work_root / "source"
+            scripts = candidate / "scripts"
+            scripts.mkdir(parents=True)
+            candidate.chmod(0o700)
+            scripts.chmod(0o755)
+            shutil.copyfile(helper, scripts / helper.name)
+            (scripts / helper.name).chmod(0o644)
+            return candidate
+
+        def run_binding(
+            pointer_path: Path, work_root: Path, candidate: Path, action: str
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    "-",
+                    str(pointer_path),
+                    str(work_root),
+                    str(candidate),
+                    action,
+                    str(state_root),
+                    str(upgrades_root),
+                    str(archive_root),
+                    str(expected_uid),
+                    str(expected_gid),
+                ],
+                input=python_body,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+
+        staging = state_root / f".control-upgrade-staging-{'8' * 40}.ABCDEFGH"
+        staging.mkdir(mode=0o700)
+        candidate = make_candidate(staging)
+        prepared = run_binding(pointer, staging, candidate, "prepare")
+        if prepared.returncode != 0 or prepared.stderr:
+            raise RuntimeError("Valid sealed predecessor archive could not be prepared.")
+        prepared_rows = prepared.stdout.splitlines()
+        if prepared_rows[:2] != [commit, "3" * 64] or Path(prepared_rows[2]) != staging / "previous-source" / commit:
+            raise RuntimeError("Prepared predecessor archive output differs.")
+
+        transaction = upgrades_root / f"{'8' * 40}-{'9' * 64}"
+        os.replace(staging, transaction)
+        candidate = transaction / "source"
+        backup = transaction / "backup"
+        backup.mkdir(mode=0o700)
+        backup_pointer = backup / "current-host-control.json"
+        shutil.copyfile(pointer, backup_pointer)
+        backup_pointer.chmod(0o600)
+        verified = run_binding(backup_pointer, transaction, candidate, "verify")
+        if verified.returncode != 0 or verified.stderr:
+            raise RuntimeError("Moved predecessor transaction could not be verified.")
+        if Path(verified.stdout.splitlines()[2]) != transaction / "previous-source" / commit:
+            raise RuntimeError("Moved predecessor source did not remain transaction-contained.")
+
+        retained_archive_bytes = archive.read_bytes()
+        archive.unlink()
+        if run_binding(backup_pointer, transaction, candidate, "verify").returncode != 0:
+            raise RuntimeError("Transaction recovery still depends on the external predecessor archive.")
+        archive.write_bytes(retained_archive_bytes)
+        archive.chmod(0o600)
+
+        sealed_archive = transaction / "previous-release.tar"
+        sealed_archive.write_bytes(sealed_archive.read_bytes() + b"x")
+        if run_binding(backup_pointer, transaction, candidate, "verify").returncode == 0:
+            raise RuntimeError("Changed sealed predecessor archive passed recovery verification.")
+        shutil.copyfile(archive, sealed_archive)
+        sealed_archive.chmod(0o600)
+        extracted_file = transaction / "previous-source" / commit / "AGENTS.md"
+        extracted_file.write_text("changed\n", encoding="utf-8", newline="\n")
+        if run_binding(backup_pointer, transaction, candidate, "verify").returncode == 0:
+            raise RuntimeError("Changed predecessor source passed recovery verification.")
+
+        hostile_staging = state_root / f".control-upgrade-staging-{'a' * 40}.IJKLMNOP"
+        hostile_staging.mkdir(mode=0o700)
+        hostile_candidate = make_candidate(hostile_staging)
+        original_pointer = pointer.read_text(encoding="utf-8")
+        duplicate_pointer = original_pointer.replace(
+            '"phase":"hardened"', '"phase":"hardened","phase":"hardened"', 1
+        )
+        pointer.write_text(duplicate_pointer, encoding="utf-8", newline="\n")
+        pointer.chmod(0o600)
+        if run_binding(pointer, hostile_staging, hostile_candidate, "prepare").returncode == 0:
+            raise RuntimeError("Duplicate-key predecessor pointer passed archive binding.")
+        pointer.write_text(original_pointer, encoding="utf-8", newline="\n")
+        pointer.chmod(0o600)
+        archive_hardlink = fixture / "archive-hardlink.tar"
+        os.link(archive, archive_hardlink)
+        try:
+            if run_binding(pointer, hostile_staging, hostile_candidate, "prepare").returncode == 0:
+                raise RuntimeError("Multiply linked predecessor archive passed binding.")
+        finally:
+            archive_hardlink.unlink()
+        hostile_document = dict(pointer_document)
+        hostile_document["releaseArchiveFile"] = str(fixture / "outside.tar")
+        pointer.write_text(
+            json.dumps(hostile_document, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        pointer.chmod(0o600)
+        if run_binding(pointer, hostile_staging, hostile_candidate, "prepare").returncode == 0:
+            raise RuntimeError("Off-boundary predecessor archive path passed binding.")
+
+
 def test_runtime_rails_execution_contract() -> None:
     expected_wrappers = {
         ".github/workflows/disposable-bootstrap.yml": 14,
@@ -9075,6 +9380,7 @@ def main() -> int:
     test_historical_disaster_recovery_entrypoint_contract()
     test_host_operation_lock_contract()
     test_host_security_control_plane_contract()
+    test_host_control_predecessor_archive_binding()
     test_runtime_rails_execution_contract()
     test_disposable_restore_command_diagnostics()
     test_disposable_nginx_fixture_final_command_contract()

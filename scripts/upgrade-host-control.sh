@@ -11,6 +11,7 @@ readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
 readonly pending_journal="${state_root}/control-upgrade.pending.json"
 readonly control_pointer="${state_root}/current-host-control.json"
+readonly host_control_releases_root="/opt/mochirii/forums/host-control-releases"
 readonly ssh_generator_parent="/etc/systemd/system-generators"
 readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"
 active_transaction=""
@@ -240,6 +241,383 @@ PY
   retain_exact_file "${repository_archive}" "/opt/mochirii/forums/host-control-releases/${commit}/mochirii-release.tar" || { rm -f -- "${deployment_archive}"; return 1; }
   retain_exact_file "${deployment_archive}" "/opt/mochirii/forums/deployment-source/${deployment_source_commit}.tar" || { rm -f -- "${deployment_archive}"; return 1; }
   rm -f -- "${deployment_archive}"
+}
+
+bind_previous_source() {
+  local pointer="$1" work_root="$2" candidate_source="$3" action="$4"
+  # PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN
+  bounded 120s python3 -B - \
+    "${pointer}" "${work_root}" "${candidate_source}" "${action}" \
+    "${state_root}" "${upgrades_root}" "${host_control_releases_root}" 0 0 <<'PY'
+import hashlib
+import importlib.util
+import json
+import os
+import pathlib
+import re
+import stat
+import sys
+
+pointer = pathlib.Path(sys.argv[1])
+work_root = pathlib.Path(sys.argv[2])
+candidate_source = pathlib.Path(sys.argv[3])
+action = sys.argv[4]
+state_root = pathlib.Path(sys.argv[5])
+upgrades_root = pathlib.Path(sys.argv[6])
+archive_root = pathlib.Path(sys.argv[7])
+expected_uid = int(sys.argv[8])
+expected_gid = int(sys.argv[9])
+
+HEX40 = re.compile(r"[0-9a-f]{40}")
+HEX64 = re.compile(r"[0-9a-f]{64}")
+POINTER_KEYS = {
+    "schemaVersion", "phase", "repositoryCommit", "repositoryTree", "manifestSha256",
+    "targetSetSha256", "controlEvidenceFile", "controlEvidenceSha256",
+    "releaseArchiveFile", "releaseArchiveSha256", "releaseArchiveBytes",
+    "releaseArchiveContentManifestSha256", "deploymentSourceRevision", "deploymentSourceTree",
+    "deploymentSourceArchiveFile", "deploymentSourceArchiveSha256", "deploymentSourceArchiveBytes",
+    "deploymentSourceContentManifestSha256",
+}
+
+
+def reject(message: str) -> None:
+    raise SystemExit(message)
+
+
+def exact_regular(path: pathlib.Path, mode: int, maximum: int, label: str) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        reject(f"{label} is absent")
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_size < 1
+        or metadata.st_size > maximum
+        or metadata.st_nlink != 1
+    ):
+        reject(f"{label} is unsafe")
+    if os.name != "nt" and (
+        metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or stat.S_IMODE(metadata.st_mode) != mode
+    ):
+        reject(f"{label} ownership differs")
+    return metadata
+
+
+def exact_directory(path: pathlib.Path, mode: int, label: str) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        reject(f"{label} is absent")
+    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        reject(f"{label} is unsafe")
+    if os.name != "nt" and (
+        metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or stat.S_IMODE(metadata.st_mode) != mode
+    ):
+        reject(f"{label} ownership differs")
+    return metadata
+
+
+def strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            reject("Host-control pointer contains a duplicate key")
+        result[key] = value
+    return result
+
+
+if action not in {"prepare", "verify"}:
+    reject("Predecessor binding action differs")
+if expected_uid < 0 or expected_gid < 0:
+    reject("Predecessor binding ownership tuple differs")
+exact_directory(state_root, 0o755, "Host-control state root")
+exact_directory(upgrades_root, 0o700, "Host-control upgrades root")
+exact_directory(archive_root, 0o755, "Host-control archive root")
+exact_directory(work_root, 0o700, "Host-control work root")
+if action == "prepare":
+    if pointer != state_root / "current-host-control.json":
+        reject("Current host-control pointer path differs")
+    if work_root.parent != state_root or re.fullmatch(
+        r"[.]control-upgrade-staging-[0-9a-f]{40}[.][A-Za-z0-9]{8}", work_root.name
+    ) is None:
+        reject("Host-control preparation root differs")
+else:
+    if work_root.parent != upgrades_root or re.fullmatch(
+        r"[0-9a-f]{40}-[0-9a-f]{64}", work_root.name
+    ) is None:
+        reject("Host-control transaction root differs")
+    if pointer != work_root / "backup/current-host-control.json":
+        reject("Backed-up host-control pointer path differs")
+
+pointer_metadata = exact_regular(pointer, 0o600, 64 * 1024, "Host-control pointer")
+pointer_flags = (
+    os.O_RDONLY
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+    | getattr(os, "O_BINARY", 0)
+)
+pointer_descriptor = os.open(pointer, pointer_flags)
+try:
+    pointer_before = os.fstat(pointer_descriptor)
+    if (
+        pointer_before.st_dev != pointer_metadata.st_dev
+        or pointer_before.st_ino != pointer_metadata.st_ino
+        or pointer_before.st_size != pointer_metadata.st_size
+        or pointer_before.st_mtime_ns != pointer_metadata.st_mtime_ns
+        or not stat.S_ISREG(pointer_before.st_mode)
+        or pointer_before.st_nlink != 1
+        or (os.name != "nt" and (
+            pointer_before.st_uid != expected_uid
+            or pointer_before.st_gid != expected_gid
+            or stat.S_IMODE(pointer_before.st_mode) != 0o600
+        ))
+    ):
+        reject("Host-control pointer changed before read")
+    chunks: list[bytes] = []
+    pointer_bytes = 0
+    while True:
+        chunk = os.read(pointer_descriptor, 16 * 1024)
+        if not chunk:
+            break
+        pointer_bytes += len(chunk)
+        if pointer_bytes > 64 * 1024:
+            reject("Host-control pointer exceeds its byte boundary")
+        chunks.append(chunk)
+    raw_pointer = b"".join(chunks)
+    pointer_after = os.fstat(pointer_descriptor)
+    if (
+        pointer_after.st_dev != pointer_before.st_dev
+        or pointer_after.st_ino != pointer_before.st_ino
+        or pointer_after.st_size != pointer_before.st_size
+        or pointer_after.st_mtime_ns != pointer_before.st_mtime_ns
+        or pointer_after.st_nlink != 1
+        or (os.name != "nt" and (
+            pointer_after.st_uid != expected_uid
+            or pointer_after.st_gid != expected_gid
+            or stat.S_IMODE(pointer_after.st_mode) != 0o600
+        ))
+    ):
+        reject("Host-control pointer changed while read")
+finally:
+    os.close(pointer_descriptor)
+if len(raw_pointer) != pointer_metadata.st_size:
+    reject("Host-control pointer byte count differs")
+pointer_path_after = pointer.lstat()
+if (
+    pointer_path_after.st_dev != pointer_metadata.st_dev
+    or pointer_path_after.st_ino != pointer_metadata.st_ino
+    or pointer_path_after.st_size != pointer_metadata.st_size
+    or pointer_path_after.st_mtime_ns != pointer_metadata.st_mtime_ns
+):
+    reject("Host-control pointer path changed while read")
+try:
+    document = json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)
+except (UnicodeDecodeError, json.JSONDecodeError):
+    reject("Host-control pointer is malformed")
+if not isinstance(document, dict) or set(document) != POINTER_KEYS:
+    reject("Host-control pointer keys differ")
+commit = document.get("repositoryCommit")
+tree = document.get("repositoryTree")
+evidence_sha = document.get("controlEvidenceSha256")
+archive_sha = document.get("releaseArchiveSha256")
+archive_bytes = document.get("releaseArchiveBytes")
+content_manifest = document.get("releaseArchiveContentManifestSha256")
+if (
+    document.get("schemaVersion") != 1
+    or document.get("phase") != "hardened"
+    or not isinstance(commit, str)
+    or HEX40.fullmatch(commit) is None
+    or not isinstance(tree, str)
+    or HEX40.fullmatch(tree) is None
+    or not isinstance(evidence_sha, str)
+    or HEX64.fullmatch(evidence_sha) is None
+    or not isinstance(archive_sha, str)
+    or HEX64.fullmatch(archive_sha) is None
+    or not isinstance(archive_bytes, int)
+    or isinstance(archive_bytes, bool)
+    or not 1 <= archive_bytes <= 64 * 1024 * 1024
+    or not isinstance(content_manifest, str)
+    or HEX64.fullmatch(content_manifest) is None
+):
+    reject("Host-control predecessor identity differs")
+
+commit_archive_root = archive_root / commit
+archive = commit_archive_root / "mochirii-release.tar"
+if document.get("releaseArchiveFile") != str(archive):
+    reject("Host-control predecessor archive path differs")
+
+helper_path = candidate_source / "scripts/historical-release-disaster-recovery.py"
+exact_directory(candidate_source, 0o700, "Candidate source root")
+exact_regular(helper_path, 0o644, 2 * 1024 * 1024, "Candidate archive authority")
+spec = importlib.util.spec_from_file_location("mochirii_host_control_archive", helper_path)
+if spec is None or spec.loader is None:
+    reject("Candidate archive authority could not be loaded")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+sealed_archive = work_root / "previous-release.tar"
+if action == "prepare":
+    if os.name != "nt" and archive_root.resolve(strict=True) != archive_root:
+        reject("Host-control archive root resolves through another path")
+    exact_directory(commit_archive_root, 0o700, "Host-control commit archive root")
+    archive_metadata = exact_regular(archive, 0o600, 64 * 1024 * 1024, "Host-control predecessor archive")
+    if archive_metadata.st_size != archive_bytes:
+        reject("Host-control predecessor archive byte count differs")
+    if sealed_archive.exists() or sealed_archive.is_symlink():
+        reject("Sealed predecessor archive already exists")
+    source_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    source_descriptor = os.open(archive, source_flags)
+    destination_descriptor = -1
+    try:
+        source_before = os.fstat(source_descriptor)
+        if (
+            not stat.S_ISREG(source_before.st_mode)
+            or source_before.st_size != archive_bytes
+            or source_before.st_nlink != 1
+            or (os.name != "nt" and (
+                source_before.st_uid != expected_uid
+                or source_before.st_gid != expected_gid
+                or stat.S_IMODE(source_before.st_mode) != 0o600
+            ))
+        ):
+            reject("Opened predecessor archive identity differs")
+        destination_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0)
+        )
+        destination_descriptor = os.open(sealed_archive, destination_flags, 0o600)
+        copied = 0
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(source_descriptor, 64 * 1024)
+            if not chunk:
+                break
+            copied += len(chunk)
+            if copied > archive_bytes:
+                reject("Predecessor archive grew while copied")
+            digest.update(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(destination_descriptor, view)
+                if written <= 0:
+                    reject("Sealed predecessor archive write failed")
+                view = view[written:]
+        if copied != archive_bytes or digest.hexdigest() != archive_sha:
+            reject("Copied predecessor archive identity differs")
+        source_after = os.fstat(source_descriptor)
+        if (
+            source_after.st_dev != source_before.st_dev
+            or source_after.st_ino != source_before.st_ino
+            or source_after.st_size != source_before.st_size
+            or source_after.st_mtime_ns != source_before.st_mtime_ns
+            or source_after.st_nlink != 1
+            or (os.name != "nt" and (
+                source_after.st_uid != expected_uid
+                or source_after.st_gid != expected_gid
+                or stat.S_IMODE(source_after.st_mode) != 0o600
+            ))
+        ):
+            reject("Predecessor archive changed while copied")
+        destination_metadata = os.fstat(destination_descriptor)
+        if hasattr(os, "fchown") and (
+            destination_metadata.st_uid != expected_uid or destination_metadata.st_gid != expected_gid
+        ):
+            os.fchown(destination_descriptor, expected_uid, expected_gid)
+        os.fsync(destination_descriptor)
+    finally:
+        if destination_descriptor >= 0:
+            os.close(destination_descriptor)
+        os.close(source_descriptor)
+    archive_path_after = archive.lstat()
+    if (
+        archive_path_after.st_dev != archive_metadata.st_dev
+        or archive_path_after.st_ino != archive_metadata.st_ino
+        or archive_path_after.st_size != archive_metadata.st_size
+        or archive_path_after.st_mtime_ns != archive_metadata.st_mtime_ns
+        or archive_path_after.st_nlink != 1
+        or (os.name != "nt" and (
+            archive_path_after.st_uid != expected_uid
+            or archive_path_after.st_gid != expected_gid
+            or stat.S_IMODE(archive_path_after.st_mode) != 0o600
+        ))
+    ):
+        reject("Predecessor archive path changed while copied")
+    if os.name != "nt":
+        descriptor = os.open(work_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+else:
+    exact_regular(sealed_archive, 0o600, 64 * 1024 * 1024, "Sealed predecessor archive")
+
+identity = module.inspect_archive(sealed_archive, commit)
+if (
+    identity.repository_tree != tree
+    or identity.archive_sha256 != archive_sha
+    or identity.archive_bytes != archive_bytes
+    or identity.content_manifest_sha256 != content_manifest
+):
+    reject("Sealed predecessor archive differs from the control pointer")
+
+source_parent = work_root / "previous-source"
+source_root = source_parent / commit
+if action == "prepare":
+    if source_parent.exists() or source_parent.is_symlink():
+        reject("Predecessor source parent already exists")
+    source_parent.mkdir(mode=0o700)
+    source_parent_metadata = source_parent.lstat()
+    if hasattr(os, "chown") and (
+        source_parent_metadata.st_uid != expected_uid or source_parent_metadata.st_gid != expected_gid
+    ):
+        os.chown(source_parent, expected_uid, expected_gid)
+    module.extract_exact(sealed_archive, identity, source_root)
+else:
+    exact_directory(source_parent, 0o700, "Predecessor source parent")
+
+source_tree, source_manifest = module.source_identity(source_root)
+if source_tree != tree or source_manifest != content_manifest:
+    reject("Prepared predecessor source differs from the control pointer")
+expected_files = {entry.path: 0o755 if entry.executable else 0o644 for entry in identity.files}
+observed_files: set[str] = set()
+for path in [source_root, *sorted(source_root.rglob("*"), key=lambda item: item.relative_to(source_root).as_posix())]:
+    metadata = path.lstat()
+    relative = path.relative_to(source_root).as_posix() if path != source_root else ""
+    if os.name != "nt" and (metadata.st_uid != expected_uid or metadata.st_gid != expected_gid):
+        reject("Prepared predecessor source ownership differs")
+    if stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+        if os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o755:
+            reject("Prepared predecessor source directory mode differs")
+        continue
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode) or relative not in expected_files:
+        reject("Prepared predecessor source entry differs")
+    if metadata.st_nlink != 1:
+        reject("Prepared predecessor source file link count differs")
+    if os.name != "nt" and stat.S_IMODE(metadata.st_mode) != expected_files[relative]:
+        reject("Prepared predecessor source file mode differs")
+    observed_files.add(relative)
+if observed_files != set(expected_files):
+    reject("Prepared predecessor source inventory differs")
+
+print(commit)
+print(evidence_sha)
+print(source_root)
+PY
+  # PREDECESSOR_ARCHIVE_BINDING_PYTHON_END
 }
 
 manifest_records() {
@@ -531,11 +909,15 @@ reconcile_pending() {
   local commit="${state[0]}" transaction="${state[2]}" certificate="${state[3]}" timer_enabled="${state[4]}" timer_active="${state[5]}" previous_sha="${state[6]}" ssh_predecessor="${state[7]}"
   [[ ${commit} == "${requested_commit}" ]] || fail "Pending host-control upgrade belongs to another exact canonical commit."
   local candidate="${transaction}/source"
+  readarray -t predecessor_state < <(
+    bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${candidate}" verify 2>/dev/null
+  ) || fail "Pending host-control predecessor source is invalid."
+  [[ ${#predecessor_state[@]} -eq 3 ]] || fail "Pending host-control predecessor state is malformed."
+  local previous_commit="${predecessor_state[0]}" previous_evidence_sha="${predecessor_state[1]}" previous_source="${predecessor_state[2]}"
+  [[ ${previous_evidence_sha} == "${previous_sha}" ]] || fail "Pending host-control predecessor evidence differs."
   if targets_are_new; then
     if ! ensure_ssh_service_activation; then
       rollback_transaction "${transaction}" || fail "OpenSSH activation commit-forward failed and exact rollback is blocked."
-      previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
-      previous_source="/opt/mochirii/forums/releases/${previous_commit}"
       post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "OpenSSH activation rollback service readback failed."
       verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "OpenSSH activation rollback verification failed."
       clear_transaction "${transaction}" || fail "OpenSSH activation rollback journal could not be cleared."
@@ -543,8 +925,6 @@ reconcile_pending() {
     fi
     if ! post_install_readback "${candidate}" "${certificate}" "${timer_enabled}" "${timer_active}"; then
       rollback_transaction "${transaction}" || fail "Host-control commit-forward failed and exact rollback is blocked."
-      previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
-      previous_source="/opt/mochirii/forums/releases/${previous_commit}"
       post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Host-control rollback service readback failed."
       verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Host-control rollback verification failed."
       clear_transaction "${transaction}" || fail "Rolled-back host-control journal could not be cleared."
@@ -553,8 +933,6 @@ reconcile_pending() {
     seal_control_state upgrade "${commit}" "${candidate}" "${previous_sha}" || fail "Host-control commit evidence could not be sealed."
     if ! bash "${candidate}/scripts/verify-host-security.sh" "${commit}" "${candidate}" --upgrade-transaction >/dev/null 2>&1; then
       rollback_transaction "${transaction}" || fail "Committed host controls failed terminal verification and exact rollback is blocked."
-      previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
-      previous_source="/opt/mochirii/forums/releases/${previous_commit}"
       post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Terminal host-control rollback service readback failed."
       verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Terminal host-control rollback verification failed."
       clear_transaction "${transaction}" || fail "Terminally rolled-back host-control journal could not be cleared."
@@ -565,8 +943,6 @@ reconcile_pending() {
     return 0
   fi
   rollback_transaction "${transaction}" || fail "Interrupted host-control upgrade is mixed and exact rollback is blocked."
-  previous_commit="$(python3 -B -c 'import json,sys; print(json.load(open(sys.argv[1]))["repositoryCommit"])' "${control_pointer}")" || fail "Restored host-control pointer is invalid."
-  previous_source="/opt/mochirii/forums/releases/${previous_commit}"
   post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Interrupted host-control rollback service readback failed."
   verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Interrupted host-control rollback failed terminal security verification."
   clear_transaction "${transaction}" || fail "Rolled-back host-control journal could not be cleared."
@@ -625,34 +1001,6 @@ if [[ -e ${pending_journal} || -L ${pending_journal} ]]; then
 fi
 
 [[ -f ${control_pointer} && ! -L ${control_pointer} && "$(stat -c '%U:%G %a' "${control_pointer}")" == "root:root 600" ]] || fail "Current host-control evidence is absent or unsafe."
-readarray -t previous_state < <(python3 -B - "${control_pointer}" <<'PY'
-import json
-import pathlib
-import re
-import sys
-document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-if set(document) != {
-    "schemaVersion", "phase", "repositoryCommit", "repositoryTree", "manifestSha256",
-    "targetSetSha256", "controlEvidenceFile", "controlEvidenceSha256",
-    "releaseArchiveFile", "releaseArchiveSha256", "releaseArchiveBytes",
-    "releaseArchiveContentManifestSha256", "deploymentSourceRevision", "deploymentSourceTree",
-    "deploymentSourceArchiveFile", "deploymentSourceArchiveSha256", "deploymentSourceArchiveBytes",
-    "deploymentSourceContentManifestSha256",
-}:
-    raise SystemExit("control pointer keys differ")
-if document.get("schemaVersion") != 1 or document.get("phase") != "hardened":
-    raise SystemExit("control pointer phase differs")
-if not re.fullmatch(r"[0-9a-f]{40}", str(document.get("repositoryCommit", ""))) or not re.fullmatch(r"[0-9a-f]{64}", str(document.get("controlEvidenceSha256", ""))):
-    raise SystemExit("control pointer identity differs")
-print(document["repositoryCommit"])
-print(document["controlEvidenceSha256"])
-PY
-)
-[[ ${#previous_state[@]} -eq 2 ]] || fail "Current host-control evidence is malformed."
-previous_commit="${previous_state[0]}"
-previous_evidence_sha="${previous_state[1]}"
-previous_source="/opt/mochirii/forums/releases/${previous_commit}"
-[[ -d ${previous_source} && ! -L ${previous_source} ]] || fail "Current trusted host-control source release is absent."
 
 trusted_git_options=(
   -c credential.helper=
@@ -687,7 +1035,13 @@ tar -xf "${archive}" -C "${candidate}" || fail "Canonical host-control archive e
 bounded 300s python3 -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}" >/dev/null 2>&1 || fail "Canonical host-control repository validation failed."
 mapfile -t records < <(manifest_records "${candidate}") || fail "Canonical host-control manifest validation failed."
 [[ ${#records[@]} -ge 20 ]] || fail "Canonical host-control target inventory is incomplete."
-retain_disaster_recovery_sources "${archive}" "${expected_commit}" "${candidate}" "${trusted_tree}" || fail "Exact C1 and official deployment-source recovery archives could not be retained."
+readarray -t previous_state < <(
+  bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare 2>/dev/null
+) || fail "Current trusted host-control predecessor archive could not be reconstructed."
+[[ ${#previous_state[@]} -eq 3 ]] || fail "Current host-control predecessor state is malformed."
+previous_commit="${previous_state[0]}"
+previous_evidence_sha="${previous_state[1]}"
+previous_source="${previous_state[2]}"
 
 for record in "${records[@]}"; do
   IFS=$'\t' read -r group mode relative target digest <<<"${record}"
@@ -732,12 +1086,15 @@ if (( certificate_present == certificate_count )); then
   timer_active=true
 fi
 
+retain_disaster_recovery_sources "${archive}" "${expected_commit}" "${candidate}" "${trusted_tree}" || fail "Exact C1 and official deployment-source recovery archives could not be retained."
+
 manifest_sha="$(sha256sum -- "${candidate}/config/host-control-manifest.v1.json" | awk '{print $1}')"
 transaction="${upgrades_root}/${expected_commit}-${manifest_sha}"
 [[ ! -e ${transaction} && ! -L ${transaction} ]] || fail "A host-control staging directory already exists without a journal."
 mv -- "${staging}" "${transaction}"
 staging=""
 candidate="${transaction}/source"
+previous_source="${transaction}/previous-source/${previous_commit}"
 sync -d "${state_root}" 2>/dev/null || true
 sync -d "${upgrades_root}" 2>/dev/null || true
 install -d -m 0700 -o root -g root "${transaction}/backup"
