@@ -8405,6 +8405,29 @@ def test_runtime_rails_execution_contract() -> None:
         raise RuntimeError("Runtime Rails owner-wrapper hostile mutation was accepted.")
 
 
+def test_disposable_restore_command_diagnostics() -> None:
+    workflow = (ROOT / ".github/workflows/disposable-bootstrap.yml").read_text(encoding="utf-8")
+    VALIDATOR.validate_disposable_restore_command_diagnostics(workflow)
+    marker_guard = "[[ ${marker} =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1"
+    failure_output = "printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\\n' \"${marker}\" >&2"
+    suppressed_output = "              >/dev/null 2>&1 &"
+    hostile_workflows = (
+        workflow.replace(marker_guard, "[[ ${marker} != *$'\\n'* ]] || return 1", 1),
+        workflow.replace(failure_output, "", 1),
+        workflow.replace(suppressed_output, "              2>&1 | tee /tmp/disposable-command.log &", 1),
+        workflow.replace("'discourse-backup'", "'discourse backup'", 1),
+        workflow.replace("'verify-restored-backup-after-rebuild'", "'verify-restored-backup-after-restart'", 1),
+    )
+    for hostile_workflow in hostile_workflows:
+        if hostile_workflow == workflow:
+            raise RuntimeError("Disposable restore diagnostic hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_disposable_restore_command_diagnostics(hostile_workflow)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Disposable restore diagnostic hostile mutation was accepted.")
+
+
 def test_disposable_nginx_fixture_final_command_contract() -> None:
     fixture = (ROOT / "scripts/test-disposable-launcher-guard.py").read_text(encoding="utf-8")
     VALIDATOR.validate_disposable_nginx_fixture_final_command_contract(fixture)
@@ -8489,6 +8512,7 @@ def main() -> int:
     test_host_operation_lock_contract()
     test_host_security_control_plane_contract()
     test_runtime_rails_execution_contract()
+    test_disposable_restore_command_diagnostics()
     test_disposable_nginx_fixture_final_command_contract()
     print("Configuration and theme hostile fixtures passed.")
     return 0

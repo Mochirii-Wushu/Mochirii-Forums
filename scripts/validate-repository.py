@@ -1114,6 +1114,59 @@ def validate_narrative_avatar_workflow(source: str) -> None:
         fail("Disposable preflight step differs from the exact reviewed executable body.")
 
 
+def validate_disposable_restore_command_diagnostics(source: str) -> None:
+    step_start = "      - name: Prove supported backup and destructive disposable restore\n"
+    step_end = "      - name: Remove fixture secret and private logs\n"
+    if source.count(step_start) != 1 or source.count(step_end) != 1:
+        fail("Disposable restore diagnostic step boundary differs.")
+    step = source[source.index(step_start) : source.index(step_end)]
+    helper_start = "          run_fixture_command() {\n"
+    helper_end = "          }\n          restore_enabled=false\n"
+    if step.count(helper_start) != 1 or step.count(helper_end) != 1:
+        fail("Disposable restore diagnostic helper boundary differs.")
+    helper = step[
+        step.index(helper_start) : step.index(helper_end) + len("          }\n")
+    ]
+    expected_markers = (
+        "discourse-disable-restore-on-exit",
+        "prepare-backup-marker",
+        "discourse-backup",
+        "post-backup-recovery-marker",
+        "discourse-enable-restore",
+        "discourse-restore-local",
+        "discourse-disable-restore",
+        "verify-restored-backup-initial",
+        "verify-restored-backup-after-restart",
+        "verify-restored-backup-after-rebuild",
+    )
+    markers = tuple(
+        re.findall(r"(?m)^[ ]{10,14}run_fixture_command [0-9]+ '([^']+)' ", step)
+    )
+    if markers != expected_markers or any(
+        re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", marker) is None
+        for marker in markers
+    ):
+        fail("Disposable restore categorical marker inventory differs.")
+    marker_guard = "[[ ${marker} =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1"
+    suppressed_command = '''timeout "${outer_seconds}" sudo docker exec -e MOCHIRII_OPERATION_TOKEN="${operation_token}" app \\
+              timeout --signal=TERM --kill-after=15s "${inner_seconds}" "$@" \\
+              >/dev/null 2>&1 &'''
+    categorical_outputs = (
+        "printf 'DISPOSABLE_FIXTURE_COMMAND_CONTAINMENT_FAILED:%s\\n' \"${marker}\" >&2",
+        "printf 'DISPOSABLE_FIXTURE_COMMAND_TIMEOUT:%s\\n' \"${marker}\" >&2",
+        "printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\\n' \"${marker}\" >&2",
+        "printf 'DISPOSABLE_FIXTURE_COMMAND_PASSED:%s\\n' \"${marker}\"",
+    )
+    required = (marker_guard, suppressed_command, *categorical_outputs)
+    if any(helper.count(value) != 1 for value in required):
+        fail("Disposable restore categorical diagnostics or raw-output suppression differs.")
+    order = [helper.index(value) for value in required]
+    if order != sorted(order):
+        fail("Disposable restore categorical diagnostics execute out of order.")
+    if re.search(r"(?m)^\s*(?:cat|head|tail|tee)\b", helper):
+        fail("Disposable restore helper can publish raw command output.")
+
+
 def validate_pinned_source_verifier(source: str) -> None:
     required = (
         'verify_email_semantics(core["lib/email.rb"])',
@@ -4225,6 +4278,7 @@ def validate_secrets_and_workflows() -> None:
     disposable = read(".github/workflows/disposable-bootstrap.yml")
     validate_narrative_avatar_workflow(disposable)
     validate_disposable_nginx_response_header_proof(disposable)
+    validate_disposable_restore_command_diagnostics(disposable)
     require_text(
         disposable,
         [

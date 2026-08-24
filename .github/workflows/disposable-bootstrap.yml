@@ -454,7 +454,7 @@ jobs:
             local inner_seconds="$1" marker="$2" status=0 outer_seconds operation_token
             shift 2
             outer_seconds=$((inner_seconds + 30))
-            [[ ${marker} != *$'\n'* ]] || return 1
+            [[ ${marker} =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1
             operation_token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
             [[ ${operation_token} =~ ^[0-9a-f]{32}$ ]] || return 1
             timeout "${outer_seconds}" sudo docker exec -e MOCHIRII_OPERATION_TOKEN="${operation_token}" app \
@@ -465,20 +465,26 @@ jobs:
             active_pid=""
             if ! container_operation_absent "${operation_token}"; then
               stop_fixture_app || printf '%s\n' 'CRITICAL: disposable restore process termination could not be verified.' >&2
+              printf 'DISPOSABLE_FIXTURE_COMMAND_CONTAINMENT_FAILED:%s\n' "${marker}" >&2
               return 1
             fi
             if (( status == 124 || status == 137 || status == 143 )); then
               stop_fixture_app || printf '%s\n' 'CRITICAL: timed-out disposable restore could not prove an application stop.' >&2
+              printf 'DISPOSABLE_FIXTURE_COMMAND_TIMEOUT:%s\n' "${marker}" >&2
               return 1
             fi
-            (( status == 0 ))
+            if (( status != 0 )); then
+              printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\n' "${marker}" >&2
+              return 1
+            fi
+            printf 'DISPOSABLE_FIXTURE_COMMAND_PASSED:%s\n' "${marker}"
           }
           restore_enabled=false
           disable_restore_on_exit() {
             local status=$?
             trap - EXIT
             if [[ ${restore_enabled} == true ]]; then
-              run_fixture_command 300 'discourse disable_restore' discourse disable_restore || stop_fixture_app || true
+              run_fixture_command 300 'discourse-disable-restore-on-exit' discourse disable_restore || stop_fixture_app || true
             fi
             exit "${status}"
           }
@@ -490,31 +496,31 @@ jobs:
             exit 124
           }
           trap handle_fixture_signal HUP INT TERM
-          run_fixture_command 300 'prepare-backup-marker.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"'
-          run_fixture_command 2400 'discourse backup' discourse backup
+          run_fixture_command 300 'prepare-backup-marker' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"'
+          run_fixture_command 2400 'discourse-backup' discourse backup
           mapfile -t backups < <(sudo find /var/discourse/shared/standalone/backups/default -maxdepth 1 -type f -name '*.tar.gz' -printf '%T@ %f\n' | sort -nr)
           [[ ${#backups[@]} -ge 1 ]]
           backup="${backups[0]#* }"
           [[ "$backup" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.tar\.gz$ && "$backup" != *..* ]]
-          run_fixture_command 300 'mochirii-recovery' bash -lc "/usr/local/bin/rails runner 'PluginStore.set(\"mochirii-recovery\", \"repository_commit\", \"post-backup-mutation\")'"
-          run_fixture_command 300 'discourse enable_restore' discourse enable_restore
+          run_fixture_command 300 'post-backup-recovery-marker' bash -lc "/usr/local/bin/rails runner 'PluginStore.set(\"mochirii-recovery\", \"repository_commit\", \"post-backup-mutation\")'"
+          run_fixture_command 300 'discourse-enable-restore' discourse enable_restore
           restore_enabled=true
-          run_fixture_command 5400 'discourse restore --location local' discourse restore --location local "$backup"
-          run_fixture_command 300 'discourse disable_restore' discourse disable_restore
+          run_fixture_command 5400 'discourse-restore-local' discourse restore --location local "$backup"
+          run_fixture_command 300 'discourse-disable-restore' discourse disable_restore
           restore_enabled=false
-          run_fixture_command 900 'verify-restored-backup.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          run_fixture_command 900 'verify-restored-backup-initial' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
           sudo /usr/local/sbin/mochirii-stage4-launcher restart "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
           test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
           test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
           test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
           test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
-          run_fixture_command 900 'verify-restored-backup.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          run_fixture_command 900 'verify-restored-backup-after-restart' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
           sudo /usr/local/sbin/mochirii-stage4-launcher rebuild "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
           test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
           test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
           test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
           test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
-          run_fixture_command 900 'verify-restored-backup.rb' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          run_fixture_command 900 'verify-restored-backup-after-rebuild' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
           sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
           python3 "$GITHUB_WORKSPACE/scripts/verify-public-branding.py" --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
           echo 'Supported disposable backup, restore, restart, and rebuild passed.'
