@@ -261,6 +261,12 @@ same reviewed installer as:
 sudo <exact-reviewed-installer> harden 'HARDEN MOCHIRII FORUMS SSH'
 ```
 
+The operator-only sudoers policy preserves exactly `SSH_CONNECTION` for this
+locked principal because Ubuntu `sudo` otherwise removes that sshd-provided
+session evidence. Do not widen the preserved environment or synthesize the
+value; both initial hardening and later governed control upgrades require the
+real operator SSH context to reach the root-owned verifier.
+
 The `harden` phase refuses a root/bootstrap invocation: it requires
 `SUDO_USER=mochirii-forums-operator` and a live SSH connection, writes a
 root-owned mode `0600` operator proof, disables root/password/keyboard-
