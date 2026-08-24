@@ -332,6 +332,19 @@ with credentials and alternate Git protocols disabled. It validates the
 candidate repository and exact `config/host-control-manifest.v1.json` target
 inventory before any installed byte changes.
 
+The predecessor source is not inferred from the application-release tree. The
+current root-owned control pointer must select the exact retained
+`/opt/mochirii/forums/host-control-releases/<commit>/mochirii-release.tar`
+ordinary file and bind its commit, Git tree, byte count, SHA-256, and expanded
+content-manifest SHA-256. The upgrade reuses the bounded historical Git-archive
+inspector and no-link extractor to copy that archive to
+`previous-release.tar` and materialize `previous-source/<commit>` inside the
+mode-`0700` staging tree. Both move atomically with the staging tree into the
+transaction. A missing, linked, multiply linked, misowned, mis-moded,
+off-boundary, oversized, changed, malformed, duplicate-key, tree-mismatched,
+or manifest-mismatched predecessor fails before any installed target or SSH
+activation change.
+
 A root-owned mode-`0600` journal and root-owned mode-`0700` transaction tree
 contain the exact old bytes, modes, new digests, current control pointer, and
 certificate-timer state. It also records exactly one OpenSSH activation
@@ -361,6 +374,16 @@ and the full host-security verifier. Unjournaled pre-journal staging is
 accepted only under the exact protected state-root naming/mode contract and is
 durably removed on retry. The deploy SSH principal has no dispatcher or sudo
 route to this operation.
+
+Interrupted recovery derives the predecessor only from the transaction's
+backed-up pointer, sealed archive, and extracted source, and verifies their
+evidence digest before classifying installed targets. For the first upgrade of
+the upgrade control itself, retain the exact canonical-main checkout and the
+privileged recovery channel until completion. If a pending journal survives an
+abrupt stop before the installed wrapper is replaced, resume with the exact
+canonical-main `scripts/upgrade-host-control.sh` that created the transaction;
+never invoke an older installed wrapper or reconstruct an application release
+as a workaround.
 
 The initial host-control installer safely creates and validates the ephemeral
 private lock namespace before publishing controls. The certificate-automation
