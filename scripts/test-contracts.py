@@ -8499,6 +8499,13 @@ def test_host_operation_lock_contract() -> None:
     ):
         if required not in docs:
             raise RuntimeError("Host-operation lock documentation is incomplete.")
+    if any(value not in docs for value in (
+        "`KillMode=process`",
+        "direct Git parent",
+        "identical-byte",
+        "continues the newly approved upgrade in the same locked process",
+    )):
+        raise RuntimeError("Host-control changed-successor recovery documentation is incomplete.")
 
 
 def test_host_security_control_plane_contract() -> None:
@@ -8576,6 +8583,10 @@ def test_host_security_control_plane_contract() -> None:
             'ln -s /dev/null "${staging}/mask"',
             'run_bounded_host_operation 60 systemctl disable --now ssh.socket',
             'run_bounded_host_operation 60 systemctl enable --now ssh.service',
+            'timeout --signal=TERM --kill-after=5s 15s systemctl show ssh.service -p KillMode --value',
+            'run_bounded_host_cleanup systemctl enable ssh.socket',
+            'run_bounded_host_cleanup systemctl stop ssh.service',
+            'run_bounded_host_cleanup systemctl start ssh.socket',
             'restore_ssh_socket_activation_predecessor()',
             'ensure_ssh_service_activation()',
         )
@@ -8605,6 +8616,18 @@ def test_host_security_control_plane_contract() -> None:
             '.control-upgrade-staging-${expected_commit}.XXXXXXXX',
             'bounded 60s systemctl disable --now ssh.socket',
             'bounded 60s systemctl enable --now ssh.service',
+            'bounded 15s systemctl show ssh.service -p KillMode --value',
+            'bounded 60s systemctl enable ssh.socket',
+            'bounded 60s systemctl stop ssh.service',
+            'bounded 60s systemctl start ssh.socket',
+            'validate_effective_hardened_ssh() {',
+            'bind_invoked_canonical_successor() {',
+            'rev-parse --verify "${requested_commit}^1"',
+            'ls-remote --refs "${canonical_repository}" refs/heads/main',
+            'bind_invoked_canonical_successor "${requested_commit}" "${commit}"',
+            'recovery_continue=true',
+            '[[ ${recovery_continue} == true ]] || exit 0',
+            'unchanged bytes must not be retried',
             'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-transaction',
             'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-socket-activation-recovery',
             'bash "${candidate}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --socket-activation-recovery',
@@ -8617,6 +8640,35 @@ def test_host_security_control_plane_contract() -> None:
             raise RuntimeError("Transactional host SSH service-activation contract differs.")
         if 'service_state ssh.socket || fail "OpenSSH service is not enabled and active."' in verifier_source:
             raise RuntimeError("Terminal host verification permits socket activation.")
+        if upgrade_source.count("validate_effective_hardened_ssh() {") != 1 or upgrade_source.count(
+            "validate_effective_hardened_ssh || return 1"
+        ) != 1:
+            raise RuntimeError("Transactional effective SSH readback is undefined, duplicated, or unbound.")
+
+        installer_restore = installer_source[
+            installer_source.index("restore_ssh_socket_activation_predecessor() {"):
+            installer_source.index("\n}\n", installer_source.index("restore_ssh_socket_activation_predecessor() {"))
+        ]
+        upgrade_restore = upgrade_source[
+            upgrade_source.index("restore_ssh_activation_predecessor() {"):
+            upgrade_source.index("\n}\n", upgrade_source.index("restore_ssh_activation_predecessor() {"))
+        ]
+        installer_restore_order = (
+            "systemctl show ssh.service -p KillMode --value",
+            "systemctl disable ssh.service",
+            'durable_remove "${ssh_generator_mask}"',
+            "systemctl daemon-reload",
+            "systemctl enable ssh.socket",
+            "systemctl stop ssh.service",
+            "systemctl start ssh.socket",
+            "systemctl start ssh.service",
+            "ssh_socket_activation_is_exact_predecessor",
+        )
+        upgrade_restore_order = installer_restore_order
+        for block, ordered in ((installer_restore, installer_restore_order), (upgrade_restore, upgrade_restore_order)):
+            positions = [block.index(token) for token in ordered]
+            if positions != sorted(positions) or "systemctl enable --now ssh.socket" in block:
+                raise RuntimeError("SSH socket-predecessor restoration ordering can conflict with the active service listener.")
 
         candidate_validation = upgrade_source.index('bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"')
         predecessor_gate = upgrade_source.index('ssh_predecessor="$(ssh_activation_predecessor)"', candidate_validation)
@@ -8658,6 +8710,9 @@ def test_host_security_control_plane_contract() -> None:
         (installer, verifier, upgrade.replace('"sshActivationPredecessor"', '"sshActivationMode"')),
         (installer, verifier, upgrade.replace('bounded 60s systemctl disable --now ssh.socket', 'bounded 60s systemctl enable --now ssh.socket', 1)),
         (installer, verifier, upgrade.replace('bash "${candidate_source}/scripts/verify-host-security.sh"', 'bash "${previous_source}/scripts/verify-host-security.sh"', 1)),
+        (installer.replace('systemctl enable ssh.socket', 'systemctl enable --now ssh.socket', 1), verifier, upgrade),
+        (installer, verifier, upgrade.replace('systemctl enable ssh.socket', 'systemctl enable --now ssh.socket', 1)),
+        (installer, verifier, upgrade.replace("validate_effective_hardened_ssh() {", "validate_effective_hardened_ssh_missing() {", 1)),
     )
     for mutated_installer, mutated_verifier, mutated_upgrade in hostile_activation_mutations:
         try:
@@ -8688,6 +8743,255 @@ def test_host_security_control_plane_contract() -> None:
         ("absent", "disabled", "active", "enabled", "active"): "socket",
     }:
         raise RuntimeError("SSH activation predecessor model accepts a mixed or ambiguous state.")
+
+    if os.name == "posix":
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeError("Bash is required for the host-control SSH recovery fixtures.")
+
+        def function_block(source: str, name: str) -> str:
+            start = source.index(f"{name}() {{")
+            return source[start:source.index("\n}\n", start) + 3]
+
+        effective_start = upgrade.index("effective_ssh_value() {")
+        effective_end = upgrade.index("\n}\n", upgrade.index("validate_effective_hardened_ssh() {")) + 3
+        effective_harness = r'''set -u
+state_root=/var/lib/mochirii/forums
+bounded() {
+  [[ $1 == 15s ]] || return 90
+  shift
+  [[ $1 == sshd && $2 == -T && $3 == -C && $# -eq 4 ]] || return 91
+  user=${4#user=}; user=${user%%,*}
+  case "${user}" in
+    root) keys=none; force=none; tty=no ;;
+    mochirii-forums-operator) keys=/var/lib/mochirii/forums/operator/.ssh/authorized_keys; force=none; tty=yes ;;
+    mochirii-forums-deploy) keys=/var/lib/mochirii/forums/deploy/.ssh/authorized_keys; force=/usr/local/libexec/mochirii-forums/ssh-deploy-dispatch.py; tty=no ;;
+    *) return 92 ;;
+  esac
+  [[ ${SSH_MUTATION:-none} != deploy-force || ${user} != mochirii-forums-deploy ]] || force=none
+  permit_root=no
+  [[ ${SSH_MUTATION:-none} != root-login || ${user} != root ]] || permit_root=yes
+  printf '%s\n' \
+    'passwordauthentication no' \
+    'kbdinteractiveauthentication no' \
+    'pubkeyauthentication yes' \
+    'authenticationmethods publickey' \
+    'authorizedkeyscommand none' \
+    'authorizedkeyscommanduser nobody' \
+    'trustedusercakeys none' \
+    'authorizedprincipalsfile none' \
+    'authorizedprincipalscommand none' \
+    'authorizedprincipalscommanduser nobody' \
+    'permituserenvironment no' \
+    'permituserrc no' \
+    'allowusers mochirii-forums-operator mochirii-forums-deploy' \
+    "authorizedkeysfile ${keys}" \
+    "forcecommand ${force}" \
+    'disableforwarding yes' \
+    "permittty ${tty}" \
+    "permitrootlogin ${permit_root}"
+}
+''' + upgrade[effective_start:effective_end] + "\nvalidate_effective_hardened_ssh\n"
+        for mutation, should_pass in (("none", True), ("root-login", False), ("deploy-force", False)):
+            completed = subprocess.run(
+                [bash, "-c", effective_harness],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+                env={**os.environ, "SSH_MUTATION": mutation},
+                check=False,
+            )
+            if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
+                raise RuntimeError("Executable transactional effective SSH readback accepted a hostile tuple or rejected the exact tuple.")
+
+        with tempfile.TemporaryDirectory(prefix="mochirii-successor-binding-") as directory:
+            source_root = Path(directory) / "source"
+            entrypoint = source_root / "scripts/upgrade-host-control.sh"
+            entrypoint.parent.mkdir(parents=True)
+            entrypoint.write_text("fixture\n", encoding="utf-8", newline="\n")
+            (source_root / ".git").mkdir()
+            binder_harness = f'''set -u
+canonical_repository=https://github.com/Mochirii-Wushu/Mochirii-Forums.git
+requested=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+pending=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+source_root={source_root.as_posix()}
+bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
+git() {{
+  [[ -z ${{GIT_DIR+x}} && -z ${{GIT_WORK_TREE+x}} && -z ${{GIT_CONFIG_SYSTEM+x}} ]] || return 81
+  case "$*" in
+    "-C ${{source_root}} rev-parse --verify HEAD^{{commit}}") [[ ${{BINDER_MUTATION:-none}} != head ]] && printf '%s\n' "$requested" || printf '%s\n' other ;;
+    "-C ${{source_root}} symbolic-ref --short -q HEAD") [[ ${{BINDER_MUTATION:-none}} != branch ]] && printf '%s\n' main || printf '%s\n' topic ;;
+    "-c core.fsmonitor=false -C ${{source_root}} status --porcelain=v1 --untracked-files=all")
+      [[ ${{BINDER_MUTATION:-none}} != status-fail ]] || return 83
+      [[ ${{BINDER_MUTATION:-none}} != dirty ]] || printf '%s\n' ' M scripts/upgrade-host-control.sh'
+      ;;
+    "-C ${{source_root}} remote get-url origin") [[ ${{BINDER_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
+    "-C ${{source_root}} rev-parse --verify ${{requested}}^1") [[ ${{BINDER_MUTATION:-none}} != parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
+    *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{BINDER_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$requested" || printf '%s\trefs/heads/main\n' unrelated ;;
+    *) return 82 ;;
+  esac
+}}
+{function_block(upgrade, "bind_invoked_canonical_successor")}
+bind_invoked_canonical_successor "$requested" "$pending"
+'''
+            for mutation, should_pass in (
+                ("none", True), ("head", False), ("branch", False), ("dirty", False),
+                ("status-fail", False), ("origin", False), ("parent", False), ("remote", False),
+            ):
+                completed = subprocess.run(
+                    [bash, "-c", binder_harness, str(entrypoint)],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, timeout=10, check=False,
+                    env={**os.environ, "BINDER_MUTATION": mutation, "GIT_DIR": "/hostile", "GIT_WORK_TREE": "/hostile"},
+                )
+                if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
+                    raise RuntimeError("Executable changed-successor source binding accepted drift or rejected exact current main.")
+
+        restore_prefix = r'''set -euo pipefail
+log=$(mktemp)
+trap 'rm -f -- "$log"' EXIT
+mask=absent
+service_enabled=disabled
+service_active=active
+socket_enabled=enabled
+socket_active=inactive
+fake_systemctl() {
+  printf '%s\n' "$*" >>"${log}"
+  case "$*" in
+    'show ssh.service -p KillMode --value') printf '%s\n' "${KILL_MODE:-process}" ;;
+    'disable ssh.service') service_enabled=disabled ;;
+    'daemon-reload') : ;;
+    'enable ssh.socket') socket_enabled=enabled ;;
+    'stop ssh.service') service_active=inactive ;;
+    'start ssh.socket') [[ ${service_active} == inactive ]] || return 41; socket_active=active ;;
+    'start ssh.service') [[ ${socket_active} == active ]] || return 42; service_active=active ;;
+    *) return 43 ;;
+  esac
+}
+timeout() {
+  [[ $1 == --signal=TERM && $2 == --kill-after=5s && $3 == 15s && $4 == systemctl ]] || return 44
+  shift 4
+  fake_systemctl "$@"
+}
+run_bounded_host_cleanup() { [[ $1 == systemctl ]] || return 45; shift; fake_systemctl "$@"; }
+bounded() { [[ $1 == 15s || $1 == 60s ]] || return 46; shift; [[ $1 == systemctl ]] || return 47; shift; fake_systemctl "$@"; }
+durable_remove() { [[ $1 == /etc/systemd/system-generators/sshd-socket-generator ]] || return 48; printf '%s\n' remove-mask >>"${log}"; mask=absent; }
+ssh_socket_activation_is_exact_predecessor() {
+  [[ ${mask} == absent && ${service_enabled} == disabled && ${service_active} == active && ${socket_enabled} == enabled && ${socket_active} == active ]]
+}
+ensure_ssh_service_activation() { return 49; }
+ssh_generator_mask=/etc/systemd/system-generators/sshd-socket-generator
+'''
+        restore_cases = (
+            (
+                restore_prefix + function_block(installer, "restore_ssh_socket_activation_predecessor") + "\nrestore_ssh_socket_activation_predecessor\ncat \"${log}\"\n",
+                "installer",
+            ),
+            (
+                restore_prefix + function_block(upgrade, "restore_ssh_activation_predecessor") + "\nrestore_ssh_activation_predecessor socket\ncat \"${log}\"\n",
+                "upgrade",
+            ),
+        )
+        expected_restore_log = "\n".join((
+            "show ssh.service -p KillMode --value",
+            "disable ssh.service",
+            "remove-mask",
+            "daemon-reload",
+            "enable ssh.socket",
+            "stop ssh.service",
+            "start ssh.socket",
+            "start ssh.service",
+            "",
+        ))
+        for harness, label in restore_cases:
+            completed = subprocess.run(
+                [bash, "-c", harness], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, timeout=10, check=False,
+            )
+            if completed.returncode != 0 or completed.stdout != expected_restore_log or completed.stderr:
+                raise RuntimeError(f"Executable {label} SSH socket-predecessor recovery does not converge from the live partial state.")
+            hostile = subprocess.run(
+                [bash, "-c", harness], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, timeout=10,
+                env={**os.environ, "KILL_MODE": "control-group"}, check=False,
+            )
+            if hostile.returncode == 0:
+                raise RuntimeError(f"Executable {label} SSH recovery ignores the retained-session KillMode boundary.")
+
+        reconcile = function_block(upgrade, "reconcile_pending")
+        reconcile_harness = r'''set -u
+recovery_continue=false
+fail() { printf '%s\n' "$1" >&2; exit 73; }
+read_journal() {
+  [[ ${RECOVERY_CASE:-successor} != journal-fail ]] || return 41
+  printf '%s\n' "${JOURNAL_COMMIT:-old}" manifest /transaction false false false previous-sha socket
+}
+bind_invoked_canonical_successor() { [[ ${CANONICAL_PARENT:-old} == "$2" ]]; }
+bind_previous_source() { printf '%s\n' previous-commit previous-sha /transaction/previous-source/previous-commit; }
+targets_are_new() { [[ ${RECOVERY_TARGETS:-new} == new ]]; }
+ensure_ssh_service_activation() { printf '%s\n' ensure; }
+post_install_readback() { printf 'post:%s\n' "$1"; }
+seal_control_state() { printf '%s\n' seal; }
+bash() { printf '%s\n' bash-verify; }
+rollback_transaction() { printf '%s\n' rollback; }
+verify_previous_host_controls() { printf '%s\n' verify-previous; }
+clear_transaction() { printf '%s\n' clear; }
+''' + reconcile + r'''
+reconcile_pending "${REQUESTED_COMMIT:-new}"
+printf 'continue:%s\n' "${recovery_continue}"
+'''
+        recovery_cases = (
+            (
+                {},
+                0,
+                "rollback\npost:/transaction/previous-source/previous-commit\nverify-previous\nclear\n"
+                "Interrupted Mochirii Forums host-control upgrade was rolled back exactly; continuing the approved canonical successor.\ncontinue:true\n",
+                "",
+            ),
+            (
+                {"REQUESTED_COMMIT": "old", "JOURNAL_COMMIT": "old"},
+                0,
+                "ensure\npost:/transaction/source\nseal\nclear\n"
+                "Interrupted Mochirii Forums host-control upgrade was committed forward and verified.\ncontinue:false\n",
+                "",
+            ),
+            (
+                {"CANONICAL_PARENT": "unrelated"},
+                73,
+                "",
+                "Pending host-control upgrade is not recoverable by this exact direct canonical successor.\n",
+            ),
+            (
+                {"REQUESTED_COMMIT": "old", "JOURNAL_COMMIT": "old", "RECOVERY_TARGETS": "old"},
+                73,
+                "rollback\npost:/transaction/previous-source/previous-commit\nverify-previous\nclear\n",
+                "Interrupted host-control upgrade was rolled back exactly; unchanged bytes must not be retried.\n",
+            ),
+            (
+                {"RECOVERY_CASE": "journal-fail"},
+                73,
+                "",
+                "Pending host-control upgrade journal is invalid.\n",
+            ),
+        )
+        for extra_environment, expected_code, expected_stdout, expected_stderr in recovery_cases:
+            completed = subprocess.run(
+                [bash, "-c", reconcile_harness], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10,
+                env={**os.environ, **extra_environment}, check=False,
+            )
+            if (
+                completed.returncode != expected_code
+                or completed.stdout != expected_stdout
+                or completed.stderr != expected_stderr
+            ):
+                raise RuntimeError(
+                    "Executable pending-journal successor recovery or fixed failure category differs: "
+                    f"expected=({expected_code}, {expected_stdout!r}, {expected_stderr!r}) "
+                    f"actual=({completed.returncode}, {completed.stdout!r}, {completed.stderr!r})."
+                )
 
     if operator_sudoers.splitlines() != [
         'Defaults:mochirii-forums-operator env_keep += "SSH_CONNECTION"',
@@ -8882,7 +9186,10 @@ def test_host_control_predecessor_archive_binding() -> None:
         predecessor_verify = source.index(
             'bind_previous_source "${transaction}/backup/current-host-control.json"', reconcile
         )
-        target_classification = source.index("if targets_are_new; then", predecessor_verify)
+        target_classification = source.index(
+            "if [[ ${successor_recovery} == false ]] && targets_are_new; then",
+            predecessor_verify,
+        )
         if not reconcile < predecessor_verify < target_classification:
             raise RuntimeError("Interrupted host-control recovery trusts targets before predecessor binding.")
 

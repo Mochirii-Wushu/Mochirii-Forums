@@ -211,10 +211,13 @@ publish_ssh_generator_mask() {
 }
 
 restore_ssh_socket_activation_predecessor() {
+  [[ "$(timeout --signal=TERM --kill-after=5s 15s systemctl show ssh.service -p KillMode --value 2>/dev/null)" == process ]] || return 1
   run_bounded_host_cleanup systemctl disable ssh.service || return 1
   durable_remove "${ssh_generator_mask}" || return 1
   run_bounded_host_cleanup systemctl daemon-reload || return 1
-  run_bounded_host_cleanup systemctl enable --now ssh.socket || return 1
+  run_bounded_host_cleanup systemctl enable ssh.socket || return 1
+  run_bounded_host_cleanup systemctl stop ssh.service || return 1
+  run_bounded_host_cleanup systemctl start ssh.socket || return 1
   run_bounded_host_cleanup systemctl start ssh.service || return 1
   ssh_socket_activation_is_exact_predecessor
 }

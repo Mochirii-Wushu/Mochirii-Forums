@@ -367,18 +367,32 @@ disables and stops `ssh.socket`, then enables and starts `ssh.service`.
 Terminal verification requires that exact mask, `ssh.service`
 enabled/active, and `ssh.socket` disabled/inactive. A failed or interrupted
 conversion restores the journaled predecessor before clearing the
-transaction; the socket predecessor restoration removes the mask, reloads
-systemd, enables/starts `ssh.socket`, and preserves the active daemon. Keep a
-verified privileged recovery session open throughout the one-time conversion.
-Do not edit units manually or retry unchanged failing bytes.
+transaction. Socket-predecessor restoration first proves Ubuntu's
+`ssh.service` uses `KillMode=process`, disables the service without stopping
+the retained sessions, removes the generator mask, reloads systemd, and enables
+the socket without starting it. It then stops only the listener process, starts
+`ssh.socket`, and starts `ssh.service` through that socket before requiring the
+exact predecessor tuple. This ordering keeps the already authenticated
+operator/recovery children alive while preventing the still-active listener
+from blocking socket activation. Keep a verified privileged recovery session
+open throughout the one-time conversion. Do not edit units manually or retry
+unchanged failing bytes.
 
-A retry commits forward only when every target is already the exact new
-root-owned byte/mode tuple; otherwise it restores every exact old target,
-pointer, and activation predecessor. Both paths rerun bounded sshd
+An invocation from the same exact canonical commit commits forward only when
+every target is already the exact new root-owned byte/mode tuple; otherwise it
+restores every exact old target, pointer, and activation predecessor, then exits
+without an automatic unchanged-byte attempt. A changed
+canonical-main repair may adopt a pending journal only when its locally clean
+`main` checkout and a bounded credential-free remote read both prove current
+canonical `main`, and the journal commit is that successor's direct Git parent.
+That path always restores and verifies the exact predecessor, clears the old
+journal, and continues the newly approved upgrade in the same locked process;
+it never commits the older candidate forward or requires an identical-byte
+second invocation. Both recovery paths rerun bounded sshd
 syntax/effective-setting checks, service readback, installed target digests,
 and the full host-security verifier. Unjournaled pre-journal staging is
 accepted only under the exact protected state-root naming/mode contract and is
-durably removed on retry. The deploy SSH principal has no dispatcher or sudo
+durably removed during recovery. The deploy SSH principal has no dispatcher or sudo
 route to this operation.
 
 Interrupted recovery derives the predecessor only from the transaction's
@@ -386,10 +400,12 @@ backed-up pointer, sealed archive, and extracted source, and verifies their
 evidence digest before classifying installed targets. For the first upgrade of
 the upgrade control itself, retain the exact canonical-main checkout and the
 privileged recovery channel until completion. If a pending journal survives an
-abrupt stop before the installed wrapper is replaced, resume with the exact
-canonical-main `scripts/upgrade-host-control.sh` that created the transaction;
-never invoke an older installed wrapper or reconstruct an application release
-as a workaround.
+abrupt stop before the installed wrapper is replaced, resume with either the
+exact canonical-main `scripts/upgrade-host-control.sh` that created the
+transaction or a reviewed direct canonical successor carrying the bounded
+recovery contract above. Never invoke an older installed wrapper, skip the
+direct-parent/current-main proof, or reconstruct an application release as a
+workaround.
 
 The initial host-control installer safely creates and validates the ephemeral
 private lock namespace before publishing controls. The certificate-automation

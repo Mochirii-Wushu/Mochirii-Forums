@@ -16,6 +16,7 @@ readonly ssh_generator_parent="/etc/systemd/system-generators"
 readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"
 active_transaction=""
 upgrade_complete=false
+recovery_continue=false
 
 fail() {
   printf '%s\n' "$1" >&2
@@ -81,6 +82,74 @@ ssh_activation_predecessor() {
   fi
 }
 
+effective_ssh_value() {
+  local text="$1" setting="$2"
+  awk -v setting="${setting}" '$1 == setting { found=$2 } END { print found }' <<<"${text}"
+}
+
+effective_ssh_allow_users() {
+  awk '$1 == "allowusers" { for (i = 2; i <= NF; i++) { found = found (found == "" ? "" : " ") $i } } END { print found }' <<<"$1"
+}
+
+validate_effective_hardened_ssh_user() {
+  local user="$1" effective expected_keys expected_force expected_tty
+  effective="$(bounded 15s sshd -T -C "user=${user},host=forums.mochirii.com,addr=127.0.0.1")" || return 1
+  (( ${#effective} <= 262144 )) || return 1
+  [[ "$(effective_ssh_value "${effective}" passwordauthentication)" == no ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" kbdinteractiveauthentication)" == no ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" pubkeyauthentication)" == yes ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" authenticationmethods)" == publickey ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" authorizedkeyscommand)" == none ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" authorizedkeyscommanduser)" == nobody ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" trustedusercakeys)" == none ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" authorizedprincipalsfile)" == none ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" authorizedprincipalscommand)" == none ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" authorizedprincipalscommanduser)" == nobody ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" permituserenvironment)" == no ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" permituserrc)" == no ]] || return 1
+  [[ "$(effective_ssh_allow_users "${effective}")" == "mochirii-forums-operator mochirii-forums-deploy" ]] || return 1
+  case "${user}" in
+    root) expected_keys=none; expected_force=none; expected_tty=no ;;
+    mochirii-forums-operator) expected_keys="${state_root}/operator/.ssh/authorized_keys"; expected_force=none; expected_tty=yes ;;
+    mochirii-forums-deploy) expected_keys="${state_root}/deploy/.ssh/authorized_keys"; expected_force=/usr/local/libexec/mochirii-forums/ssh-deploy-dispatch.py; expected_tty=no ;;
+    *) return 1 ;;
+  esac
+  [[ "$(effective_ssh_value "${effective}" authorizedkeysfile)" == "${expected_keys}" ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" forcecommand)" == "${expected_force}" ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" disableforwarding)" == yes ]] || return 1
+  [[ "$(effective_ssh_value "${effective}" permittty)" == "${expected_tty}" ]] || return 1
+  [[ ${user} != root || "$(effective_ssh_value "${effective}" permitrootlogin)" == no ]]
+}
+
+validate_effective_hardened_ssh() {
+  validate_effective_hardened_ssh_user root &&
+    validate_effective_hardened_ssh_user mochirii-forums-operator &&
+    validate_effective_hardened_ssh_user mochirii-forums-deploy
+}
+
+bind_invoked_canonical_successor() {
+  local requested_commit="$1" pending_commit="$2" invocation_script invocation_source_root remote_output status_output
+  [[ -f $0 && ! -L $0 ]] || return 1
+  invocation_script="$(realpath -e -- "$0")" || return 1
+  invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
+  [[ -d ${invocation_source_root}/.git && ! -L ${invocation_source_root}/.git ]] || return 1
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+  unset GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_PROTOCOL_FROM_USER
+  export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0
+  [[ "$(git -C "${invocation_source_root}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${requested_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
+  status_output="$(git -c core.fsmonitor=false -C "${invocation_source_root}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || return 1
+  (( ${#status_output} <= 262144 )) || return 1
+  [[ -z ${status_output} ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" remote get-url origin 2>/dev/null)" == "${canonical_repository}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
+  remote_output="$(bounded 120s git -c credential.helper= -c core.askPass= \
+    -c protocol.allow=never -c protocol.https.allow=always -c http.followRedirects=false \
+    ls-remote --refs "${canonical_repository}" refs/heads/main 2>/dev/null)" || return 1
+  (( ${#remote_output} <= 256 )) || return 1
+  [[ ${remote_output} == "${requested_commit}"$'\trefs/heads/main' ]]
+}
+
 publish_ssh_generator_mask() {
   local staging
   if [[ -e ${ssh_generator_parent} || -L ${ssh_generator_parent} ]]; then
@@ -116,10 +185,13 @@ restore_ssh_activation_predecessor() {
       ensure_ssh_service_activation
       ;;
     socket)
+      [[ "$(bounded 15s systemctl show ssh.service -p KillMode --value 2>/dev/null)" == process ]] || return 1
       bounded 60s systemctl disable ssh.service >/dev/null 2>&1 || return 1
       durable_remove "${ssh_generator_mask}" || return 1
       bounded 60s systemctl daemon-reload >/dev/null 2>&1 || return 1
-      bounded 60s systemctl enable --now ssh.socket >/dev/null 2>&1 || return 1
+      bounded 60s systemctl enable ssh.socket >/dev/null 2>&1 || return 1
+      bounded 60s systemctl stop ssh.service >/dev/null 2>&1 || return 1
+      bounded 60s systemctl start ssh.socket >/dev/null 2>&1 || return 1
       bounded 60s systemctl start ssh.service >/dev/null 2>&1 || return 1
       ssh_socket_activation_is_exact_predecessor
       ;;
@@ -904,10 +976,19 @@ PY
 
 reconcile_pending() {
   local requested_commit="$1"
-  readarray -t state < <(read_journal) || fail "Pending host-control upgrade journal is invalid."
+  local journal_output="" successor_recovery=false
+  if ! journal_output="$(read_journal 2>/dev/null)"; then
+    fail "Pending host-control upgrade journal is invalid."
+  fi
+  (( ${#journal_output} <= 4096 )) || fail "Pending host-control upgrade journal output exceeds its boundary."
+  readarray -t state <<<"${journal_output}"
   [[ ${#state[@]} -eq 8 ]] || fail "Pending host-control upgrade state is malformed."
   local commit="${state[0]}" transaction="${state[2]}" certificate="${state[3]}" timer_enabled="${state[4]}" timer_active="${state[5]}" previous_sha="${state[6]}" ssh_predecessor="${state[7]}"
-  [[ ${commit} == "${requested_commit}" ]] || fail "Pending host-control upgrade belongs to another exact canonical commit."
+  if [[ ${commit} != "${requested_commit}" ]]; then
+    bind_invoked_canonical_successor "${requested_commit}" "${commit}" ||
+      fail "Pending host-control upgrade is not recoverable by this exact direct canonical successor."
+    successor_recovery=true
+  fi
   local candidate="${transaction}/source"
   local predecessor_output=""
   if ! predecessor_output="$(
@@ -920,7 +1001,7 @@ reconcile_pending() {
   [[ ${#predecessor_state[@]} -eq 3 ]] || fail "Pending host-control predecessor state is malformed."
   local previous_commit="${predecessor_state[0]}" previous_evidence_sha="${predecessor_state[1]}" previous_source="${predecessor_state[2]}"
   [[ ${previous_evidence_sha} == "${previous_sha}" ]] || fail "Pending host-control predecessor evidence differs."
-  if targets_are_new; then
+  if [[ ${successor_recovery} == false ]] && targets_are_new; then
     if ! ensure_ssh_service_activation; then
       rollback_transaction "${transaction}" || fail "OpenSSH activation commit-forward failed and exact rollback is blocked."
       post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "OpenSSH activation rollback service readback failed."
@@ -951,7 +1032,12 @@ reconcile_pending() {
   post_install_readback "${previous_source}" "${certificate}" "${timer_enabled}" "${timer_active}" || fail "Interrupted host-control rollback service readback failed."
   verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Interrupted host-control rollback failed terminal security verification."
   clear_transaction "${transaction}" || fail "Rolled-back host-control journal could not be cleared."
-  fail "Interrupted host-control upgrade was rolled back exactly; rerun the approved upgrade."
+  if [[ ${successor_recovery} == true ]]; then
+    recovery_continue=true
+    printf '%s\n' "Interrupted Mochirii Forums host-control upgrade was rolled back exactly; continuing the approved canonical successor."
+    return 0
+  fi
+  fail "Interrupted host-control upgrade was rolled back exactly; unchanged bytes must not be retried."
 }
 
 handle_signal() {
@@ -1001,8 +1087,9 @@ if [[ -n ${app_inventory} ]]; then
 fi
 
 if [[ -e ${pending_journal} || -L ${pending_journal} ]]; then
+  recovery_continue=false
   reconcile_pending "${expected_commit}"
-  exit 0
+  [[ ${recovery_continue} == true ]] || exit 0
 fi
 
 [[ -f ${control_pointer} && ! -L ${control_pointer} && "$(stat -c '%U:%G %a' "${control_pointer}")" == "root:root 600" ]] || fail "Current host-control evidence is absent or unsafe."

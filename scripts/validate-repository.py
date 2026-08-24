@@ -5997,6 +5997,16 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "deployment mutation lifecycle documentation",
     )
     require_text(
+        deployment_docs,
+        [
+            "`KillMode=process`",
+            "direct Git parent",
+            "continues the newly approved upgrade in the same locked process",
+            "identical-byte",
+        ],
+        "host-control changed-successor recovery documentation",
+    )
+    require_text(
         recovery_docs,
         [
             "leaves deployment ownership intact",
@@ -6281,6 +6291,12 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'ssh_activation_predecessor()',
             'restore_ssh_activation_predecessor()',
             'verify_previous_host_controls()',
+            'bounded 15s systemctl show ssh.service -p KillMode --value',
+            'bounded 60s systemctl enable ssh.socket',
+            'bounded 60s systemctl stop ssh.service',
+            'bounded 60s systemctl start ssh.socket',
+            'validate_effective_hardened_ssh() {',
+            'validate_effective_hardened_ssh || return 1',
             '"sshActivationPredecessor"',
             '.control-upgrade-staging-${expected_commit}.XXXXXXXX',
             'bounded 60s systemctl disable --now ssh.socket',
@@ -6304,6 +6320,16 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'if ! previous_state_output="$(',
             'readarray -t previous_state <<<"${previous_state_output}"',
             'previous_source="${transaction}/previous-source/${previous_commit}"',
+            'bind_invoked_canonical_successor() {',
+            '[[ -f $0 && ! -L $0 ]]',
+            'invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"',
+            'rev-parse --verify "${requested_commit}^1"',
+            'ls-remote --refs "${canonical_repository}" refs/heads/main',
+            'bind_invoked_canonical_successor "${requested_commit}" "${commit}"',
+            'successor_recovery=true',
+            'recovery_continue=true',
+            '[[ ${recovery_continue} == true ]] || exit 0',
+            'unchanged bytes must not be retried',
             '${SUDO_USER:-} == mochirii-forums-operator',
         ],
         "transactional host-control upgrade",
@@ -6362,7 +6388,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         'bind_previous_source "${transaction}/backup/current-host-control.json"', reconcile_start
     )
     recovery_target_classification = control_upgrade.index(
-        "if targets_are_new; then", recovery_predecessor_binding
+        "if [[ ${successor_recovery} == false ]] && targets_are_new; then", recovery_predecessor_binding
     )
     if not reconcile_start < recovery_predecessor_binding < recovery_target_classification:
         fail("Interrupted host-control recovery trusts installed targets before predecessor reconstruction.")
@@ -6372,6 +6398,33 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         fail("Host-control predecessor archive or extracted-source link guard differs.")
     if re.search(r"readarray -t (?:predecessor_state|previous_state) < <\(\s*bind_previous_source", control_upgrade):
         fail("Host-control predecessor binding status is hidden by process substitution.")
+    if re.search(r"readarray -t state < <\(\s*read_journal", control_upgrade):
+        fail("Host-control journal producer status is hidden by process substitution.")
+    if '[[ -z "$(git -c core.fsmonitor=false -C "${invocation_source_root}" status' in control_upgrade:
+        fail("Host-control successor binding can hide a failed Git status producer.")
+    if control_upgrade.count("validate_effective_hardened_ssh() {") != 1 or control_upgrade.count(
+        "validate_effective_hardened_ssh || return 1"
+    ) != 1:
+        fail("Host-control effective SSH readback is undefined, duplicated, or unbound.")
+    installer_restore_start = installer.index("restore_ssh_socket_activation_predecessor() {")
+    installer_restore = installer[installer_restore_start:installer.index("\n}\n", installer_restore_start)]
+    upgrade_restore_start = control_upgrade.index("restore_ssh_activation_predecessor() {")
+    upgrade_restore = control_upgrade[upgrade_restore_start:control_upgrade.index("\n}\n", upgrade_restore_start)]
+    restore_order = (
+        "systemctl show ssh.service -p KillMode --value",
+        "systemctl disable ssh.service",
+        'durable_remove "${ssh_generator_mask}"',
+        "systemctl daemon-reload",
+        "systemctl enable ssh.socket",
+        "systemctl stop ssh.service",
+        "systemctl start ssh.socket",
+        "systemctl start ssh.service",
+        "ssh_socket_activation_is_exact_predecessor",
+    )
+    for restore in (installer_restore, upgrade_restore):
+        positions = [restore.index(token) for token in restore_order]
+        if positions != sorted(positions) or "systemctl enable --now ssh.socket" in restore:
+            fail("SSH socket-predecessor restoration can conflict with the active service listener.")
     rollback_verifier_start = control_upgrade.index("verify_previous_host_controls() {")
     rollback_verifier_end = control_upgrade.index("\n}\n", rollback_verifier_start)
     rollback_verifier = control_upgrade[rollback_verifier_start:rollback_verifier_end]
