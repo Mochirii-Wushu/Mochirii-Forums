@@ -2642,7 +2642,7 @@ def test_narrative_avatar_contract() -> None:
         (
             template,
             configure.replace(
-                "normalized_upstream_admin_quick_start.bytesize == 1905 &&",
+                "normalized_upstream_admin_quick_start.bytesize == 1904 &&",
                 "true &&",
                 1,
             ),
@@ -2920,6 +2920,9 @@ def test_branding_email_renderer_contract() -> None:
         "PINNED_ADMIN_QUICK_START_TOPIC_BLOCK = b'''",
         "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
         "PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''",
+        "PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK = b'''",
+        "PINNED_TEXT_CLEANER_WHITESPACE_BLOCK = b'''",
+        "PINNED_ADMIN_QUICK_START_POST_RAW = (",
         'hashlib.sha256(source).hexdigest() != PINNED_EMAIL_SHA256',
         'verify_email_semantics(core["lib/email.rb"])',
         "verify_mail_evidence_manifest(components)",
@@ -3119,10 +3122,18 @@ def test_branding_email_renderer_contract() -> None:
             + UPSTREAM.PINNED_TOPIC_CREATE_GUARD_BLOCK
             + UPSTREAM.PINNED_ADMIN_QUICK_START_RAW_BLOCK
         ),
+        "lib/post_creator.rb": UPSTREAM.PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK,
+        "lib/text_cleaner.rb": UPSTREAM.PINNED_TEXT_CLEANER_WHITESPACE_BLOCK,
     }
     original_topic_seed_evidence = UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE
+    original_admin_quick_start_post_raw = UPSTREAM.PINNED_ADMIN_QUICK_START_POST_RAW
     try:
         UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE = synthetic_evidence(synthetic_seed_core)
+        synthetic_guide_post_raw = synthetic_seed_core["docs/ADMIN-QUICK-START-GUIDE.md"].rstrip()
+        UPSTREAM.PINNED_ADMIN_QUICK_START_POST_RAW = (
+            len(synthetic_guide_post_raw),
+            hashlib.sha256(synthetic_guide_post_raw).hexdigest(),
+        )
         UPSTREAM.verify_topic_seed_semantics(synthetic_seed_core)
         seed_hostiles = (
             (
@@ -3150,6 +3161,16 @@ def test_branding_email_renderer_contract() -> None:
                 b"%{base_url}\n",
                 b"https://foreign.invalid/\n",
             ),
+            (
+                "lib/post_creator.rb",
+                b'TextCleaner.normalize_whitespaces(@opts[:raw] || "").rstrip',
+                b'(@opts[:raw] || "").rstrip',
+            ),
+            (
+                "lib/text_cleaner.rb",
+                b'text&.gsub(@@whitespaces_regexp, " ")',
+                b"text",
+            ),
         )
         for path, current, stale in seed_hostiles:
             hostile_core = dict(synthetic_seed_core)
@@ -3164,6 +3185,7 @@ def test_branding_email_renderer_contract() -> None:
             raise RuntimeError("Pinned topic-seed semantic gate accepted a hostile implementation.")
     finally:
         UPSTREAM.PINNED_TOPIC_SEED_EVIDENCE = original_topic_seed_evidence
+        UPSTREAM.PINNED_ADMIN_QUICK_START_POST_RAW = original_admin_quick_start_post_raw
 
     verifier_hostiles = (
         upstream.replace(

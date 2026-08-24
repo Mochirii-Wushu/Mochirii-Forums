@@ -96,8 +96,11 @@ values, binds HTTP to loopback, and creates no provider resource. It must prove:
   before the narrative system user is saved, and fixed identity, profile,
   active-avatar, and no-Gravatar subchecks remain true after Sidekiq processing;
 - the system-owned staff Admin Quick Start topic is revised only from the exact
-  pinned upstream seed to the exact reviewed Mochirii guide; the exact successor
-  is idempotent, while any unexpected staff edit fails closed without overwrite;
+  pinned upstream seed after the pinned `TextCleaner` and `PostCreator`
+  whitespace/`rstrip` storage transformation to the exact reviewed Mochirii
+  guide; source-file and stored-post digests are independently bound, the exact
+  successor is idempotent, and any unexpected staff edit fails closed without
+  overwrite;
 - the administrator recovery mail contains only the exact fixture-token path
   at the mode-bound Forums origin: HTTP is accepted solely for the explicit
   loopback fixture, while non-fixture verification requires HTTPS; and the

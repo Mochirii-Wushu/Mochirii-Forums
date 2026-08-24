@@ -195,7 +195,7 @@ checks["narrative_system_user_branded"] =
 '''
 ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9eb5ee81a931a5492d03f5c"
 RUNTIME_VERIFIER_SHA256 = "76fb956da7067e253ce71a11c67296b7d9d21302413670ae9964d8e1ddf58b6c"
-CONFIGURE_SITE_SHA256 = "ead5f1811d775dadc3749a9721fabaadd01baf03937e769fd0f04d5e6d17f9d0"
+CONFIGURE_SITE_SHA256 = "a1fce6a854bb2a2a3dab16065d7f3073f9dc630999c6bafda6681281e8ead505"
 APP_TEMPLATE_SHA256 = "75c024e353ef6441be58d3ad54ebc0b485660d06cc79e7543f955bd722cc49b2"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "dcd105f619674983c42c92eeff2f06dbdc37fca3779aa5e13acdbc8b80ffc09c"
@@ -296,7 +296,7 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
 BRANDING_EMAIL_RENDERER_SHA256 = "0b504c71c1de2053585a20848e0515d2507d6d0b2a41c24eb99b83204b88c15c"
-PINNED_SOURCE_VERIFIER_SHA256 = "9bbbd6a6820f0835bf437d8853e30ca640ede17573c668e7bd64c1b02cdff4fc"
+PINNED_SOURCE_VERIFIER_SHA256 = "f4e408f8dc3552d7c06ba2ac732e8a82ddc17dfa59fa0af32ee0d0ae774f5b7d"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
@@ -385,6 +385,16 @@ PINNED_TOPIC_SEED_EVIDENCE = [
         "path": "lib/seed_data/topics.rb",
         "bytes": 7537,
         "sha256": "2e43f4a9f95f19d1e928e5ef6b873ed4f66144d91280f400a63e6e23e9029020",
+    },
+    {
+        "path": "lib/post_creator.rb",
+        "bytes": 22044,
+        "sha256": "b4cf0a70dde716e8785239498d84a4612fc26f3e9607053abfd64c1edb7a1b52",
+    },
+    {
+        "path": "lib/text_cleaner.rb",
+        "bytes": 3043,
+        "sha256": "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a",
     },
 ]
 PINNED_GRAVATAR_EVIDENCE = [
@@ -587,7 +597,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "91a73d1f8f6da7d5345629174203328f822de726bcaa0c24e26e05549f38ffb6",
+    "docs/operations/third-party-components.v1.json": "60423dba376be32d247e6d2b6a50c4e7a44e8168530656eeeadc2729893e2180",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -780,8 +790,8 @@ def validate_narrative_avatar_contract(template: str, configure: str, verifier: 
         fail("Administrator quick-start replacement differs from the exact reviewed template.")
     configurator_contract = (
         'require "digest"\n',
-        "normalized_upstream_admin_quick_start.bytesize == 1905 &&\n",
-        '      "94d08273429f2e919890201c2d21608595b78d384e4d3d7dc180659918744f50"\n',
+        "normalized_upstream_admin_quick_start.bytesize == 1904 &&\n",
+        '      "2416035d0c2dedd589a39005285277b181cf1723dd8cbf113e45f9175df12a12"\n',
         "if admin_quick_start.raw == mochirii_admin_quick_start\n",
         "elsif untouched_upstream_admin_quick_start\n",
         "  admin_quick_start.revise(Discourse.system_user, { raw: mochirii_admin_quick_start })\n",
@@ -1101,6 +1111,9 @@ def validate_pinned_source_verifier(source: str) -> None:
         "PINNED_ADMIN_QUICK_START_TOPIC_BLOCK = b'''",
         "PINNED_TOPIC_CREATE_GUARD_BLOCK = b'''",
         "PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''",
+        "PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK = b'''",
+        "PINNED_TEXT_CLEANER_WHITESPACE_BLOCK = b'''",
+        "PINNED_ADMIN_QUICK_START_POST_RAW = (",
         "PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''",
         "PINNED_TOPIC_FOR_DIGEST_BLOCK = b'''",
         '        PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK,',

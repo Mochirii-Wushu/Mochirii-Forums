@@ -113,7 +113,19 @@ PINNED_TOPIC_SEED_EVIDENCE = {
         7537,
         "2e43f4a9f95f19d1e928e5ef6b873ed4f66144d91280f400a63e6e23e9029020",
     ),
+    "lib/post_creator.rb": (
+        22044,
+        "b4cf0a70dde716e8785239498d84a4612fc26f3e9607053abfd64c1edb7a1b52",
+    ),
+    "lib/text_cleaner.rb": (
+        3043,
+        "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a",
+    ),
 }
+PINNED_ADMIN_QUICK_START_POST_RAW = (
+    1904,
+    "2416035d0c2dedd589a39005285277b181cf1723dd8cbf113e45f9175df12a12",
+)
 PINNED_TOPIC_FIXTURE_SOURCE = b'''# frozen_string_literal: true
 
 if !Rails.env.test?
@@ -159,6 +171,23 @@ PINNED_ADMIN_QUICK_START_RAW_BLOCK = b'''    def admin_quick_start_raw
       content.gsub!("%{base_url}", Discourse.base_url)
       content
     end
+'''
+PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK = b'''  def setup_post
+    @opts[:raw] = TextCleaner.normalize_whitespaces(@opts[:raw] || "").rstrip
+
+    post =
+      Post.new(
+        raw: @opts[:raw],
+'''
+PINNED_TEXT_CLEANER_WHITESPACE_BLOCK = b'''  @@whitespaces_regexp =
+    Regexp.new(
+      "(\\u00A0|\\u1680|\\u180E|[\\u2000-\\u200A]|\\u2028|\\u2029|\\u202F|\\u205F|\\u3000)",
+      Regexp::IGNORECASE,
+    ).freeze
+
+  def self.normalize_whitespaces(text)
+    text&.gsub(@@whitespaces_regexp, " ")
+  end
 '''
 PINNED_USER_NOTIFICATIONS_DIGEST_BLOCK = b'''  def digest(user, opts = {})
     build_summary_for(user)
@@ -1157,13 +1186,25 @@ def verify_topic_seed_semantics(core: dict[str, bytes]) -> None:
         if topics.count(block) != 1:
             raise RuntimeError(f"The pinned {label} changed.")
 
+    if core["lib/post_creator.rb"].count(PINNED_POST_CREATOR_RAW_NORMALIZATION_BLOCK) != 1:
+        raise RuntimeError("The pinned post-creation raw normalization changed.")
+    if core["lib/text_cleaner.rb"].count(PINNED_TEXT_CLEANER_WHITESPACE_BLOCK) != 1:
+        raise RuntimeError("The pinned post whitespace normalizer changed.")
+
     guide = core["docs/ADMIN-QUICK-START-GUIDE.md"]
+    guide_text = guide.decode("utf-8")
+    mapped_whitespace = "\u00a0\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+    normalized_guide = guide.rstrip()
     if (
         guide.count(b"%{base_url}") != 7
         or guide.count(b"Discourse") != 7
         or guide.count(b"discourse.org") != 3
         or not guide.startswith(b"*Welcome to your new community, and thank you for choosing Discourse!*\n")
         or b"https://github.com/discourse/discourse/blob/main/docs/INSTALL-email.md" not in guide
+        or any(character in guide_text for character in mapped_whitespace)
+        or normalized_guide != guide[:-1]
+        or (len(normalized_guide), hashlib.sha256(normalized_guide).hexdigest())
+        != PINNED_ADMIN_QUICK_START_POST_RAW
     ):
         raise RuntimeError("The pinned administrator quick-start guide semantics changed.")
 

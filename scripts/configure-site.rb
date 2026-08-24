@@ -255,9 +255,12 @@ mochirii_admin_quick_start =
 normalized_upstream_admin_quick_start =
   admin_quick_start.raw.gsub(Discourse.base_url, "%{base_url}")
 untouched_upstream_admin_quick_start =
-  normalized_upstream_admin_quick_start.bytesize == 1905 &&
+  # The pinned PostCreator normalizes special whitespace and strips the final
+  # source-file LF before storing raw. Exact upstream evidence separately binds
+  # that transformation and proves this guide contains no mapped whitespace.
+  normalized_upstream_admin_quick_start.bytesize == 1904 &&
     Digest::SHA256.hexdigest(normalized_upstream_admin_quick_start) ==
-      "94d08273429f2e919890201c2d21608595b78d384e4d3d7dc180659918744f50"
+      "2416035d0c2dedd589a39005285277b181cf1723dd8cbf113e45f9175df12a12"
 
 if admin_quick_start.raw == mochirii_admin_quick_start
   # Exact idempotent successor; retain it without a new revision.
