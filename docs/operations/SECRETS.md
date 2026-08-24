@@ -23,7 +23,7 @@ exactly these keys and no others:
 | `FORUMS_SMTP_ADDRESS` | Existing authorized SMTP DNS hostname |
 | `FORUMS_SMTP_AUTHENTICATION` | Reviewed `plain`, `login`, or `cram_md5` value |
 | `FORUMS_SMTP_PASSWORD` | Runtime-only SMTP credential |
-| `FORUMS_SMTP_PORT` | Existing implicit-TLS SMTP submission port |
+| `FORUMS_SMTP_PORT` | Existing authenticated STARTTLS submission port |
 | `FORUMS_SMTP_USER_NAME` | Runtime SMTP identity |
 
 The exact repository commit is a separate validated deploy argument, not a
@@ -33,10 +33,10 @@ atomically replace the protected runtime JSON from DiscourseConnect `false`
 with an empty secret to `true` with the exact secret, then rebuild the same
 reviewed current-`main` source commit. This creates a new configuration-digest
 tuple for that commit; it never changes the stored pre-activation tuple. TLS
-transport policy is fixed in the sanitized template: forced TLS, STARTTLS
-disabled, peer verification enabled, and SMTP HELO domain
-`forums.mochirii.com`. There is no
-runtime switch that can weaken those settings.
+transport policy is fixed in the sanitized template and its reviewed
+initializer: implicit TLS disabled, STARTTLS required rather than opportunistic,
+peer verification enabled, and SMTP HELO domain `forums.mochirii.com`. There is
+no runtime switch that can weaken those settings.
 
 No SMTP provider or mail DNS change is selected or authorized by this
 repository. If the existing SMTP authority and Mochirii-owned sender cannot be

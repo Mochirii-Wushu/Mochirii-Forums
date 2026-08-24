@@ -221,15 +221,24 @@ checks["automatic_gravatar_downloads_disabled"] =
     SiteSetting.automatically_download_gravatars == false
 checks["mail_suppression_matches_runtime"] =
   SiteSetting.disable_emails == ENV.fetch("DISCOURSE_DISABLE_EMAILS")
-smtp = GlobalSetting.smtp_settings
+smtp_source = GlobalSetting.smtp_settings
+smtp = ActionMailer::Base.smtp_settings
 checks["smtp_transport_fail_closed"] =
-  smtp.is_a?(Hash) &&
+  smtp_source.is_a?(Hash) &&
+    smtp_source[:enable_starttls_auto] == true &&
+    !smtp_source.key?(:enable_starttls) &&
+    !smtp_source.key?(:tls) &&
+    !smtp_source.key?(:ssl) &&
+    smtp_source[:openssl_verify_mode].to_s == "peer" &&
+    smtp.is_a?(Hash) &&
     smtp[:address] == ENV.fetch("DISCOURSE_SMTP_ADDRESS") &&
     smtp[:port] == ENV.fetch("DISCOURSE_SMTP_PORT").to_i &&
     smtp[:domain] == "forums.mochirii.com" &&
     smtp[:authentication].to_s == ENV.fetch("DISCOURSE_SMTP_AUTHENTICATION") &&
-    smtp[:tls] == true &&
-    smtp[:enable_starttls_auto] == false &&
+    smtp[:enable_starttls] == true &&
+    !smtp.key?(:enable_starttls_auto) &&
+    !smtp.key?(:tls) &&
+    !smtp.key?(:ssl) &&
     smtp[:openssl_verify_mode].to_s == "peer"
 checks["notification_sender_runtime_bound"] =
   SiteSetting.notification_email == ENV.fetch("MOCHIRII_EXPECTED_NOTIFICATION_EMAIL") &&

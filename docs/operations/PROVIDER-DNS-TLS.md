@@ -14,9 +14,10 @@ operator session:
 2. The exact current Forums `main` commit passes source CI and the official
    one-effective-CPU disposable bootstrap.
 3. An existing, already authorized SMTP authority and Mochirii-owned sender
-   pass implicit-TLS authenticated submission and branded test delivery at no
-   new fixed cost. Creating a mail provider/account, selecting a mail hostname,
-   or changing mail DNS is outside scope.
+   pass mandatory STARTTLS with peer certificate verification, authenticated
+   submission, and branded test delivery at no new fixed cost. Creating a mail
+   provider/account, selecting a mail hostname, or changing mail DNS is outside
+   scope.
 4. Current provider readback proves SGP1 capacity and passes
    `scripts/verify-cost-evidence.py` with an observation within its maximum age:
    `s-1vcpu-2gb` at `$12.00` monthly, weekly Basic backups at 20 percent or

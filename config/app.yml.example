@@ -45,8 +45,8 @@ __MOCHIRII_TLS_ENV__
   DISCOURSE_SMTP_PORT: __MOCHIRII_SMTP_PORT__
   DISCOURSE_SMTP_USER_NAME: __MOCHIRII_SMTP_USER_NAME__
   DISCOURSE_SMTP_PASSWORD: __MOCHIRII_SMTP_PASSWORD__
-  DISCOURSE_SMTP_FORCE_TLS: "true"
-  DISCOURSE_SMTP_ENABLE_START_TLS: "false"
+  DISCOURSE_SMTP_FORCE_TLS: "false"
+  DISCOURSE_SMTP_ENABLE_START_TLS: "true"
   DISCOURSE_SMTP_DOMAIN: "forums.mochirii.com"
   DISCOURSE_SMTP_OPENSSL_VERIFY_MODE: "peer"
   DISCOURSE_SMTP_AUTHENTICATION: __MOCHIRII_SMTP_AUTHENTICATION__
@@ -172,6 +172,27 @@ __MOCHIRII_TLS_HOOKS__
 
 run:
 __MOCHIRII_TLS_RUN__
+  - file:
+      path: /var/www/discourse/config/initializers/mochirii_required_starttls.rb
+      contents: |
+        # frozen_string_literal: true
+
+        Rails.application.config.after_initialize do
+          configured = ActionMailer::Base.smtp_settings
+          unless configured.is_a?(Hash) &&
+            configured[:enable_starttls_auto] == true &&
+            !configured.key?(:enable_starttls) &&
+            !configured.key?(:tls) &&
+            !configured.key?(:ssl) &&
+            configured[:openssl_verify_mode].to_s == "peer"
+            raise "SMTP STARTTLS input contract differs"
+          end
+
+          required = configured.dup
+          required.delete(:enable_starttls_auto)
+          required[:enable_starttls] = true
+          ActionMailer::Base.smtp_settings = required.freeze
+        end
   - file:
       path: /var/www/discourse/config/initializers/mochirii_sensitive_parameter_filter.rb
       contents: |
