@@ -190,10 +190,10 @@ def timestamp() -> str:
 
 def seal_access() -> None:
     deploy = protected_regular(
-        STATE_ROOT / "deploy/.ssh/authorized_keys", 0o600
+        STATE_ROOT / "deploy/.ssh/authorized_keys", 0o644
     )
     operator = protected_regular(
-        STATE_ROOT / "operator/.ssh/authorized_keys", 0o600
+        STATE_ROOT / "operator/.ssh/authorized_keys", 0o644
     )
     proof = protected_regular(STATE_ROOT / "operator-ssh-proved", 0o600, maximum=65536)
     if proof != b"operatorSshAndSudoVerified=true\n":

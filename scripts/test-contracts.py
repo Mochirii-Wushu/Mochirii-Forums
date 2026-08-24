@@ -8586,12 +8586,25 @@ def test_host_security_control_plane_contract() -> None:
         'Prepared installation cannot replace an already hardened host',
         'host-access-install.pending.json', 'os.fsync(writer.fileno())',
         'install -d -m 0755 -o root -g root /var/lib/mochirii "${state_root}"',
-        'install -d -m 0700 -o root -g root "${state_root}/deploy/.ssh"',
+        'install -d -m 0755 -o root -g root "${state_root}/deploy/.ssh"',
+        'atomic_install "${candidate}" "${target}" 0644',
+        'sudo -u "${deploy_user}" test -r "${state_root}/deploy/.ssh/authorized_keys"',
+        'sudo -u "${operator_user}" test -r "${state_root}/operator/.ssh/authorized_keys"',
         'timeout --signal=TERM --kill-after=5s 15s sshd -T',
         'authorizedkeyscommanduser', 'authorizedprincipalscommanduser',
         'permituserenvironment',
     )):
         raise RuntimeError("Initial host-control publication or hardened-retry boundary differs.")
+    if 'install -d -m 0700 -o root -g root "${state_root}/deploy/.ssh"' in installer:
+        raise RuntimeError("Initial host-control publication restored an unreadable SSH directory mode.")
+    access_evidence = (ROOT / "scripts/host-control-evidence.py").read_text(encoding="utf-8")
+    if any(value not in access_evidence for value in (
+        'STATE_ROOT / "deploy/.ssh/authorized_keys", 0o644',
+        'STATE_ROOT / "operator/.ssh/authorized_keys", 0o644',
+    )):
+        raise RuntimeError("Host-access evidence does not bind the privilege-dropped readable key mode.")
+    if '"$(stat -c \'%U:%G %a\' "${key_file}")" == "root:root 644"' not in verifier or 'sudo -u "mochirii-forums-${home}" test -r "${key_file}"' not in verifier:
+        raise RuntimeError("Terminal host verification does not prove privilege-dropped authorized-key readability.")
     journal_position = upgrade.index('os.link(candidate, journal_path, follow_symlinks=False)')
     timer_stop_position = upgrade.index('systemctl stop mochirii-forums-media-certificate-renew.timer', journal_position)
     first_publication = upgrade.index('atomic_install "${candidate}/${relative}"', timer_stop_position)

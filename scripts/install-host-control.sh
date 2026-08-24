@@ -486,7 +486,7 @@ verify_account "${deploy_user}" "${deploy_group}" "${state_root}/deploy" || fail
 verify_account "${operator_user}" "${operator_group}" "${state_root}/operator" || fail "Operator account tuple differs."
 
 install -d -m 0755 -o root -g root "${state_root}/deploy" "${state_root}/operator"
-install -d -m 0700 -o root -g root "${state_root}/deploy/.ssh" "${state_root}/operator/.ssh"
+install -d -m 0755 -o root -g root "${state_root}/deploy/.ssh" "${state_root}/operator/.ssh"
 install -d -m 0700 -o "${deploy_user}" -g "${deploy_group}" "${state_root}/incoming"
 install -d -m 0755 -o root -g root /opt/mochirii/forums/runtime-assets /usr/local/libexec/mochirii-forums
 install -d -m 0700 -o root -g root /var/discourse/containers/releases
@@ -510,11 +510,14 @@ write_access_journal "${expected_commit}" "${manifest_sha}" "${deploy_key_sha}" 
 for pair in "${deploy_key_candidate}:${state_root}/deploy/.ssh/authorized_keys:${deploy_key_sha}" "${operator_key_candidate}:${state_root}/operator/.ssh/authorized_keys:${operator_key_sha}"; do
   IFS=: read -r candidate target expected_sha <<<"${pair}"
   if [[ -e ${target} || -L ${target} ]]; then
-    [[ -f ${target} && ! -L ${target} && "$(stat -c '%U:%G %a' "${target}")" == "root:root 600" ]] || fail "Existing authorized key target is unsafe."
+    [[ -f ${target} && ! -L ${target} && "$(stat -c '%U:%G %a' "${target}")" =~ ^root:root\ (600|644)$ ]] || fail "Existing authorized key target is unsafe."
     [[ "$(sha256sum -- "${target}" | awk '{print $1}')" == "${expected_sha}" ]] || fail "Existing authorized key differs from the journaled initial key."
-  else atomic_install "${candidate}" "${target}" 0600; fi
+  fi
+  atomic_install "${candidate}" "${target}" 0644
 done
 rm -f -- "${deploy_key_candidate}" "${operator_key_candidate}"
+sudo -u "${deploy_user}" test -r "${state_root}/deploy/.ssh/authorized_keys" || fail "Deploy authorized key is unreadable after privilege drop."
+sudo -u "${operator_user}" test -r "${state_root}/operator/.ssh/authorized_keys" || fail "Operator authorized key is unreadable after privilege drop."
 
 mapfile -t control_records < <(manifest_records "${repository_root}") || fail "Host-control manifest validation failed."
 for record in "${control_records[@]}"; do

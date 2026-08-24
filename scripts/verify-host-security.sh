@@ -133,11 +133,12 @@ grep -Fq -- historical /usr/local/libexec/mochirii-forums/ssh-deploy-dispatch.py
 
 for home in deploy operator; do
   [[ -d ${state_root}/${home} && ! -L ${state_root}/${home} && "$(stat -c '%U:%G %a' "${state_root}/${home}")" == "root:root 755" ]] || fail "${home} home ownership or mode differs."
-  [[ -d ${state_root}/${home}/.ssh && ! -L ${state_root}/${home}/.ssh && "$(stat -c '%U:%G %a' "${state_root}/${home}/.ssh")" == "root:root 700" ]] || fail "${home} SSH tree ownership or mode differs."
+  [[ -d ${state_root}/${home}/.ssh && ! -L ${state_root}/${home}/.ssh && "$(stat -c '%U:%G %a' "${state_root}/${home}/.ssh")" == "root:root 755" ]] || fail "${home} SSH tree ownership or mode differs."
   mapfile -t ssh_inventory < <(find "${state_root}/${home}/.ssh" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)
   [[ ${#ssh_inventory[@]} -eq 1 && ${ssh_inventory[0]} == authorized_keys ]] || fail "${home} SSH tree contains an alternate key or user-rc source."
   key_file="${state_root}/${home}/.ssh/authorized_keys"
-  [[ -f ${key_file} && ! -L ${key_file} && "$(stat -c '%U:%G %a' "${key_file}")" == "root:root 600" ]] || fail "${home} authorized key ownership or mode differs."
+  [[ -f ${key_file} && ! -L ${key_file} && "$(stat -c '%U:%G %a' "${key_file}")" == "root:root 644" ]] || fail "${home} authorized key ownership or mode differs."
+  sudo -u "mochirii-forums-${home}" test -r "${key_file}" || fail "${home} authorized key is unreadable after privilege drop."
 done
 
 [[ -f ${operator_proof} && ! -L ${operator_proof} && "$(stat -c '%U:%G %a' "${operator_proof}")" == "root:root 600" ]] || fail "Operator SSH proof is absent or unsafe."
