@@ -8556,12 +8556,18 @@ def test_host_security_control_plane_contract() -> None:
     installer = (ROOT / "scripts/install-host-control.sh").read_text(encoding="utf-8")
     hardened = (ROOT / "config/sshd-forums.conf").read_text(encoding="utf-8")
     prepared = (ROOT / "config/sshd-forums-prepared.conf").read_text(encoding="utf-8")
+    operator_sudoers = (ROOT / "config/sudoers-forums-operator").read_text(encoding="utf-8")
     verifier = (ROOT / "scripts/verify-host-security.sh").read_text(encoding="utf-8")
     upgrade = (ROOT / "scripts/upgrade-host-control.sh").read_text(encoding="utf-8")
     host_verify = (ROOT / "scripts/verify-host.sh").read_text(encoding="utf-8")
     dispatcher = (ROOT / "scripts/ssh-deploy-dispatch.py").read_text(encoding="utf-8")
     finalizer = (ROOT / "scripts/host-finalize-authentication.sh").read_text(encoding="utf-8")
 
+    if operator_sudoers.splitlines() != [
+        'Defaults:mochirii-forums-operator env_keep += "SSH_CONNECTION"',
+        "mochirii-forums-operator ALL=(ALL:ALL) NOPASSWD: ALL",
+    ]:
+        raise RuntimeError("Operator sudoers does not preserve only the live SSH session evidence.")
     if "PermitRootLogin no" in prepared or "AllowUsers " in prepared:
         raise RuntimeError("Prepared SSH policy can lock out bootstrap before operator proof.")
     required_hardening = (

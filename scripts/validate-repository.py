@@ -5726,6 +5726,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     installer = read("scripts/install-host-control.sh")
     hardened_ssh = read("config/sshd-forums.conf")
     prepared_ssh = read("config/sshd-forums-prepared.conf")
+    operator_sudoers = read("config/sudoers-forums-operator")
     host_security = read("scripts/verify-host-security.sh")
     host_verify = read("scripts/verify-host.sh")
     deployment_checkout = read("scripts/verify-discourse-docker-checkout.sh")
@@ -5733,6 +5734,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     control_evidence = read("scripts/host-control-evidence.py")
     operation_lock = read("scripts/host-operation-lock.py")
     operation_lock_fixture = read("scripts/test-host-operation-lock.py")
+    if operator_sudoers.splitlines() != [
+        'Defaults:mochirii-forums-operator env_keep += "SSH_CONNECTION"',
+        "mochirii-forums-operator ALL=(ALL:ALL) NOPASSWD: ALL",
+    ]:
+        fail("Operator sudoers does not preserve only the live SSH session evidence.")
     require_text(
         operation_lock,
         [

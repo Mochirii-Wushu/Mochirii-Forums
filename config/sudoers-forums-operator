@@ -1,1 +1,2 @@
+Defaults:mochirii-forums-operator env_keep += "SSH_CONNECTION"
 mochirii-forums-operator ALL=(ALL:ALL) NOPASSWD: ALL
