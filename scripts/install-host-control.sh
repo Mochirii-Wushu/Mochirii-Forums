@@ -348,6 +348,42 @@ finally:
 PY
 }
 
+validate_operator_proof() {
+  local proof_path="$1"
+  python3 -B - "${proof_path}" <<'PY'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+flags = (
+    os.O_RDONLY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+)
+try:
+    descriptor = os.open(path, flags)
+except OSError:
+    raise SystemExit(1)
+try:
+    metadata = os.fstat(descriptor)
+    expected = b"operatorSshAndSudoVerified=true\n"
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or os.read(descriptor, len(expected) + 1) != expected
+        or os.read(descriptor, 1) != b""
+    ):
+        raise SystemExit(1)
+finally:
+    os.close(descriptor)
+PY
+}
+
 [[ ${EUID} -eq 0 ]] || fail "Host control installation must run as root."
 [[ $# -ge 1 ]] || fail "Usage: install-host-control.sh prepare EXPECTED_COMMIT DEPLOY_AUTHORIZED_KEY OPERATOR_AUTHORIZED_KEY | harden 'HARDEN MOCHIRII FORUMS SSH'"
 phase="$1"; shift
@@ -390,7 +426,7 @@ PY
   sudo -u "${operator_user}" sudo -n /usr/bin/true || fail "Operator maintenance sudo is unavailable."
   proof="${state_root}/operator-ssh-proved"
   if [[ -e ${proof} || -L ${proof} ]]; then
-    [[ -f ${proof} && ! -L ${proof} && "$(stat -c '%U:%G %a' "${proof}")" == "root:root 600" && "$(cat -- "${proof}")" == operatorSshAndSudoVerified=true ]] || fail "Existing operator SSH proof is unsafe."
+    validate_operator_proof "${proof}" || fail "Existing operator SSH proof is unsafe."
   else
     proof_candidate="$(mktemp "${state_root}/.operator-ssh-proved.XXXXXXXX")"
     printf '%s\n' operatorSshAndSudoVerified=true >"${proof_candidate}"
@@ -411,8 +447,14 @@ fi
 expected_commit="$1"; authorized_keys_source="$2"; operator_keys_source="$3"
 [[ ${expected_commit} =~ ^[0-9a-f]{40}$ ]] || fail "Expected host-control commit is malformed."
 validate_repository_binding "${repository_root}" "${expected_commit}" || fail "Host-control source is not exact clean canonical main."
-if [[ -e ${state_root}/operator-ssh-proved || -L ${state_root}/operator-ssh-proved || -e ${state_root}/current-host-access.json || -L ${state_root}/current-host-access.json ]]; then
-  fail "Prepared installation cannot replace an already hardened host; use the governed host-control upgrade procedure."
+for hardened_record in "${state_root}/current-host-access.json" "${state_root}/current-host-control.json"; do
+  if [[ -e ${hardened_record} || -L ${hardened_record} ]]; then
+    fail "Prepared installation cannot replace an already hardened host; use the governed host-control upgrade procedure."
+  fi
+done
+proof="${state_root}/operator-ssh-proved"
+if [[ -e ${proof} || -L ${proof} ]]; then
+  validate_operator_proof "${proof}" || fail "Existing operator SSH proof is unsafe."
 fi
 for source in "${authorized_keys_source}" "${operator_keys_source}"; do
   [[ -f ${source} && ! -L ${source} ]] || fail "Authorized-key source must be one regular file."

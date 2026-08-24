@@ -276,6 +276,15 @@ session. Preserve the provider console as the recovery path if SSH
 configuration or both accounts fail. Never use the automation key as the
 operator key.
 
+If hardening fails after the exact operator proof is published but before the
+root-owned hardened access/control records are sealed, keep the proof as
+evidence. A reviewed newer canonical-main repair may rerun `prepare` only while
+both hardened records remain absent and the proof is one unlinked regular
+`root:root` mode-`0600` file containing exactly
+`operatorSshAndSudoVerified=true` plus its final line feed. An unsafe proof,
+either hardened record, or a missing live operator SSH/sudo context remains a
+hard stop. Never delete, rewrite, or synthesize the proof to bypass recovery.
+
 Both accounts have exact root-owned mode-`0755` homes, root-owned mode-`0755`
 `.ssh` directories, root-owned mode-`0644` single `authorized_keys` files,
 `/bin/bash`, locked passwords, their matching primary group, and no
