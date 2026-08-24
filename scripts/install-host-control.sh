@@ -217,7 +217,7 @@ validate_repository_binding() {
 }
 
 effective_value() { awk -v setting="$2" '$1 == setting { found=$2 } END { print found }' <<<"$1"; }
-effective_allow_users() { awk '$1 == "allowusers" { $1=""; sub(/^ /, ""); found=$0 } END { print found }' <<<"$1"; }
+effective_allow_users() { awk '$1 == "allowusers" { for (i = 2; i <= NF; i++) { found = found (found == "" ? "" : " ") $i } } END { print found }' <<<"$1"; }
 
 validate_user_ssh() {
   local user="$1" phase="$2" effective expected_keys expected_force expected_tty

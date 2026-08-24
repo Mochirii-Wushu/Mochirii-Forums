@@ -8827,6 +8827,72 @@ def test_disposable_nginx_fixture_final_command_contract() -> None:
         raise RuntimeError("Disposable Nginx fixture hostile mutation was accepted.")
 
 
+def test_effective_allow_users_parser_contract() -> None:
+    installer = (ROOT / "scripts/install-host-control.sh").read_text(encoding="utf-8")
+    verifier = (ROOT / "scripts/verify-host-security.sh").read_text(encoding="utf-8")
+    expected_program = (
+        '$1 == "allowusers" { for (i = 2; i <= NF; i++) { '
+        'found = found (found == "" ? "" : " ") $i } } END { print found }'
+    )
+    installer_match = re.search(
+        r"effective_allow_users\(\) \{ awk '([^']+)' <<<\"\$1\"; \}", installer
+    )
+    verifier_match = re.search(
+        r"allow_users=\"\$\(awk '([^']+)' <<<\"\$\{effective\}\"\)\"", verifier
+    )
+    if installer_match is None or verifier_match is None:
+        raise RuntimeError("Effective AllowUsers parser is absent from a real host consumer.")
+    if installer_match.group(1) != expected_program or verifier_match.group(1) != expected_program:
+        raise RuntimeError("Host consumers do not share the reviewed AllowUsers parser.")
+
+    awk = shutil.which("awk")
+    if awk is None:
+        return
+    fixtures = (
+        (
+            "allowusers mochirii-forums-operator\nallowusers mochirii-forums-deploy\n",
+            "mochirii-forums-operator mochirii-forums-deploy",
+            True,
+        ),
+        (
+            "allowusers mochirii-forums-operator mochirii-forums-deploy\n",
+            "mochirii-forums-operator mochirii-forums-deploy",
+            True,
+        ),
+        (
+            "allowusers mochirii-forums-operator\n",
+            "mochirii-forums-operator mochirii-forums-deploy",
+            False,
+        ),
+        (
+            "allowusers mochirii-forums-operator\nallowusers mochirii-forums-operator\n"
+            "allowusers mochirii-forums-deploy\n",
+            "mochirii-forums-operator mochirii-forums-deploy",
+            False,
+        ),
+        (
+            "permitrootlogin no\nallowusers mochirii-forums-operator\n"
+            "allowusers unexpected-principal\nallowusers mochirii-forums-deploy\n",
+            "mochirii-forums-operator mochirii-forums-deploy",
+            False,
+        ),
+    )
+    for source, expected, should_match in fixtures:
+        completed = subprocess.run(
+            [awk, expected_program],
+            input=source,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        if completed.returncode != 0 or completed.stderr:
+            raise RuntimeError("Reviewed AllowUsers parser could not execute.")
+        matches = completed.stdout.rstrip("\n") == expected
+        if matches != should_match:
+            raise RuntimeError("Reviewed AllowUsers parser accepted a hostile effective tuple.")
+
+
 def main() -> int:
     test_renderer()
     test_opensearch_filter_contract()
@@ -8872,6 +8938,7 @@ def main() -> int:
     test_runtime_rails_execution_contract()
     test_disposable_restore_command_diagnostics()
     test_disposable_nginx_fixture_final_command_contract()
+    test_effective_allow_users_parser_contract()
     print("Configuration and theme hostile fixtures passed.")
     return 0
 

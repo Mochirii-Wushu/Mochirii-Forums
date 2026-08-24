@@ -6181,6 +6181,16 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     )
     if "authorized_keys2" in installer + hardened_ssh + prepared_ssh or "AuthorizedKeysCommand " not in hardened_ssh:
         fail("Host SSH source policy regained an alternate key source.")
+    allow_users_program = (
+        '$1 == "allowusers" { for (i = 2; i <= NF; i++) { '
+        'found = found (found == "" ? "" : " ") $i } } END { print found }'
+    )
+    if installer.count(f"awk '{allow_users_program}'") != 1 or host_security.count(
+        f"awk '{allow_users_program}'"
+    ) != 1:
+        fail("Host SSH consumers do not share the exact multi-row AllowUsers parser.")
+    if 'found=$0' in installer + host_security:
+        fail("Host SSH source retains only one emitted AllowUsers row.")
     require_text(
         host_security,
         [
