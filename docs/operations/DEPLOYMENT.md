@@ -330,7 +330,10 @@ active storage, backup, restore, or certificate recovery journals, verifies
 the currently installed controls, and fetches only public canonical `main`
 with credentials and alternate Git protocols disabled. It validates the
 candidate repository and exact `config/host-control-manifest.v1.json` target
-inventory before any installed byte changes.
+inventory before any installed byte changes. Candidate extraction discards
+archive ownership and permission grants under the script's restrictive umask,
+so the archive validator cannot receive group- or other-writable source paths
+from the trusted Git archive.
 
 The predecessor source is not inferred from the application-release tree. The
 current root-owned control pointer must select the exact retained
