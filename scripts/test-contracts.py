@@ -8827,15 +8827,19 @@ def test_host_control_predecessor_archive_binding() -> None:
             '"releaseArchiveFile", "releaseArchiveSha256", "releaseArchiveBytes"',
             'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
             'document.get("releaseArchiveFile") != str(archive)',
-            'exact_regular(helper_path, 0o644, 2 * 1024 * 1024, "Candidate archive authority")',
+            'exact_regular(helper_path, 0o600, 2 * 1024 * 1024, "Candidate archive authority")',
             'metadata.st_nlink != 1',
             'module.inspect_archive(sealed_archive, commit)',
             'module.extract_exact(sealed_archive, identity, source_root)',
             'module.source_identity(source_root)',
             'tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}"',
             'bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${candidate}" verify',
+            'if ! predecessor_output="$(',
+            'readarray -t predecessor_state <<<"${predecessor_output}"',
             '[[ ${previous_evidence_sha} == "${previous_sha}" ]]',
             'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
+            'if ! previous_state_output="$(',
+            'readarray -t previous_state <<<"${previous_state_output}"',
             'previous_source="${transaction}/previous-source/${previous_commit}"',
         )
         if any(value not in source for value in required):
@@ -8888,6 +8892,11 @@ def test_host_control_predecessor_archive_binding() -> None:
         upgrade.replace("module.extract_exact(sealed_archive, identity, source_root)", "pass", 1),
         upgrade.replace("module.source_identity(source_root)", "(tree, content_manifest)", 1),
         upgrade.replace('metadata.st_nlink != 1', 'False', 1),
+        upgrade.replace(
+            'exact_regular(helper_path, 0o600, 2 * 1024 * 1024, "Candidate archive authority")',
+            'exact_regular(helper_path, 0o644, 2 * 1024 * 1024, "Candidate archive authority")',
+            1,
+        ),
         upgrade.replace('document.get("releaseArchiveFile") != str(archive)', 'False', 1),
         upgrade.replace(
             'bind_previous_source "${transaction}/backup/current-host-control.json"',
@@ -8916,6 +8925,48 @@ def test_host_control_predecessor_archive_binding() -> None:
         except RuntimeError:
             continue
         raise RuntimeError("Host-control predecessor archive mutation escaped the contract test.")
+
+    if os.name == "posix":
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeError("Bash is required for the predecessor binding status fixture.")
+        capture_blocks = (
+            (
+                upgrade[upgrade.index('  local predecessor_output=""'):upgrade.index(
+                    '  local previous_commit="${predecessor_state[0]}"'
+                )],
+                "transaction=/transaction\ncandidate=/candidate\n",
+                "Pending host-control predecessor source is invalid.\n",
+            ),
+            (
+                upgrade[upgrade.index('previous_state_output=""'):upgrade.index(
+                    'previous_commit="${previous_state[0]}"'
+                )],
+                "control_pointer=/pointer\nstaging=/staging\ncandidate=/candidate\n",
+                "Current trusted host-control predecessor archive could not be reconstructed.\n",
+            ),
+        )
+        for block, variables, expected_error in capture_blocks:
+            harness = (
+                "set -u\n"
+                "fail() { printf '%s\\n' \"$1\" >&2; exit 73; }\n"
+                "bind_previous_source() { return 41; }\n"
+                "probe() {\n"
+                + variables
+                + block
+                + "}\nprobe\nexit 0\n"
+            )
+            completed = subprocess.run(
+                [bash, "-c", harness],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if completed.returncode != 73 or completed.stdout or completed.stderr != expected_error:
+                raise RuntimeError("Predecessor binding producer failure did not reach its fixed category.")
 
     bounded_block = upgrade.split("# PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN", 1)[1].split(
         "# PREDECESSOR_ARCHIVE_BINDING_PYTHON_END", 1
@@ -9025,7 +9076,7 @@ def test_host_control_predecessor_archive_binding() -> None:
             candidate.chmod(0o700)
             scripts.chmod(0o755)
             shutil.copyfile(helper, scripts / helper.name)
-            (scripts / helper.name).chmod(0o644)
+            (scripts / helper.name).chmod(0o600)
             return candidate
 
         def run_binding(
@@ -9062,6 +9113,14 @@ def test_host_control_predecessor_archive_binding() -> None:
         prepared_rows = prepared.stdout.splitlines()
         if prepared_rows[:2] != [commit, "3" * 64] or Path(prepared_rows[2]) != staging / "previous-source" / commit:
             raise RuntimeError("Prepared predecessor archive output differs.")
+
+        if os.name != "nt":
+            wrong_mode_staging = state_root / f".control-upgrade-staging-{'b' * 40}.QRSTUVWX"
+            wrong_mode_staging.mkdir(mode=0o700)
+            wrong_mode_candidate = make_candidate(wrong_mode_staging)
+            (wrong_mode_candidate / "scripts" / helper.name).chmod(0o644)
+            if run_binding(pointer, wrong_mode_staging, wrong_mode_candidate, "prepare").returncode == 0:
+                raise RuntimeError("Nonrestrictive candidate archive authority mode passed binding.")
 
         transaction = upgrades_root / f"{'8' * 40}-{'9' * 64}"
         os.replace(staging, transaction)
