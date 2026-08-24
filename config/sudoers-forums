@@ -1,0 +1,3 @@
+Defaults:mochirii-forums-deploy !setenv, !authenticate
+Cmnd_Alias MOCHIRII_FORUMS_CONTROL = /usr/local/sbin/mochirii-forums-deploy, /usr/local/sbin/mochirii-forums-verify, /usr/local/sbin/mochirii-forums-backup, /usr/local/sbin/mochirii-forums-restore
+mochirii-forums-deploy ALL=(root) NOPASSWD: MOCHIRII_FORUMS_CONTROL

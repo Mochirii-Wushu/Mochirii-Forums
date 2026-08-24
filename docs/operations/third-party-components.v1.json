@@ -1,16 +1,17 @@
 {
-  "schemaVersion": 1,
-  "recordedAt": "2026-08-11",
-  "status": "source-only-inventory-runtime-unapproved",
+  "schemaVersion": 3,
+  "recordedAt": "2026-08-14",
+  "status": "stage4-exact-revisions-selected-runtime-inactive",
   "application": {
     "name": "Discourse core",
     "repository": "https://github.com/discourse/discourse.git",
-    "revision": null,
+    "release": "v2026.7.1",
+    "tagObjectSha1": "11c70a765e46c3229d66e108883fa2d33f5d0b81",
+    "revision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+    "revisionTree": "0aeceebe79c4d2da8cf0fab213514335c201bfa7",
     "sourceImported": false,
+    "coreForked": false,
     "licenseSpdx": "GPL-2.0-or-later",
-    "licenseEvidenceUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/LICENSE.txt",
-    "copyrightEvidenceUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/COPYRIGHT.md",
-    "securityGuideUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/docs/SECURITY.md",
     "evidenceFiles": [
       {
         "path": "LICENSE.txt",
@@ -38,92 +39,296 @@
         "sha256": "03c22af27c90cb46d96f6964b0c1d7776c4e6e4fcc47f3665a2c8dab8722cbbb"
       }
     ],
-    "exactRevisionRequiredBeforeRelease": true
-  },
-  "supportedReleaseObservation": {
-    "observedAt": "2026-08-11",
-    "releaseIndex": "https://releases.discourse.org/",
-    "releasePage": "https://releases.discourse.org/changelog/v2026.7.1/",
-    "tagUrl": "https://github.com/discourse/discourse/tree/v2026.7.1",
-    "releaseFamily": "v2026.7",
-    "channel": "ESR",
-    "tag": "v2026.7.1",
-    "tagObjectSha1": "11c70a765e46c3229d66e108883fa2d33f5d0b81",
-    "tagObjectType": "tag",
-    "tagSignatureStatus": "unsigned",
-    "peeledCommitSha1": "cbf996f65aae3da1843224aa624bcd9a225931ac",
-    "peeledCommitTreeSha1": "0aeceebe79c4d2da8cf0fab213514335c201bfa7",
-    "peeledCommitSignatureStatus": "unsigned",
-    "releasedAt": "2026-07-31",
-    "plannedEndOfSupport": "2027-03-30",
-    "selectedForRuntime": false,
-    "compatibilityReviewed": false
+    "semanticEvidenceFiles": [
+      {
+        "path": "app/models/translation_override.rb",
+        "bytes": 7300,
+        "sha256": "72eff4674eb5989097f99e56274618093a5436d6f4c9acd147b4f26eb089c70a"
+      },
+      {
+        "path": "app/models/remote_theme.rb",
+        "bytes": 17934,
+        "sha256": "5e27599e6d622ea8f6fc0a0938338fbf4875b4d501c5ab86cd2eb50075ac2414"
+      },
+      {
+        "path": "app/models/theme.rb",
+        "bytes": 34639,
+        "sha256": "ac66d5c93971418cafdf23dc7f511759b5d305eb5e5bf2ffab0b8b65057e5c73"
+      },
+      {
+        "path": "app/models/user.rb",
+        "bytes": 73523,
+        "sha256": "79c453b7bf56a69f7919572020ffa5fdf9b32de37255439d0a22c2b73f3ff7ca"
+      },
+      {
+        "path": "app/models/user_avatar.rb",
+        "bytes": 7189,
+        "sha256": "a53eb92ffe3793ef32c3f48f3e3216133916424a19a2ffea376b22e0b705a5a9"
+      },
+      {
+        "path": "app/jobs/regular/update_gravatar.rb",
+        "bytes": 539,
+        "sha256": "2757a35e7521b9b6d8a7cdf7d6cf5e5ebf1273132956533dcf3951b27bca397c"
+      },
+      {
+        "path": "app/models/s3_region_site_setting.rb",
+        "bytes": 788,
+        "sha256": "d62ea0eafea398bfa376283d33b17ea9da050370f107e40b682e521f51fc63de"
+      },
+      {
+        "path": "lib/tasks/themes.rake",
+        "bytes": 17809,
+        "sha256": "39650acb10dc1bf4be1ddd180ec45532f6b030e07df1f57a8894fec508e0d54e"
+      },
+      {
+        "path": "config/nginx.sample.conf",
+        "bytes": 9272,
+        "sha256": "7d36d542b24ae8e981d172c33f639e581b9ff8477f73fd71fb5e9e9edf7a6742"
+      },
+      {
+        "path": "app/views/layouts/_head.html.erb",
+        "bytes": 1344,
+        "sha256": "fd9b06c6b412094457b7cb7fa00ac19d5ac5d492d21f6988e3396d9317448e27"
+      },
+      {
+        "path": "app/controllers/metadata_controller.rb",
+        "bytes": 4914,
+        "sha256": "7bf4d3f2034773d7cc5ad5c1ea621b8716caed198cd5f7a4a377bb6a04321de6"
+      },
+      {
+        "path": "app/views/metadata/opensearch.xml.erb",
+        "bytes": 926,
+        "sha256": "44e583c097b8dacc3a6825e7d9376505ff886c521b6632bd9ad176ea6360cc64"
+      },
+      {
+        "path": "lib/email.rb",
+        "bytes": 1549,
+        "sha256": "99ebebf096369af5bb765b5105abff94e28f6054be440ae922f0361ce1c1c0c2"
+      },
+      {
+        "path": "app/mailers/user_notifications.rb",
+        "bytes": 28133,
+        "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4"
+      },
+      {
+        "path": "app/models/topic.rb",
+        "bytes": 78502,
+        "sha256": "fd6468dd779edc6767dd8fb380e36c735b0698f6f4a2951a5e8a3b186ea6f056"
+      },
+      {
+        "path": "db/fixtures/990_topics.rb",
+        "bytes": 321,
+        "sha256": "e25b129d6c76d27837e1d4a9e187cd7b49bacfe79e3d438e1a7473909e48a5c9"
+      },
+      {
+        "path": "docs/ADMIN-QUICK-START-GUIDE.md",
+        "bytes": 1905,
+        "sha256": "94d08273429f2e919890201c2d21608595b78d384e4d3d7dc180659918744f50"
+      },
+      {
+        "path": "lib/seed_data/topics.rb",
+        "bytes": 7537,
+        "sha256": "2e43f4a9f95f19d1e928e5ef6b873ed4f66144d91280f400a63e6e23e9029020"
+      },
+      {
+        "path": "lib/post_creator.rb",
+        "bytes": 22044,
+        "sha256": "b4cf0a70dde716e8785239498d84a4612fc26f3e9607053abfd64c1edb7a1b52"
+      },
+      {
+        "path": "lib/post_revisor.rb",
+        "bytes": 29992,
+        "sha256": "f92dfd0ff095b0a72b181e0b5a8d649e331a22cf1a669de98718feecc1a9a2a2"
+      },
+      {
+        "path": "lib/text_cleaner.rb",
+        "bytes": 3043,
+        "sha256": "79410d0c02c60dff8e368e4308d41b4fdbbbb130afab1b1648c921ff7a4dc67a"
+      },
+      {
+        "path": "script/discourse",
+        "bytes": 12564,
+        "sha256": "417622a3df71fe50f4e0405dc20ba6abf0eeb2bf387ad1c132beb58684649e9e"
+      },
+      {
+        "path": "lib/backup_restore/restorer.rb",
+        "bytes": 6291,
+        "sha256": "ad002009a0eb446706d8b29a679682f849e506df14fad15f500338b697a5a272"
+      },
+      {
+        "path": "app/mailers/admin_confirmation_mailer.rb",
+        "bytes": 438,
+        "sha256": "409f849e00ee2d001c2106e5c2aacdb15c448a9aee246005381b735194347849"
+      },
+      {
+        "path": "lib/admin_confirmation.rb",
+        "bytes": 1699,
+        "sha256": "d095168b0c36efabf5a74e6e7685865a8c39b4520d444e86470874113b963566"
+      },
+      {
+        "path": "lib/email/message_builder.rb",
+        "bytes": 13752,
+        "sha256": "6238ba3ecdb9a4003e0cce29938fc481c7c657bf07f392b00c1a2147db2f3502"
+      },
+      {
+        "path": "lib/email/build_email_helper.rb",
+        "bytes": 393,
+        "sha256": "bb537c8d6dcce21ef12184de53ec32bab64b807e34c6a872f3243686be0c8f7a"
+      },
+      {
+        "path": "lib/discourse.rb",
+        "bytes": 39279,
+        "sha256": "351e1170f79acb9b321746df618339de5412c95b1ce4c13db2c17e96bf1d0678"
+      },
+      {
+        "path": "config/locales/server.en.yml",
+        "bytes": 420250,
+        "sha256": "0ff18443abac07e496e27142f21b33e8935242ca3d55fd33531c1ace43a92f50"
+      },
+      {
+        "path": "app/helpers/user_notifications_helper.rb",
+        "bytes": 3229,
+        "sha256": "8916b4cf739dd589a2d6f8131332b9b59b2de20b9981b210c1bea0b189803aa5"
+      },
+      {
+        "path": "lib/file_store/s3_store.rb",
+        "bytes": 18151,
+        "sha256": "eb37d7a6555f3b4e9df99c7535e5866614b2a6672d7087ebdf07d446ecfb65d0"
+      },
+      {
+        "path": "lib/s3_helper.rb",
+        "bytes": 15882,
+        "sha256": "efebf47b81c250cbe374dd155e4fd1371b004805ea2c1c2a8f99a8fbbc7b5549"
+      },
+      {
+        "path": "app/controllers/users_controller.rb",
+        "bytes": 77502,
+        "sha256": "af7c12efc5ae29e96fb251737e8438783726c930745e9eed95de9b33a94ddb69"
+      },
+      {
+        "path": "app/controllers/session_controller.rb",
+        "bytes": 39512,
+        "sha256": "022627791f2a237c4bfb789d9523b077f995c8a649d91a01a7006898ecc256e2"
+      },
+      {
+        "path": "config/routes.rb",
+        "bytes": 81601,
+        "sha256": "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b"
+      },
+      {
+        "path": "plugins/discourse-apple-auth/config/settings.yml",
+        "bytes": 341,
+        "sha256": "1835432d46cfee075160ee918f8707178ab42120ac761ee6689157a9b0bfea4e"
+      },
+      {
+        "path": "plugins/discourse-login-with-amazon/config/settings.yml",
+        "bytes": 760,
+        "sha256": "266ab0286ce859f0df7c5868827f0d2abf2d89dbaaca7c8f914d5d463f40f6a3"
+      },
+      {
+        "path": "plugins/discourse-microsoft-auth/config/settings.yml",
+        "bytes": 471,
+        "sha256": "421b9be978b53d2e66bc6ee0700db35e581eeaeef71d256a80b5e960565306d4"
+      },
+      {
+        "path": "plugins/discourse-oauth2-basic/config/settings.yml",
+        "bytes": 2345,
+        "sha256": "d25ade7de3646915f292b40c83411fceabcb3e50f5f6840fb504efee8a31e296"
+      },
+      {
+        "path": "plugins/discourse-openid-connect/config/settings.yml",
+        "bytes": 1945,
+        "sha256": "f4491a7ea4fabd9bae2e8fc8525f79ae297a4bba18dbad19dca45bf4348dea2d"
+      }
+    ]
   },
   "deployment": {
     "name": "Discourse Docker",
     "repository": "https://github.com/discourse/discourse_docker.git",
-    "revision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
+    "revision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
     "sourceImported": false,
     "licenseSpdx": "MIT",
     "provenanceManifest": "docs/operations/upstream-provenance.v1.json"
   },
-  "timeBehaviorObservation": {
-    "observedAt": "2026-08-11",
-    "coreCommit": "cbf996f65aae3da1843224aa624bcd9a225931ac",
-    "railsStorageBaseline": "UTC",
-    "siteWideDisplayAuthorityProvidedByCore": false,
-    "localDatesMayUseBrowserOrUserZone": true,
-    "calendarMayUseBrowserZone": true,
-    "localDatesEmailTimeZoneDefault": "Etc/UTC",
-    "nonSingaporeSuggestedOrDefaultZonesPresent": true,
-    "supportedRuntimeSolutionSelected": false,
-    "runtimeAndBrowserVerified": false,
+  "defaultStandaloneComponent": {
+    "name": "Docker Manager",
+    "repository": "https://github.com/discourse/docker_manager.git",
+    "revision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
+    "revisionTree": "c615a48ce722bf905817c18722fbb430c45b6d04",
+    "revisionCommitSignatureVerified": true,
+    "revisionCommitSignatureReason": "valid",
+    "resolvedBeforeDeploymentRevision": true,
+    "optionalAddition": false,
+    "licenseSpdx": "MIT",
     "evidenceFiles": [
       {
-        "path": "config/application.rb",
-        "bytes": 9851,
-        "sha256": "6482c99fc85303969ea074474a0b55544380ac0c88224f415695415c478f9184"
+        "path": "LICENSE",
+        "bytes": 1104,
+        "sha256": "accc0bf08b19c6b89e1969ff56376e7c03420d967caf91ada1720d800300f723"
       },
       {
-        "path": "plugins/discourse-local-dates/config/settings.yml",
-        "bytes": 511,
-        "sha256": "d90d44142b07791601a82424cd8930487e24b88e2f6d563e3477884c87beec4b"
+        "path": "README.md",
+        "bytes": 631,
+        "sha256": "ab3ef3c8ad111422a2aa39768fe8e939a700b8629e817a2f214f6341706a7e18"
       },
       {
-        "path": "plugins/discourse-local-dates/assets/javascripts/lib/format-local-date.js",
-        "bytes": 1211,
-        "sha256": "1695dbe04cbe0ac94fb5cd45a4b53e9e739771c1c12bb0846e5eaef483680593"
-      },
-      {
-        "path": "plugins/discourse-local-dates/assets/javascripts/discourse/components/modal/local-dates-create.gjs",
-        "bytes": 16898,
-        "sha256": "9e7f075f78f58c091032eb80b215965a529a1a91006dbef99c3dd8a5681c9f8f"
-      },
-      {
-        "path": "plugins/discourse-calendar/assets/javascripts/discourse/components/event-date.gjs",
-        "bytes": 3243,
-        "sha256": "25700659167534b665275606b259d9a401172e40c07e83ec76f7f01a5ffcd377"
+        "path": "plugin.rb",
+        "bytes": 607,
+        "sha256": "065ba13e13def0a6a12fdbd089c8179c58c8d941305ec227aec17564f1e5e48b"
       }
     ]
   },
-  "trademark": {
-    "owner": "Civilized Discourse Construction Kit, Inc.",
-    "evidenceUrl": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/README.md#copyright--license",
-    "brandGuidanceUrl": "https://www.discourse.org/brand",
-    "brandGuidanceAccessedAt": "2026-08-02",
-    "officialMarksUsedPublicly": false,
-    "reviewRequiredBeforePublicUse": true
-  },
-  "plugins": [],
-  "themes": [],
-  "integrations": [],
-  "dependencies": {
-    "status": "unavailable-until-exact-core-and-image",
-    "completeGraphAuditRequired": true,
-    "sbomRequired": true,
-    "licenseReviewRequired": true,
-    "noticeArtifactRequired": true
-  },
+  "vendoredRuntimeComponents": [
+    {
+      "name": "acme.sh",
+      "release": "3.0.6",
+      "repository": "https://github.com/acmesh-official/acme.sh.git",
+      "revision": "b7caf7a0165d80dd1556b16057a06bb32025066d",
+      "revisionTree": "6d60c7b8d58a14fd0c443175fd5a6e2f0c219dfe",
+      "revisionCommitSignatureVerified": true,
+      "revisionCommitSignatureReason": "valid",
+      "licenseSpdx": "GPL-3.0-or-later",
+      "source": {
+        "path": "acme.sh",
+        "bytes": 220764,
+        "sha256": "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+      },
+      "encodedSource": {
+        "path": "config/acme-sh-3.0.6.gz.b64",
+        "encoding": "base64-gzip",
+        "compressedBytes": 50641,
+        "compressedSha256": "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
+      },
+      "license": {
+        "upstreamPath": "LICENSE.md",
+        "repositoryPath": "config/acme-sh-3.0.6.LICENSE.md",
+        "bytes": 35149,
+        "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+      },
+      "automaticUpdateEnabled": false,
+      "onlineExactByteGateRequired": true
+    }
+  ],
+  "optionalPlugins": [],
+  "requiredFirstPartyComponents": [
+    {
+      "name": "mochirii_email_metadata",
+      "path": "plugins/mochirii_email_metadata/plugin.rb",
+      "sourceOwner": "Mochirii-Wushu/Mochirii-Forums",
+      "optional": false,
+      "exactRepositoryCommitBound": true
+    }
+  ],
+  "themes": [
+    {
+      "name": "Mochirii Forums",
+      "path": "theme/mochirii",
+      "licenseSpdx": "MIT",
+      "sourceOwner": "Mochirii-Wushu/Mochirii-Forums",
+      "assetSource": "Mochirii-Wushu/Mochirii-Website public brand assets",
+      "assetDigestsPinned": true
+    }
+  ],
   "providerMutationAuthorized": false,
-  "paidResourceAuthorized": false
+  "runtimeActivationEnabled": false
 }

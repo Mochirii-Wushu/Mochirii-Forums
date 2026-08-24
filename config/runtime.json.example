@@ -1,0 +1,14 @@
+{
+  "FORUMS_ACTIVATION_ENABLED": "false",
+  "FORUMS_DEVELOPER_EMAILS": "operator@example.invalid",
+  "FORUMS_DISCOURSE_CONNECT_ENABLED": "false",
+  "FORUMS_DISCOURSE_CONNECT_SECRET": "",
+  "FORUMS_NOTIFICATION_EMAIL": "replace-with-existing-authorized-mochirii-sender@example.invalid",
+  "FORUMS_S3_ACCESS_KEY_ID": "replace-at-runtime",
+  "FORUMS_S3_SECRET_ACCESS_KEY": "replace-at-runtime",
+  "FORUMS_SMTP_ADDRESS": "smtp.example.invalid",
+  "FORUMS_SMTP_AUTHENTICATION": "plain",
+  "FORUMS_SMTP_PASSWORD": "replace-at-runtime",
+  "FORUMS_SMTP_PORT": "465",
+  "FORUMS_SMTP_USER_NAME": "replace-at-runtime"
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=Mochirii Forums media certificate renewal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/mochirii-forums-renew-media-certificate
+TimeoutStartSec=20min
+TimeoutStopSec=5min
+KillMode=control-group
+KillSignal=SIGTERM
+FinalKillSignal=SIGKILL
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/lib/mochirii/forums -/run/lock/mochirii-forums
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

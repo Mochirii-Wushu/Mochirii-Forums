@@ -1,38 +1,6 @@
 {
   "schemaVersion": 1,
-  "repository": "Mochirii-Wushu/Mochirii-Forums",
-  "source": {
-    "baseCommit": null,
-    "reviewedHeadCommit": null,
-    "reviewedTree": null,
-    "upstreamRevision": null,
-    "upstreamManifestSha256": null
-  },
-  "artifacts": {
-    "packageOrImageDigest": null,
-    "sbomDigest": null,
-    "provenanceReference": null,
-    "customizationManifestSha256": null
-  },
-  "verification": {
-    "requiredChecks": [],
-    "securityChecks": [],
-    "restoreRehearsalReference": null,
-    "functionalReadbackReference": null
-  },
-  "change": {
-    "approvalReference": null,
-    "operator": null,
-    "startedAt": null,
-    "completedAt": null,
-    "targetClass": null,
-    "outcome": null
-  },
-  "rollback": {
-    "targetReference": null,
-    "stopConditions": [],
-    "invoked": null,
-    "outcome": null
-  },
-  "remainingRisks": []
+  "status": "superseded",
+  "supersededBy": "docs/operations/release-evidence.v2.example.json",
+  "useForNewRelease": false
 }

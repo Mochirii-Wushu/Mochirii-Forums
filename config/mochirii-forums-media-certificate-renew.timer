@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Mochirii Forums media certificate renewal
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=6h
+Persistent=true
+Unit=mochirii-forums-media-certificate-renew.service
+
+[Install]
+WantedBy=timers.target

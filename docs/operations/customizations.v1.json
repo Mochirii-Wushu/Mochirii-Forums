@@ -1,8 +1,47 @@
 {
-  "schemaVersion": 1,
-  "recordedAt": "2026-07-29",
-  "plugins": [],
-  "themes": [],
-  "integrations": [],
-  "status": "no-runtime-customizations-approved"
+  "schemaVersion": 2,
+  "recordedAt": "2026-08-14",
+  "status": "stage4-reviewed-runtime-inactive",
+  "coreFork": false,
+  "corePatch": false,
+  "optionalPlugins": [],
+  "requiredFirstPartyComponents": [
+    {
+      "name": "mochirii_email_metadata",
+      "source": "plugins/mochirii_email_metadata/plugin.rb",
+      "purpose": "remove the exact pinned application identity headers before SMTP delivery and provide the bounded first-party Sidekiq execution probe",
+      "optional": false,
+      "boundToRepositoryCommit": true
+    }
+  ],
+  "defaultStandaloneComponents": [
+    {
+      "name": "Docker Manager",
+      "revision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
+      "reason": "included by the official standalone template"
+    }
+  ],
+  "themes": [
+    {
+      "name": "Mochirii Forums",
+      "source": "theme/mochirii",
+      "archiveBuilder": "scripts/build-theme-archive.py",
+      "license": "MIT",
+      "purpose": "Mochirii-only public presentation and public-upload warning"
+    }
+  ],
+  "integrations": [
+    {
+      "name": "DiscourseConnect consumer",
+      "implementation": "built-in pinned core behavior",
+      "activationDefault": false
+    },
+    {
+      "name": "S3-compatible uploads and backups",
+      "implementation": "built-in pinned core behavior",
+      "activationDefault": false
+    }
+  ],
+  "runtimeActivationEnabled": false,
+  "providerMutationAuthorized": false
 }

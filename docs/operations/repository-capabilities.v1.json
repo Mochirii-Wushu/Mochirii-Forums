@@ -1,43 +1,22 @@
 {
-  "schemaVersion": 1,
-  "recordedAt": "2026-08-11",
-  "status": "observed-private-free-empty-origin",
+  "schemaVersion": 2,
+  "recordedAt": "2026-08-14",
+  "status": "observed-public-main-unprotected",
   "repository": "Mochirii-Wushu/Mochirii-Forums",
   "readback": {
-    "visibility": "private",
-    "gitRepositoryEmpty": true,
-    "configuredDefaultBranchName": "main",
-    "defaultBranchRefExists": false,
-    "organizationPlan": "free",
-    "branchProtectionApiAvailable": false,
-    "branchProtectionApiStatus": 403,
-    "branchProtectionApiMessage": "Upgrade to GitHub Pro or make this repository public to enable this feature.",
-    "rulesetsApiAvailable": false,
-    "rulesetsApiStatus": 403,
-    "rulesetsApiMessage": "Upgrade to GitHub Pro or make this repository public to enable this feature."
+    "visibility": "public",
+    "gitRepositoryEmpty": false,
+    "defaultBranch": "main",
+    "defaultBranchRefExists": true,
+    "branchProtectionConfigured": false,
+    "repositoryRulesetCount": 0
   },
   "enforcement": {
-    "privateRepositoryRulesetsAssumed": false,
-    "protectedEnvironmentApprovalAssumed": false,
-    "codeOwnerReviewEnforced": false,
-    "requiredPullRequestReviewEnforced": false,
     "exactHeadCiRequired": true,
-    "accountableHumanReviewRequired": true
-  },
-  "usage": {
-    "includedActionsMinutesPerMonth": 2000,
-    "includedArtifactStorageMb": 500,
-    "artifactStorageProviderUnit": "MB",
-    "privateWorkflowRunsConsumeSharedActionsMinutes": true,
-    "workflowPublishesArtifactsOrCaches": false,
-    "billingAndBudgetReadbackComplete": false,
-    "zeroIncrementalCostGuaranteed": false
-  },
-  "bootstrap": {
-    "oneTimeEmptyMainSeedApproved": false,
-    "maintainerIdentityApproved": false,
-    "codeownersActivationApproved": false,
-    "rulesetPlanApproved": false
+    "accountableHumanReviewRequired": true,
+    "directMainEditsAllowed": false,
+    "focusedPullRequestRequired": true,
+    "productionEnvironmentRequired": true
   },
   "providerMutationAuthorized": false,
   "paidPlanAuthorized": false

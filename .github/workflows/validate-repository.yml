@@ -21,32 +21,45 @@ jobs:
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - name: Fetch exact event head without persisting credentials
+      - name: Check out exact event head without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ env.EXPECTED_SHA }}
+
+      - name: Bind checkout to the exact event head
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]]
+
+      - name: Run fail-closed offline repository contract
+        shell: pwsh
+        run: ./scripts/check-repository.ps1
+
+  trusted-online-pins:
+    name: trusted-online-pins
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact trusted main without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Bind trusted online gate to exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+
+      - name: Verify exact upstream bytes with read-only API authentication
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          git init .
-          git remote add origin "https://github.com/$env:GITHUB_REPOSITORY.git"
-          $basic = [Convert]::ToBase64String(
-            [Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GITHUB_TOKEN")
-          )
-          git -c "http.extraheader=AUTHORIZATION: basic $basic" fetch `
-            --no-tags --depth=1 origin $env:EXPECTED_SHA
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Exact-head fetch failed.'
-          }
-          git checkout --detach FETCH_HEAD
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Exact-head checkout failed.'
-          }
-          $actualSha = (git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $actualSha -ne $env:EXPECTED_SHA) {
-            throw "Checked out SHA does not match the event head."
-          }
-          git remote set-url origin "https://github.com/$env:GITHUB_REPOSITORY.git"
-
-      - name: Run fail-closed repository contract
-        shell: pwsh
-        run: ./scripts/check-repository.ps1
+        run: ./scripts/check-repository.ps1 -Online

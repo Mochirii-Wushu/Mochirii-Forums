@@ -1,73 +1,245 @@
 {
-  "schemaVersion": 1,
-  "recordedAt": "2026-08-02",
+  "schemaVersion": 2,
+  "recordedAt": "2026-08-20",
   "upstream": {
     "repository": "https://github.com/discourse/discourse_docker.git",
     "branch": "main",
-    "revision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
+    "revision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
+    "revisionTree": "588498dffbea91592fd4e2f10166bc11c8fe7a61",
     "license": "MIT",
-    "revisionTree": "1a397a459ae60c588ed79ab5db1a225fe977caf0",
     "revisionCommitSignatureVerified": true,
     "revisionCommitSignatureReason": "valid",
-    "reviewStatus": "source-only-pin-not-approved-for-install"
+    "selectionStatus": "selected-first-official-one-core-compatible-revision"
   },
+  "supersededCandidate": {
+    "revision": "a3028747c5b7774f49a3b110221d96ca2b3f340d",
+    "rejected": true,
+    "exactReason": "templates/web.template.yml invokes bundle install with --jobs $(($(nproc) - 1)), which evaluates to --jobs 0 on the authorized one-vCPU host",
+    "automaticFallbackAllowed": false
+  },
+  "singleCoreCompatibility": {
+    "fixCommit": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
+    "path": "templates/web.template.yml",
+    "requiredCommand": "bundle install --jobs $(nproc --ignore=1) --retry 3",
+    "rejectedCommand": "bundle install --jobs $(($(nproc) - 1)) --retry 3",
+    "onlineSourceGateRequired": true,
+    "oneCoreDisposableBootstrapRequired": true
+  },
+  "transitiveNewInstallChanges": [
+    {
+      "revision": "a2351299445cf4d8946e84c1e76343d151c223fa",
+      "change": "Ruby 3.4.10 build baseline",
+      "effect": "applies to this new installation"
+    },
+    {
+      "revision": "584fe19b508147ab8410e65389a4396af55a4325",
+      "change": "intermediate official base image update",
+      "effect": "superseded transitively by the final selected base image"
+    },
+    {
+      "revision": "cac591067e2b94c796835df783b7ee30d5f9206b",
+      "change": "official base image 2.0.20260803-0122",
+      "effect": "applies to this new installation"
+    },
+    {
+      "revision": "09493049db7e4873f3dcff1356249ccf879ca6ec",
+      "change": "PostgreSQL 18 standalone template",
+      "effect": "creates PostgreSQL 18 directly; no predecessor database is imported"
+    },
+    {
+      "revision": "7de2cf5c5a3c41ef7d2056e216190887e7b5f59a",
+      "change": "PostgreSQL 18 free-disk calculation correction",
+      "effect": "new-install compatible; no database upgrade occurs"
+    },
+    {
+      "revision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
+      "change": "single-core CPU count correction",
+      "effect": "required for the authorized one-vCPU host"
+    }
+  ],
   "driftObservation": {
-    "observedAt": "2026-08-11",
-    "mainRevision": "e6d7b508b43f9610950166f53cb1be1bd78435a9",
-    "mainTree": "720f6aa67199841469b76191baae55db849c2eec",
+    "observedAt": "2026-08-20",
+    "mainRevision": "00595119c368c0aef7d7019ec66ffc8fa51cce79",
+    "mainTree": "d5b846bf4e59784c5220c48839d7eb1b45671aae",
     "mainCommitSignatureVerified": true,
     "mainCommitSignatureReason": "valid",
+    "comparisonStatus": "ahead",
     "commitsAheadOfPin": 11,
     "commitsBehindPin": 0,
+    "totalCommits": 11,
+    "baseRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
+    "mergeBaseRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
     "pinIsAncestor": true,
     "selectedForRuntime": false,
     "automaticPinUpdateAllowed": false,
-    "materialChangesReviewed": false,
-    "materialChangesInventoryComplete": false,
-    "materialChangesScope": "notable-non-exhaustive-compatibility-gates",
-    "materialChanges": [
+    "changedPathInventoryComplete": true,
+    "compatibilityReviewComplete": false,
+    "reviewStatus": "drift-detected-separate-review-required",
+    "changedPaths": [
+      "image/base/Dockerfile",
+      "image/base/install-imagemagick",
+      "image/base/install-nginx",
+      "image/base/install-redis",
+      "image/base/nginx_public_keys.key",
+      "image/discourse_dev/Dockerfile",
+      "image/discourse_test/Dockerfile",
+      "image/discourse_test/install-chrome",
+      "image/discourse_test/mozilla-release-key.asc",
+      "launcher",
+      "templates/import/chrome-dep.template.yml",
+      "templates/import/mbox.template.yml",
+      "templates/import/mssql-dep.template.yml",
+      "templates/import/mysql-dep.template.yml",
+      "templates/import/phpbb3.template.yml",
+      "templates/import/vanilla.template.yml",
+      "templates/postgres.18.template.yml",
+      "templates/postgres.template.yml",
+      "templates/redis.template.yml",
+      "templates/web.template.yml"
+    ],
+    "materialChangeScope": [
       {
-        "commit": "09493049db7e4873f3dcff1356249ccf879ca6ec",
-        "area": "postgresql-18-dump-restore",
-        "requiredGate": "three-database-sized-copies-free-space-and-isolated-restore-rehearsal"
+        "revision": "e071c2c8ebf8a93c1fba4e16fbb7168a2a9201bd",
+        "classification": "import-template-dependency-installation",
+        "selectedForRuntime": false
       },
       {
-        "commit": "7de2cf5c5a3c41ef7d2056e216190887e7b5f59a",
-        "area": "postgresql-18-free-disk-calculation",
-        "requiredGate": "capacity-calculation-review-and-measured-headroom"
+        "revision": "9a064388b76beb41527b7c7b650566a5f94075aa",
+        "classification": "postgresql-18-upgrade-template",
+        "selectedForRuntime": false
       },
       {
-        "commit": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
-        "area": "single-core-cpu-detection",
-        "requiredGate": "one-core-install-and-rebuild-compatibility-test"
+        "revision": "a4d4cb41aeb6266f8cfc84b88477435629317787",
+        "classification": "debian-trixie-base-transition",
+        "selectedForRuntime": false
       },
       {
-        "commit": "9a064388b76beb41527b7c7b650566a5f94075aa",
-        "area": "postgresql-18-all-databases",
-        "requiredGate": "multi-database-preservation-and-restore-rehearsal"
+        "revision": "dfdddb8505c71b4b3b5e6a741f4e90e4a9c9e0a7",
+        "classification": "redis-packaging-transition",
+        "selectedForRuntime": false
       },
       {
-        "commit": "a4d4cb41aeb6266f8cfc84b88477435629317787",
-        "area": "debian-trixie",
-        "requiredGate": "operating-system-and-container-compatibility-review"
+        "revision": "e6d7b508b43f9610950166f53cb1be1bd78435a9",
+        "classification": "redis-runtime-directory",
+        "selectedForRuntime": false
       },
       {
-        "commit": "a2351299445cf4d8946e84c1e76343d151c223fa",
-        "area": "ruby-3.4.10",
-        "requiredGate": "plugin-and-build-compatibility-review"
+        "revision": "7a5523773202c7e9b77a61d0d15ac6f514f67c45",
+        "classification": "mutable-base-image-default",
+        "selectedForRuntime": false
       },
       {
-        "commit": "dfdddb8505c71b4b3b5e6a741f4e90e4a9c9e0a7",
-        "area": "debian-redis-package",
-        "requiredGate": "runtime-data-log-and-restart-review"
+        "revision": "a68d4b8707fd653697e8b6b27b336d093dbed5e4",
+        "classification": "browser-signing-key-refresh",
+        "selectedForRuntime": false
       },
       {
-        "commit": "e6d7b508b43f9610950166f53cb1be1bd78435a9",
-        "area": "redis-log-directory",
-        "requiredGate": "persistent-log-path-permissions-and-restart-review"
+        "revision": "9c35fe8f6f4eb66d399f756e3bae773292e34db2",
+        "classification": "mutable-base-image-default",
+        "selectedForRuntime": false
+      },
+      {
+        "revision": "3cdefc992290e6d1376a11c72bada098f7b3cf6a",
+        "classification": "dev-image-postgresql-15",
+        "selectedForRuntime": false
+      },
+      {
+        "revision": "ccb3ea007204c683f7177258f1f509e2fb36f82b",
+        "classification": "web-template-ownership-optimization",
+        "selectedForRuntime": false
+      },
+      {
+        "revision": "00595119c368c0aef7d7019ec66ffc8fa51cce79",
+        "classification": "base-image-fontconfig-cache-refresh",
+        "selectedForRuntime": false
       }
     ],
-    "reviewStatus": "drift-detected-review-required"
+    "rangeCommits": [
+      {
+        "revision": "e071c2c8ebf8a93c1fba4e16fbb7168a2a9201bd",
+        "tree": "f6b6918b371272f0aeb3850a138a3687aa056dc5",
+        "signatureVerified": false,
+        "signatureReason": "unsigned",
+        "subject": "FIX: Gem installs in import templates"
+      },
+      {
+        "revision": "9a064388b76beb41527b7c7b650566a5f94075aa",
+        "tree": "5cb5205e0cc2cf94c79f98b547d12f4b37dca602",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "FIX: Include all DBs when upgrading to PostgreSQL 18 (#1107)"
+      },
+      {
+        "revision": "a4d4cb41aeb6266f8cfc84b88477435629317787",
+        "tree": "c35ae73875da8805f12782bf9e8d2499afcb60c7",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "FEATURE: Update to Debian trixie (#1048)"
+      },
+      {
+        "revision": "dfdddb8505c71b4b3b5e6a741f4e90e4a9c9e0a7",
+        "tree": "08ec9e49008571b7b39601939d1b63b1a69c8b0f",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "DEV: Use Debian's Redis package instead of building our own (#1108)"
+      },
+      {
+        "revision": "e6d7b508b43f9610950166f53cb1be1bd78435a9",
+        "tree": "720f6aa67199841469b76191baae55db849c2eec",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "FIX: Ensure Redis log directory is created (#1110)"
+      },
+      {
+        "revision": "7a5523773202c7e9b77a61d0d15ac6f514f67c45",
+        "tree": "2d0eca36f48d9f085aef86adf879228262aee93f",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "Bump default base image to discourse/base:2.0.20260811-0917 (#1109)"
+      },
+      {
+        "revision": "a68d4b8707fd653697e8b6b27b336d093dbed5e4",
+        "tree": "80db038b69e4611e62d13f56c5e64a7d81df68e3",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "Refresh Mozilla Firefox release key (#1111)"
+      },
+      {
+        "revision": "9c35fe8f6f4eb66d399f756e3bae773292e34db2",
+        "tree": "a47ebff727b7c2852d0636762836fb62dd518a75",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "Bump default base image to discourse/base:2.0.20260812-0036 (#1112)"
+      },
+      {
+        "revision": "3cdefc992290e6d1376a11c72bada098f7b3cf6a",
+        "tree": "8ba8cd9d92578682170da2700b466c2c075348c1",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "FIX: Include PostgreSQL 15 in the dev image (#1114)"
+      },
+      {
+        "revision": "ccb3ea007204c683f7177258f1f509e2fb36f82b",
+        "tree": "74c8d88910e156d45e319a97ca884892fcca75d1",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "PERF: Skip chown for files that already have the right ownership (#1115)"
+      },
+      {
+        "revision": "00595119c368c0aef7d7019ec66ffc8fa51cce79",
+        "tree": "d5b846bf4e59784c5220c48839d7eb1b45671aae",
+        "signatureVerified": true,
+        "signatureReason": "valid",
+        "subject": "PERF: Refresh Fontconfig cache after package installation (#1117)"
+      }
+    ]
+  },
+  "baseImage": {
+    "tag": "discourse/base:2.0.20260803-0122",
+    "registryIndexDigestObservedAtReview": "sha256:ab1e7217470759e63313a16bc5b71b9f2dd7d3ae8303286e5985f563ad12b7b3",
+    "linuxAmd64Digest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
+    "tagDigestMustMatchBeforeBootstrap": true,
+    "runtimeConfigUsesPlatformDigest": true
   },
   "files": [
     {
@@ -88,12 +260,24 @@
     {
       "path": "launcher",
       "bytes": 25507,
-      "sha256": "06703ea3f1badab41d9dfbc6a94fe59e8d745fc17263ecf748b511c0d8af3c7e"
+      "sha256": "61df33243194e85fc45ae5cad850ec6b646b8eef2ec0ff3da4974d50867c7c39"
     },
     {
       "path": "samples/standalone.yml",
       "bytes": 4878,
       "sha256": "7690f2d3ee2eee6db7a701311bff310a7822ebdd62a0fa6687c5cb5b72296644"
+    },
+    {
+      "path": "templates/web.template.yml",
+      "bytes": 17512,
+      "sha256": "975f9933f31b0172679fb741193b222fdef712ebb901fdc6064634f1ec7a9037"
+    },
+    {
+      "path": "templates/postgres.template.yml",
+      "bytes": 13450,
+      "sha256": "37c12ba6725be36123a0e55f56a5fd98d045300d02f83dfda213aab3849efe8f"
     }
-  ]
+  ],
+  "automaticPinUpdateAllowed": false,
+  "providerMutationAuthorized": false
 }

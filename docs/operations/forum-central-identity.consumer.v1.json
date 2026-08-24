@@ -1,170 +1,79 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "contractId": "forum-central-identity",
-  "contractVersion": "1.0.0-proposal",
-  "recordedAt": "2026-08-11",
-  "status": "blocked-website-producer-contract",
+  "contractVersion": "1.0.0",
+  "recordedAt": "2026-08-14",
+  "status": "consumer-prepared-cross-repository-activation-false",
   "protocol": {
     "name": "DiscourseConnect",
-    "role": "discourse-consumer",
-    "builtInDiscourseImplementationRequired": true,
-    "customCorePluginAllowed": false,
+    "role": "built-in-consumer",
     "signatureAlgorithm": "HMAC-SHA256",
     "signatureEncoding": "lowercase-hex",
-    "signatureInput": "exact-standard-base64-string",
-    "payloadSerialization": "application/x-www-form-urlencoded",
-    "producerPayloadEncoding": "strict-standard-base64",
-    "pinnedConsumerStrictBase64DecodingProvided": false,
-    "queryValueEncoding": "percent-encoded",
-    "httpsRequired": true,
-    "nonceBound": true,
-    "nonceSessionBound": true,
-    "nonceSingleUse": true,
-    "nonceExpirySeconds": 1800,
-    "exactReturnUrlValidationRequired": true,
-    "exactReturnPath": "/session/sso_login",
-    "replayValidationRequired": true,
-    "signatureValidatedBeforePayloadTrust": true
+    "customCorePluginAllowed": false,
+    "corePatchAllowed": false,
+    "verboseLoggingAllowed": false
   },
-  "requestEnvelope": {
-    "queryKeys": [
-      "sso",
-      "sig"
-    ],
-    "exactOneValuePerQueryKeyRequired": true,
-    "additionalQueryKeysAllowed": false,
-    "payloadRequiredFields": [
-      "nonce",
-      "return_sso_url"
-    ],
-    "returnUrlApprovedOrigin": null,
-    "additionalPayloadFieldsAllowed": false,
-    "boundedQueryBytes": null
-  },
-  "responseEnvelope": {
-    "queryKeys": [
-      "sso",
-      "sig"
-    ],
-    "exactOneValuePerQueryKeyRequired": true,
-    "additionalQueryKeysAllowed": false,
-    "payloadRequiredFields": [
-      "nonce",
-      "external_id",
-      "email"
-    ],
-    "payloadOptionalFields": [
-      "username",
-      "name"
-    ],
-    "payloadForbiddenFields": [
+  "producer": {
+    "repository": "Mochirii-Wushu/Mochirii-Website",
+    "browserPage": "https://mochirii.com/forums/connect",
+    "serverEndpoint": "/api/forums/discourse-connect",
+    "approvedReturnOrigin": "https://forums.mochirii.com",
+    "approvedReturnPath": "/session/sso_login",
+    "requiredIdentity": {
+      "externalId": "Supabase UUID as an opaque immutable string",
+      "emailConfirmed": true,
+      "memberStatus": "active",
+      "discordVerified": true,
+      "username": "deterministic collision-resistant 3-20 character ASCII value",
+      "name": "current display name"
+    },
+    "forbiddenResponseFields": [
       "admin",
       "moderator",
       "groups",
       "add_groups",
       "remove_groups",
-      "require_activation",
-      "logout",
-      "failed",
-      "avatar_url",
-      "avatar_force_update",
-      "bio",
-      "card_background_url",
-      "profile_background_url",
-      "website",
-      "title",
-      "location",
-      "custom.*"
+      "avatar_url"
     ],
-    "sameNonceRequired": true,
-    "additionalPayloadFieldsAllowed": false,
-    "boundedPayloadBytes": null
-  },
-  "producer": {
-    "repository": "Mochirii-Wushu/Mochirii-Website",
-    "ownership": "shared-identity-producer",
-    "registryContractVersion": null,
-    "artifact": null,
-    "endpoint": null,
-    "implementationPresent": false,
-    "compatibilityTestPresent": false
+    "sharedSecretServerOnly": true,
+    "requestOrIdentifierLoggingAllowed": false
   },
   "consumer": {
     "repository": "Mochirii-Wushu/Mochirii-Forums",
-    "ownership": "discourse-consumer-configuration",
-    "hostname": null,
-    "configurationArtifact": null,
-    "compatibilityTestPresent": false
+    "configurationArtifact": "config/app.yml.example",
+    "hostname": "forums.mochirii.com",
+    "settings": {
+      "enable_discourse_connect": "runtime-gated-default-false",
+      "discourse_connect_url": "https://mochirii.com/forums/connect",
+      "discourse_connect_csrf_protection": true,
+      "verbose_discourse_connect_logging": false,
+      "enable_discourse_connect_provider": false,
+      "enable_local_logins": false,
+      "enable_local_logins_via_email": false,
+      "enable_local_logins_via_code": false,
+      "enable_passkeys": false,
+      "enable_discourse_id": false,
+      "automatically_download_gravatars": false,
+      "allow_new_registrations": false
+    }
   },
-  "identity": {
-    "externalIdType": "opaque-string",
-    "stableExternalIdRequired": true,
-    "verifiedEmailRequired": true,
-    "currentGuildEntitlementRequired": true,
-    "boundedUsernameRequired": true,
-    "boundedNameRequired": true,
-    "automaticGroupGrantAllowed": false,
-    "automaticModeratorGrantAllowed": false,
-    "automaticAdminGrantAllowed": false,
-    "revocationRequired": true,
-    "logoutReconciliationRequired": true
+  "builtInReplayAndExpiry": {
+    "nonceValidityCheckedBeforeUserLookup": true,
+    "invalidExpiredOrReusedNonceStatus": 419,
+    "nonceExpirySeconds": 1800,
+    "usedNonceEvidenceRetentionSeconds": 86400,
+    "sessionBoundWhenCsrfProtectionEnabled": true,
+    "expireNonceOccursBeforeUserLookupOrCreate": true,
+    "producerMayNotSubstituteForConsumerReplayControl": true
   },
-  "security": {
-    "sharedSecretReference": null,
-    "secretValueCommitted": false,
-    "producerConstantTimeSignatureComparisonRequired": true,
-    "pinnedConsumerConstantTimeSignatureComparisonProvided": false,
-    "payloadEncodingProvidesConfidentiality": false,
-    "producerRequestAndResponseLoggingAllowed": false,
-    "producerPayloadQueryLoggingAllowed": false,
-    "pinnedConsumerGenericFailureMayLogDiagnostics": true,
-    "consumerLoggingPrivacyReviewRequired": true,
-    "consumerLoggingMitigation": null,
-    "consumerLoggingRiskAccepted": false,
-    "secretRotationEvidence": null,
-    "secretRecoveryEvidence": null,
-    "breakGlassAdminRequired": true
+  "deploymentSourceGate": {
+    "requiredRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
+    "requiredSingleCoreCommand": "bundle install --jobs $(nproc --ignore=1) --retry 3",
+    "rejectedZeroJobCommand": "bundle install --jobs $(($(nproc) - 1)) --retry 3"
   },
-  "consumerSettings": {
-    "enableDiscourseConnect": false,
-    "discourseConnectUrl": null,
-    "discourseConnectSecretReference": null,
-    "discourseConnectCsrfProtection": true,
-    "verboseDiscourseConnectLogging": false,
-    "enableDiscourseConnectProvider": false,
-    "discourseConnectOverridesGroups": false,
-    "configurationApproved": false
-  },
-  "crossRepositoryEvidence": {
-    "producerConsumerFixture": null,
-    "producerCompatibilityResult": null,
-    "consumerCompatibilityResult": null,
-    "entitlementLossSessionRevocationResult": null,
-    "logoutReconciliationResult": null,
-    "consumerAndProxyQueryLoggingPrivacyResult": null,
-    "breakGlassAdminResult": null,
-    "rollbackWindowDays": null
-  },
-  "websiteHandback": {
-    "registryStatusObserved": "unversioned",
-    "requiredGaps": [
-      "contract_version",
-      "versioned_artifact",
-      "concrete_artifact",
-      "producer_compatibility_test",
-      "consumer_compatibility_test",
-      "cross_repository_fixture",
-      "entitlement_loss_session_revocation",
-      "logout_reconciliation",
-      "rollback_window"
-    ]
-  },
-  "pinnedCoreEvidence": {
+  "pinnedConsumerEvidence": {
+    "repository": "https://github.com/discourse/discourse.git",
     "commit": "cbf996f65aae3da1843224aa624bcd9a225931ac",
-    "baseParser": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/lib/discourse_connect_base.rb",
-    "model": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/app/models/discourse_connect.rb",
-    "consumerController": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/app/controllers/session_controller.rb",
-    "siteSettings": "https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/config/site_settings.yml",
     "evidenceFiles": [
       {
         "path": "lib/discourse_connect_base.rb",
@@ -186,22 +95,36 @@
         "bytes": 117684,
         "sha256": "b50499a89a4ac5bb368670617ca75513bb458750aeaced2e0c48291e5da9653c"
       }
-    ]
+    ],
+    "onlineSemanticGate": "scripts/verify-pinned-source.py --online"
+  },
+  "stage4BuiltInLoopbackFixture": {
+    "workflow": ".github/workflows/disposable-bootstrap.yml",
+    "runtimeGeneratedSecretIsLowercaseHex64": true,
+    "secretPersistedOrLogged": false,
+    "sameSessionValidLoginPassedWhenWorkflowGreen": true,
+    "differentSessionDeniedWhenWorkflowGreen": true,
+    "invalidSignatureDeniedWhenWorkflowGreen": true,
+    "malformedAndDuplicateArgumentsDeniedWhenWorkflowGreen": true,
+    "expiredNonceDeniedWhenWorkflowGreen": true,
+    "replayedNonceDeniedWhenWorkflowGreen": true,
+    "alternateLoginDisabledWhenWorkflowGreen": true,
+    "currentHostedEvidence": null
   },
   "activation": {
-    "producerContractApproved": false,
-    "producerDeployed": false,
-    "consumerConfigurationApproved": false,
-    "secretConfigured": false,
-    "fieldBoundsApproved": false,
-    "secretRotationAndRecoveryApproved": false,
-    "crossRepositoryTestsPassed": false,
-    "revocationAndLogoutVerified": false,
-    "consumerLoggingPrivacyApproved": false,
-    "breakGlassAdminVerified": false,
-    "rollbackRehearsed": false,
+    "producerImplementationPresent": false,
+    "sharedSecretConfigured": false,
+    "consumerEnabled": false,
+    "positiveFixturePassed": false,
+    "hostileFixturesPassed": false,
+    "validMemberEndToEndPassed": false,
+    "inactiveMemberDenied": false,
+    "unverifiedMemberDenied": false,
+    "expiredRequestDenied": false,
+    "replayDenied": false,
+    "breakGlassConsoleRecoveryVerified": false,
     "enabled": false
   },
   "providerMutationAuthorized": false,
-  "publicExposureAuthorized": false
+  "publicActivationAuthorized": false
 }

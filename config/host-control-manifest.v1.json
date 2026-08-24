@@ -1,0 +1,164 @@
+{
+  "certificateTargets": [
+    {
+      "mode": "0644",
+      "source": "config/mochirii-forums-media-certificate-renew.service",
+      "target": "/etc/systemd/system/mochirii-forums-media-certificate-renew.service"
+    },
+    {
+      "mode": "0644",
+      "source": "config/mochirii-forums-media-certificate-renew.timer",
+      "target": "/etc/systemd/system/mochirii-forums-media-certificate-renew.timer"
+    },
+    {
+      "mode": "0644",
+      "source": "scripts/media-certificate-operation.sh",
+      "target": "/usr/local/libexec/mochirii-forums/media-certificate-operation.sh"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/reconcile-acme-dns.py",
+      "target": "/usr/local/libexec/mochirii-forums/reconcile-acme-dns.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/rotate-media-certificate.py",
+      "target": "/usr/local/libexec/mochirii-forums/rotate-media-certificate.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/rotate-media-certificate.sh",
+      "target": "/usr/local/sbin/mochirii-forums-rotate-media-certificate"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/run-media-certificate-renewal.sh",
+      "target": "/usr/local/sbin/mochirii-forums-renew-media-certificate"
+    }
+  ],
+  "coreTargets": [
+    {
+      "mode": "0755",
+      "source": "scripts/durable-event.py",
+      "target": "/usr/local/libexec/mochirii-forums/durable-event.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-control-evidence.py",
+      "target": "/usr/local/libexec/mochirii-forums/host-control-evidence.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-operation-lock.py",
+      "target": "/usr/local/libexec/mochirii-forums/host-operation-lock.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/historical-release-disaster-recovery.py",
+      "target": "/usr/local/libexec/mochirii-forums/historical-release-disaster-recovery.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/historical-recovery-scratch-reader.sh",
+      "target": "/usr/local/libexec/mochirii-forums/historical-recovery-scratch-reader.sh"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/probe-website-forums-producer.py",
+      "target": "/usr/local/libexec/mochirii-forums/probe-website-forums-producer.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/ssh-deploy-dispatch.py",
+      "target": "/usr/local/libexec/mochirii-forums/ssh-deploy-dispatch.py"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/verify-host-security.sh",
+      "target": "/usr/local/libexec/mochirii-forums/verify-host-security.sh"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/finalize-member-rollout.sh",
+      "target": "/usr/local/sbin/mochirii-forums-finalize-member-rollout"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-backup.sh",
+      "target": "/usr/local/sbin/mochirii-forums-backup"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-break-glass-admin.sh",
+      "target": "/usr/local/sbin/mochirii-forums-break-glass-admin"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-deploy.sh",
+      "target": "/usr/local/sbin/mochirii-forums-deploy"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-finalize-authentication.sh",
+      "target": "/usr/local/sbin/mochirii-forums-finalize-authentication"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-historical-disaster-recovery.sh",
+      "target": "/usr/local/sbin/mochirii-forums-historical-disaster-recovery"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-restore-validate.sh",
+      "target": "/usr/local/sbin/mochirii-forums-restore"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-stop-pending-activation.sh",
+      "target": "/usr/local/sbin/mochirii-forums-stop-pending-activation"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/host-verify-wrapper.sh",
+      "target": "/usr/local/sbin/mochirii-forums-verify"
+    },
+    {
+      "mode": "0755",
+      "source": "scripts/upgrade-host-control.sh",
+      "target": "/usr/local/sbin/mochirii-forums-upgrade-host-control"
+    }
+  ],
+  "hostPolicyTargets": [
+    {
+      "mode": "0644",
+      "source": "config/apt-auto-upgrades.conf",
+      "target": "/etc/apt/apt.conf.d/20auto-upgrades"
+    },
+    {
+      "mode": "0644",
+      "source": "config/docker-daemon-policy.json",
+      "target": "/etc/docker/daemon.json"
+    },
+    {
+      "mode": "0644",
+      "source": "config/fail2ban-forums.conf",
+      "target": "/etc/fail2ban/jail.d/mochirii-forums.conf"
+    },
+    {
+      "mode": "0644",
+      "source": "config/sshd-forums.conf",
+      "target": "/etc/ssh/sshd_config.d/00-00-mochirii-forums.conf"
+    },
+    {
+      "mode": "0440",
+      "source": "config/sudoers-forums",
+      "target": "/etc/sudoers.d/mochirii-forums"
+    },
+    {
+      "mode": "0440",
+      "source": "config/sudoers-forums-operator",
+      "target": "/etc/sudoers.d/mochirii-forums-operator"
+    }
+  ],
+  "schemaVersion": 1
+}

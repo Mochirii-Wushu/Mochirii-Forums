@@ -1,0 +1,569 @@
+name: disposable-standalone-bootstrap
+
+'on':
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: disposable-forums-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  one-core-standalone:
+    name: one-core-official-standalone
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact event head without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ env.CANDIDATE_SHA }}
+
+      - name: Bind checkout to the exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_SHA" ]]
+
+      - name: Validate exact candidate source offline
+        shell: pwsh
+        run: ./scripts/check-repository.ps1
+
+      - name: Validate upstream bytes on trusted main events
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/check-repository.ps1 -Online
+
+      - name: Prepare secret-free loopback fixture
+        shell: bash
+        env:
+          FORUMS_REPOSITORY_COMMIT: ${{ env.CANDIDATE_SHA }}
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0755 -o "$USER" -g "$USER" /var/discourse
+          git -C /var/discourse init
+          git -C /var/discourse remote add origin https://github.com/discourse/discourse_docker.git
+          git -C /var/discourse fetch --no-tags --depth=1 origin ed9f680b0df1de28f062de1769d89d22b2644d1b
+          git -C /var/discourse checkout --detach FETCH_HEAD
+          git -C /var/discourse remote set-url --push origin no_push://mochirii-forums-upstream
+          test "$(git -C /var/discourse rev-parse HEAD)" = ed9f680b0df1de28f062de1769d89d22b2644d1b
+
+          asset_root="/opt/mochirii/forums/runtime-assets/${FORUMS_REPOSITORY_COMMIT}"
+          sudo install -d -m 0755 -o root -g root "$asset_root" /var/discourse/containers
+          git -c tar.umask=0002 archive --format=tar --output=/tmp/mochirii-release.tar "$FORUMS_REPOSITORY_COMMIT"
+          python3 -B scripts/historical-release-disaster-recovery.py inspect \
+            --archive /tmp/mochirii-release.tar --expected-commit "$FORUMS_REPOSITORY_COMMIT" \
+            >/tmp/mochirii-release-inspection.json
+          python3 -B - /tmp/mochirii-release-inspection.json "$FORUMS_REPOSITORY_COMMIT" \
+            "$(git rev-parse "${FORUMS_REPOSITORY_COMMIT}^{tree}")" \
+            "$(sha256sum /tmp/mochirii-release.tar | awk '{print $1}')" \
+            "$(stat -c '%s' /tmp/mochirii-release.tar)" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+          document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          expected = {
+              "schemaVersion", "repositoryCommit", "repositoryTree", "releaseArchiveSha256",
+              "releaseArchiveBytes", "releaseArchiveContentManifestSha256",
+              "releaseArchiveSourceFormat", "containsSecrets", "containsSignedUrls",
+              "ordinaryDeploymentRequiresCurrentMain", "historicalReleaseAdoptionScope",
+          }
+          if set(document) != expected or document.get("schemaVersion") != 1:
+              raise SystemExit("disposable release archive inspection schema differs")
+          if (
+              document.get("repositoryCommit") != sys.argv[2]
+              or document.get("repositoryTree") != sys.argv[3]
+              or document.get("releaseArchiveSha256") != sys.argv[4]
+              or document.get("releaseArchiveBytes") != int(sys.argv[5])
+              or re.fullmatch(r"[0-9a-f]{64}", str(document.get("releaseArchiveContentManifestSha256", ""))) is None
+              or document.get("releaseArchiveSourceFormat") != "git-archive-tar-v1"
+              or document.get("containsSecrets") is not False
+              or document.get("containsSignedUrls") is not False
+              or document.get("ordinaryDeploymentRequiresCurrentMain") is not True
+              or document.get("historicalReleaseAdoptionScope") != "clean-target-disaster-recovery-only"
+          ):
+              raise SystemExit("disposable release archive authority differs")
+          PY
+          python3 scripts/build-theme-archive.py --output /tmp/mochirii-theme.zip
+          sudo install -m 0644 -o root -g root /tmp/mochirii-release.tar "$asset_root/mochirii-release.tar"
+          sudo install -m 0644 -o root -g root /tmp/mochirii-theme.zip "$asset_root/mochirii-theme.zip"
+          sudo install -m 0644 -o root -g root plugins/mochirii_email_metadata/plugin.rb "$asset_root/mochirii-email-metadata-plugin.rb"
+          sudo install -m 0644 -o root -g root config/acme-sh-3.0.6.gz.b64 "$asset_root/acme-sh-3.0.6.gz.b64"
+          for script in backup-transaction.py backup-url-boundary.rb configure-site.rb expire-discourse-connect-nonce.rb fetch-disaster-recovery-evidence.rb fetch-disaster-recovery-release.rb normal-upload-inventory.rb prepare-admin-recovery-fixture.rb prepare-backup-marker.rb publish-disaster-recovery-evidence.rb render-branding-email.rb storage-response-boundary.rb verify-backup.rb verify-break-glass-admin.rb verify-clean-disaster-target.rb verify-contained-discourse-connect.rb verify-discourse-connect-fixture.rb verify-restored-backup.rb verify-sensitive-log-redaction.rb verify-site.rb verify-storage-fixture.rb verify-zero-secure-uploads.rb; do
+            sudo install -m 0644 -o root -g root "scripts/${script}" "$asset_root/${script}"
+          done
+          secret_file="${RUNNER_TEMP}/forums-connect-fixture-key"
+          openssl rand -hex 32 > "$secret_file"
+          chmod 0600 "$secret_file"
+          FORUMS_FIXTURE_DISCOURSE_CONNECT_SECRET="$(<"$secret_file")" \
+            python3 scripts/render-app-config.py --mode stage4-connect-fixture --output /tmp/app.yml
+          sudo install -m 0600 -o root -g root /tmp/app.yml /var/discourse/containers/app.yml
+          sudo install -m 0755 -o root -g root \
+            scripts/disposable-launcher-guard.py /usr/local/sbin/mochirii-stage4-launcher
+
+      - name: Prove one-effective-CPU command path
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=discourse/base@sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48
+          limits=(--cpuset-cpus=0 --memory=2g --memory-swap=4g)
+          ruby_fixture_container=(--rm --pull=never --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m --memory-swap 256m)
+          docker pull "$image" >/dev/null
+          docker image inspect "$image" >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-storage-response-boundary.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-backup-url-boundary.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-normal-upload-inventory.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" \
+            -v "/opt/mochirii/forums/runtime-assets/${CANDIDATE_SHA}:/opt/mochirii-release:ro" "$image" \
+            ruby /repo/scripts/test-disaster-recovery-release-chain.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            python3 -B /repo/scripts/test-historical-release-disaster-recovery.py >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            python3 -B /repo/scripts/test-historical-recovery-scratch-reader.py --inside-linux >/dev/null
+          docker run "${ruby_fixture_container[@]}" --tmpfs /var/log:rw,nosuid,nodev,size=4m,mode=0755,uid=0,gid=0 --group-add adm -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            python3 -B /repo/scripts/test-disposable-launcher-guard.py --inside-linux >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            python3 -B /repo/scripts/test-host-restore-launcher-journal.py --inside-linux >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            python3 -B /repo/scripts/test-host-operation-lock.py >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-operation-survivor.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-sidekiq-processing-probe.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            ruby /repo/scripts/test-admin-login-link.rb >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            python3 -B /repo/scripts/test-backup-transaction.py >/dev/null
+          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            python3 -B /repo/scripts/test-deployment-mutation.py >/dev/null
+          test "$(docker run --rm "${limits[@]}" "$image" nproc)" = 1
+          test "$(docker run --rm "${limits[@]}" "$image" nproc --ignore=1)" = 1
+          docker run --rm "${limits[@]}" "$image" bash -lc \
+            'test "$(cat /sys/fs/cgroup/memory.max)" = 2147483648 && test "$(cat /sys/fs/cgroup/memory.swap.max)" = 2147483648'
+          web_template="$(mktemp)"
+          trap 'rm -f -- "$web_template"' EXIT
+          git -C /var/discourse show HEAD:templates/web.template.yml >"$web_template"
+          grep -Fq 'bundle install --jobs $(nproc --ignore=1) --retry 3' "$web_template"
+
+      - name: Bootstrap exact standalone under one effective CPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo /usr/local/sbin/mochirii-stage4-launcher bootstrap "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
+          sudo /usr/local/sbin/mochirii-stage4-launcher start "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
+          test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
+          test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
+          test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
+          test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
+          sudo docker inspect --format '{{json .Mounts}}' app | python3 -c '
+          import json, sys
+          mounts = json.load(sys.stdin)
+          source = f"/opt/mochirii/forums/runtime-assets/{sys.argv[1]}"
+          destination = "/opt/mochirii-release"
+          exact = []
+          for mount in mounts:
+              reaches_source = mount["Source"] == source or source.startswith(mount["Source"].rstrip("/") + "/")
+              reaches_destination = mount["Destination"] == destination or destination.startswith(mount["Destination"].rstrip("/") + "/")
+              if mount["Source"] == source and mount["Destination"] == destination:
+                  exact.append(mount)
+              elif reaches_source or reaches_destination:
+                  raise SystemExit("second runtime-asset mount")
+          assert len(exact) == 1 and exact[0]["Type"] == "bind" and exact[0]["RW"] is False
+          ' "${CANDIDATE_SHA}"
+          sudo docker exec app bash -lc \
+            'test -f /opt/mochirii-release/mochirii-release.tar && test ! -L /opt/mochirii-release/mochirii-release.tar && test -f /opt/mochirii-release/fetch-disaster-recovery-release.rb && test ! -L /opt/mochirii-release/fetch-disaster-recovery-release.rb'
+          echo 'Official standalone bootstrap completed under the reviewed limits.'
+
+      - name: Verify imported theme, settings, metadata, and mail
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error -H 'Host: forums.mochirii.com' http://127.0.0.1:18080/login >/dev/null; then
+              break
+            fi
+            if [[ $attempt -eq 60 ]]; then
+              exit 1
+            fi
+            sleep 2
+          done
+          sudo docker exec app /usr/local/bin/rails runner 'require "etc"; raise unless Process.euid == Etc.getpwnam("discourse").uid; raise unless GitUtils.git_version == "cbf996f65aae3da1843224aa624bcd9a225931ac"; ActiveRecord::Base.connection.execute("SELECT 1"); raise if Upload.exists?(sha1: "0000000000000000000000000000000000000000")'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
+          transcript="$(mktemp "${RUNNER_TEMP}/mochirii-nginx.XXXXXXXX")"
+          direct_headers="$(mktemp "${RUNNER_TEMP}/mochirii-direct-headers.XXXXXXXX")"
+          trap 'rm -f -- "$transcript" "$direct_headers"' EXIT
+          chmod 0600 "$transcript" "$direct_headers"
+          sudo docker exec app nginx -T >"$transcript" 2>&1
+          grep -F 'include conf.d/outlets/discourse/*.conf;' "$transcript" >/dev/null
+          grep -F 'include conf.d/outlets/server/*.conf;' "$transcript" >/dev/null
+          grep -F '<meta name="generator" content="Mochirii Forums">' "$transcript" >/dev/null
+          grep -F 'location ~* \.(?:rss|atom)$' "$transcript" >/dev/null
+          grep -F 'location ~ ^/(?:u|users)/admin-login(?:\.[A-Za-z0-9]+)?/?$ { return 419; }' "$transcript" >/dev/null
+          grep -F 'location ~* ^/session/sso_login(?:\.[A-Za-z0-9]+)?/?$ {' "$transcript" >/dev/null
+          grep -F 'error_log /dev/null emerg;' "$transcript" >/dev/null
+          grep -F 'add_header Referrer-Policy "no-referrer" always;' "$transcript" >/dev/null
+          python3 -B - "$transcript" <<'PY_NGINX_HEADERS'
+          import pathlib
+          import re
+          import stat
+          import sys
+
+          MAX_TRANSCRIPT_BYTES = 4_194_304
+          path = pathlib.Path(sys.argv[1])
+          metadata = path.lstat()
+          if not stat.S_ISREG(metadata.st_mode) or path.is_symlink() or metadata.st_size > MAX_TRANSCRIPT_BYTES:
+              raise SystemExit("rendered nginx transcript boundary differs")
+          data = path.read_bytes()
+          if len(data) > MAX_TRANSCRIPT_BYTES:
+              raise SystemExit("rendered nginx transcript exceeds its bound")
+          try:
+              text = data.decode("utf-8", errors="strict")
+          except UnicodeDecodeError as error:
+              raise SystemExit("rendered nginx transcript is not UTF-8") from error
+
+          def nginx_directives(source):
+              directives = []
+              current = []
+              quote = None
+              escaped = False
+              comment = False
+              for character in source:
+                  if comment:
+                      if character in {"\r", "\n"}:
+                          comment = False
+                          current.append(" ")
+                  elif escaped:
+                      current.append(character)
+                      escaped = False
+                  elif character == "\\":
+                      current.append(character)
+                      escaped = True
+                  elif quote is not None:
+                      current.append(character)
+                      if character == quote:
+                          quote = None
+                  elif character in {'"', "'"}:
+                      current.append(character)
+                      quote = character
+                  elif character == "#":
+                      comment = True
+                  elif character == ";":
+                      directive = "".join(current).strip()
+                      if directive:
+                          directives.append(directive + ";")
+                      current = []
+                  elif character in {"{", "}"}:
+                      current = []
+                  else:
+                      current.append(character)
+              return tuple(directives)
+
+          def directive_name(directive):
+              token = directive.split(None, 1)[0]
+              return token.replace('"', "").replace("'", "").replace("\\", "").lower()
+
+          if any(directive_name(item) == "proxy_pass_header" for item in nginx_directives(text)):
+              raise SystemExit("rendered nginx can re-enable an upstream response header")
+
+          def sections(relative):
+              marker = f"# configuration file {relative}:\n"
+              starts = [match.end() for match in re.finditer(re.escape(marker), text)]
+              if not starts or len(starts) > 8:
+                  raise SystemExit("rendered nginx response-header file inclusion differs")
+              bodies = []
+              for start in starts:
+                  end = text.find("\n# configuration file ", start)
+                  bodies.append(text[start:] if end < 0 else text[start:end])
+              return tuple(bodies)
+
+          shared_include = "include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;"
+          headers = {
+              "X-Discourse-Route", "X-Discourse-Username", "X-Discourse-Crawler-View",
+              "Discourse-No-Onebox", "Discourse-Rate-Limit-Error-Code", "Discourse-Xhr-Redirect",
+              "Discourse-Actions-Remaining", "Discourse-Actions-Max", "Discourse-Logged-Out",
+              "Discourse-Track-View-Session-Id-Placeholder",
+              "X-Discourse-TrackView", "X-Discourse-BrowserPageView", "X-Discourse-Cached",
+          }
+          shared_required = {f"proxy_hide_header {name};" for name in headers}
+          for body in sections("/etc/nginx/conf.d/outlets/discourse/35-mochirii-public-response-headers.inc"):
+              directives = nginx_directives(body)
+              if len(directives) != len(shared_required) or set(directives) != shared_required:
+                  raise SystemExit("rendered nginx response-header denylist differs")
+          for body in sections("/etc/nginx/conf.d/outlets/server/35-mochirii-public-response-headers.conf"):
+              if nginx_directives(body) != (shared_include,):
+                  raise SystemExit("rendered nginx server response-header inheritance differs")
+
+          avatar_marker = r"location ~ ^/(svg-sprite/|letter_avatar/|letter_avatar_proxy/|user_avatar|highlight-js|stylesheets|theme-javascripts|favicon/proxied|service-worker|extra-locales/) {"
+          matches = tuple(re.finditer(re.escape(avatar_marker) + r"(?P<body>.*?)\n\s*\}", text, re.S))
+          if len(matches) != 1:
+              raise SystemExit("rendered nginx cache-accelerated asset location differs")
+          avatar_directives = nginx_directives(matches[0].group("body"))
+          avatar_required = {
+              "brotli_comp_level 6;", 'proxy_ignore_headers "Set-Cookie";',
+              'proxy_hide_header "Set-Cookie";', 'proxy_hide_header "X-Discourse-Username";',
+              'proxy_hide_header "X-Runtime";', shared_include, "proxy_cache one;",
+              'proxy_cache_key "$scheme,$host,$request_uri";', "proxy_cache_valid 200 301 302 7d;",
+              "proxy_cache_bypass $bypass_cache;", "proxy_pass http://discourse;", "break;",
+          }
+          if len(avatar_directives) != len(avatar_required) or set(avatar_directives) != avatar_required:
+              raise SystemExit("rendered nginx cache-accelerated response-header boundary differs")
+          PY_NGINX_HEADERS
+          sudo docker exec -i app python3 -B - <<'PY_UPSTREAM_HEADERS'
+          import http.client
+
+          connection = http.client.HTTPConnection("127.0.0.1", 3000, timeout=10)
+          try:
+              connection.request(
+                  "GET",
+                  "/uploads/short-url/0",
+                  headers={"Host": "forums.mochirii.com", "Connection": "close"},
+              )
+              response = connection.getresponse()
+              routes = [
+                  value
+                  for name, value in response.getheaders()
+                  if name.lower() == "x-discourse-route"
+              ]
+              if response.status != 404 or routes != ["uploads/show_short"]:
+                  raise SystemExit("direct Rails response-header sentinel differs")
+          finally:
+              connection.close()
+          PY_UPSTREAM_HEADERS
+          proxied_status="$(
+            curl --silent --show-error --connect-timeout 10 --max-time 30 \
+              --output /dev/null --dump-header "$direct_headers" --write-out '%{http_code}' \
+              -H 'Host: forums.mochirii.com' http://127.0.0.1:18080/uploads/short-url/0
+          )"
+          [[ "$proxied_status" == "404" ]] || {
+            echo "::error::Direct inherited proxy response status differs from the exact contract."
+            exit 1
+          }
+          python3 -B - "$direct_headers" <<'PY_DIRECT_HEADERS'
+          import pathlib
+          import sys
+
+          MAX_HEADER_BYTES = 65_536
+          path = pathlib.Path(sys.argv[1])
+          data = path.read_bytes()
+          if not data or len(data) > MAX_HEADER_BYTES:
+              raise SystemExit("direct inherited proxy response-header evidence boundary differs")
+          prohibited = {
+              b"x-discourse-route", b"x-discourse-username", b"x-discourse-crawler-view",
+              b"discourse-no-onebox", b"discourse-rate-limit-error-code", b"discourse-xhr-redirect",
+              b"discourse-actions-remaining", b"discourse-actions-max", b"discourse-logged-out",
+              b"discourse-track-view-session-id-placeholder",
+              b"x-discourse-trackview", b"x-discourse-browserpageview", b"x-discourse-cached",
+          }
+          names = set()
+          for line in data.replace(b"\r\n", b"\n").split(b"\n"):
+              if b":" not in line:
+                  continue
+              name = line.split(b":", 1)[0].strip().lower()
+              if name:
+                  names.add(name)
+          if names & prohibited:
+              raise SystemExit("direct inherited proxy response exposed prohibited identity metadata")
+          PY_DIRECT_HEADERS
+          python3 scripts/verify-public-branding.py --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
+          python3 scripts/verify-discourse-connect.py \
+            --secret-file "${RUNNER_TEMP}/forums-connect-fixture-key" \
+            --port 18080
+
+      - name: Prove persistent database and supported rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker exec app bash -lc "/usr/local/bin/rails runner 'PluginStore.set(\"mochirii-stage4\", \"rebuild\", \"preserved\")'"
+          sudo /usr/local/sbin/mochirii-stage4-launcher rebuild "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
+          test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
+          test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
+          test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
+          test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
+          test "$(sudo docker exec app bash -lc "/usr/local/bin/rails runner 'print PluginStore.get(\"mochirii-stage4\", \"rebuild\")'")" = preserved
+          sudo docker exec app bash -lc "/usr/local/bin/rails runner 'PluginStore.remove(\"mochirii-stage4\", \"rebuild\")'"
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
+          python3 "$GITHUB_WORKSPACE/scripts/verify-public-branding.py" --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
+
+      - name: Prove supported backup and destructive disposable restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          stop_fixture_app() {
+            local inventory running
+            timeout 45 sudo docker stop --time 30 app >/dev/null 2>&1 || true
+            if running="$(sudo docker inspect --format '{{.State.Running}}' app 2>/dev/null)"; then
+              [[ ${running} == false ]]
+              return
+            fi
+            inventory="$(sudo docker container ls --all --filter 'name=^/app$' --format '{{.Names}}' 2>/dev/null)" || return 1
+            [[ -z ${inventory} ]]
+          }
+          container_operation_absent() {
+            local token="$1"
+            [[ ${token} =~ ^[0-9a-f]{32}$ ]] || return 1
+            timeout 30 sudo docker exec app ruby -e '
+              token = ARGV.fetch(0)
+              marker = "MOCHIRII_OPERATION_TOKEN=#{token}"
+              found = Dir.glob("/proc/[0-9]*/environ").any? do |path|
+                begin
+                  File.binread(path).split("\0", -1).include?(marker)
+                rescue Errno::ENOENT, Errno::EACCES, Errno::ESRCH
+                  false
+                end
+              end
+              exit(found ? 1 : 0)
+            ' "${token}" >/dev/null 2>&1
+          }
+          active_pid=""
+          terminate_active_group() {
+            local pid="${active_pid}"
+            [[ -n ${pid} && ${pid} =~ ^[1-9][0-9]*$ ]] || return 0
+            kill -TERM -- "-${pid}" >/dev/null 2>&1 || true
+            for _ in $(seq 1 30); do
+              kill -0 "${pid}" >/dev/null 2>&1 || break
+              sleep 1
+            done
+            kill -KILL -- "-${pid}" >/dev/null 2>&1 || true
+            wait "${pid}" >/dev/null 2>&1 || true
+            active_pid=""
+          }
+          restore_failure_category() {
+            case "$1" in
+              64) printf '%s\n' 'repository-revision' ;;
+              65) printf '%s\n' 'recovery-marker' ;;
+              66) printf '%s\n' 'recovery-normal-upload' ;;
+              67) printf '%s\n' 'database' ;;
+              68) printf '%s\n' 'redis' ;;
+              69) printf '%s\n' 'sidekiq-process-present' ;;
+              70) printf '%s\n' 'sidekiq-processing' ;;
+              71) printf '%s\n' 'mail-suppression-matches-runtime' ;;
+              72) printf '%s\n' 'central-login-matches-runtime' ;;
+              73) printf '%s\n' 'secure-uploads-absent' ;;
+              74) printf '%s\n' 'normal-upload-inventory' ;;
+              *) return 1 ;;
+            esac
+          }
+          run_fixture_command() {
+            local inner_seconds="$1" marker="$2" status=0 outer_seconds operation_token category
+            shift 2
+            outer_seconds=$((inner_seconds + 30))
+            [[ ${marker} =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]] || return 1
+            operation_token="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+            [[ ${operation_token} =~ ^[0-9a-f]{32}$ ]] || return 1
+            timeout "${outer_seconds}" sudo docker exec -e MOCHIRII_OPERATION_TOKEN="${operation_token}" app \
+              timeout --signal=TERM --kill-after=15s "${inner_seconds}" "$@" \
+              >/dev/null 2>&1 &
+            active_pid=$!
+            wait "${active_pid}" || status=$?
+            active_pid=""
+            if ! container_operation_absent "${operation_token}"; then
+              stop_fixture_app || printf '%s\n' 'CRITICAL: disposable restore process termination could not be verified.' >&2
+              printf 'DISPOSABLE_FIXTURE_COMMAND_CONTAINMENT_FAILED:%s\n' "${marker}" >&2
+              return 1
+            fi
+            if (( status == 124 || status == 137 || status == 143 )); then
+              stop_fixture_app || printf '%s\n' 'CRITICAL: timed-out disposable restore could not prove an application stop.' >&2
+              printf 'DISPOSABLE_FIXTURE_COMMAND_TIMEOUT:%s\n' "${marker}" >&2
+              return 1
+            fi
+            if (( status != 0 )); then
+              if [[ ${marker} =~ ^verify-restored-backup-(initial|after-restart|after-rebuild)$ ]] &&
+                category="$(restore_failure_category "${status}")"; then
+                printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s:%s\n' "${marker}" "${category}" >&2
+              else
+                printf 'DISPOSABLE_FIXTURE_COMMAND_FAILED:%s\n' "${marker}" >&2
+              fi
+              return 1
+            fi
+            printf 'DISPOSABLE_FIXTURE_COMMAND_PASSED:%s\n' "${marker}"
+          }
+          restore_enabled=false
+          disable_restore_on_exit() {
+            local status=$?
+            trap - EXIT
+            if [[ ${restore_enabled} == true ]]; then
+              run_fixture_command 300 'discourse-disable-restore-on-exit' discourse disable_restore || stop_fixture_app || true
+            fi
+            exit "${status}"
+          }
+          trap disable_restore_on_exit EXIT
+          handle_fixture_signal() {
+            trap - HUP INT TERM
+            terminate_active_group
+            stop_fixture_app || printf '%s\n' 'CRITICAL: interrupted disposable restore could not prove an application stop.' >&2
+            exit 124
+          }
+          trap handle_fixture_signal HUP INT TERM
+          run_fixture_command 300 'prepare-backup-marker' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/prepare-backup-marker.rb"'
+          run_fixture_command 2400 'discourse-backup' discourse backup
+          mapfile -t backups < <(sudo find /var/discourse/shared/standalone/backups/default -maxdepth 1 -type f -name '*.tar.gz' -printf '%T@ %f\n' | sort -nr)
+          [[ ${#backups[@]} -ge 1 ]]
+          backup="${backups[0]#* }"
+          [[ "$backup" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,190}\.tar\.gz$ && "$backup" != *..* ]]
+          run_fixture_command 300 'post-backup-recovery-marker' bash -lc "/usr/local/bin/rails runner 'PluginStore.set(\"mochirii-recovery\", \"repository_commit\", \"post-backup-mutation\")'"
+          run_fixture_command 300 'discourse-enable-restore' discourse enable_restore
+          restore_enabled=true
+          run_fixture_command 5400 'discourse-restore-local' discourse restore --location local "$backup"
+          run_fixture_command 300 'discourse-disable-restore' discourse disable_restore
+          restore_enabled=false
+          run_fixture_command 900 'verify-restored-backup-initial' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          sudo /usr/local/sbin/mochirii-stage4-launcher restart "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
+          test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
+          test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
+          test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
+          test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
+          run_fixture_command 900 'verify-restored-backup-after-restart' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          sudo /usr/local/sbin/mochirii-stage4-launcher rebuild "$GITHUB_WORKSPACE/scripts/verify-discourse-docker-checkout.sh"
+          test "$(sudo docker inspect --format '{{.HostConfig.CpusetCpus}}' app)" = 0
+          test "$(sudo docker inspect --format '{{.HostConfig.Memory}}' app)" = 2147483648
+          test "$(sudo docker inspect --format '{{.HostConfig.MemorySwap}}' app)" = 4294967296
+          test "$(sudo docker exec -u discourse app git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf
+          run_fixture_command 900 'verify-restored-backup-after-rebuild' bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-restored-backup.rb"'
+          sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
+          python3 "$GITHUB_WORKSPACE/scripts/verify-public-branding.py" --base-url http://127.0.0.1:18080 --host-header forums.mochirii.com
+          echo 'Supported disposable backup, restore, restart, and rebuild passed.'
+
+      - name: Remove fixture secret and private logs
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "${RUNNER_TEMP}/forums-connect-fixture-key"
+          sudo find /tmp -maxdepth 1 -type f -name 'mochirii-*.log' -delete
+
+      - name: Publish secret-free bootstrap summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Disposable standalone gate'
+            echo
+            echo "- Repository commit: \`${CANDIDATE_SHA}\`"
+            echo '- Effective CPUs: 1'
+            echo '- Effective memory/swap: 2 GiB / 2 GiB'
+            echo '- Provider resources: none'
+            echo '- Runtime credentials: fixture-only'
+            echo '- A successful job proves bootstrap, backup, destructive restore, restart, and rebuild only for this exact commit.'
+          } >> "$GITHUB_STEP_SUMMARY"

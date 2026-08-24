@@ -1,43 +1,46 @@
-# Mōchirīī Forums
+# Mochirii Forums
 
-Private canonical repository for the future Mōchirīī forums source boundary.
+Canonical deployment-control repository for `forums.mochirii.com`.
 
-This state contains governance and a fail-closed source-introduction proposal.
-It intentionally has no runnable forum software, public experience, hostname,
-provider integration, deployment configuration, database, secret, binary, or
-vendored upstream core.
+This repository contains the minimum non-secret configuration, immutable
+upstream references, Mochirii theme, validation, deployment, backup, restore,
+and rollback procedures for the officially supported Discourse Docker
+standalone architecture. It does not vendor Discourse core, store runtime
+secrets, or create provider resources.
 
-## Current contents
+## Selected release
 
-- repository contribution and security boundaries;
-- clean-initialization and pull-only upstream ownership decisions;
-- a fail-closed source contract;
-- exact upstream provenance and empty customization manifests;
-- cost-neutral runtime-readiness and release-evidence gates;
-- least-privilege GitHub Actions validation;
-- a monthly and manually dispatched read-only upstream inspection workflow; and
-- GitHub Actions-only dependency update configuration.
+- Discourse application: `v2026.7.1`, commit
+  `cbf996f65aae3da1843224aa624bcd9a225931ac`.
+- Discourse Docker: commit
+  `ed9f680b0df1de28f062de1769d89d22b2644d1b`.
+- Docker Manager, included by the official standalone template: commit
+  `c008c3ca7fcc44775215843992e88190adb7b3bf`.
 
-See [the current state](docs/operations/CURRENT-STATE.md) and
-[ADR 0001](docs/adr/0001-clean-initialization-and-canonical-ownership.md) before
-[ADR 0002](docs/adr/0002-pull-only-upstream-and-source-introduction.md)
-before adding source. The [source-provenance policy](docs/operations/SOURCE-PROVENANCE.md)
-and [runtime-readiness gates](docs/operations/RUNTIME-READINESS.md) define what
-must be reviewed first. The
-[source-introduction packet](docs/operations/SOURCE-INTRODUCTION-READINESS.md)
-records the remaining decisions without creating a runtime or cost.
+The earlier reviewed Discourse Docker commit `a3028747...` is not deployable on
+the authorized one-vCPU host because its official build command evaluates to
+zero Bundler jobs. The selected commit is the first official correction and is
+reviewed with its five required transitive new-install commits.
 
-## Validate locally
+## Validate
 
 ```powershell
-pwsh -NoLogo -NoProfile -File ./scripts/check-repository.ps1
+pwsh -NoLogo -NoProfile -File ./scripts/check-repository.ps1 -Online
 ```
 
-Passing local validation does not authorize a merge, deployment, provider
-change, or public release.
+The manual disposable-bootstrap workflow performs the official standalone
+bootstrap against a loopback-only, secret-free fixture. Static validation alone
+does not prove a bootstrap, deployment, provider configuration, or production
+health.
 
-Once an explicitly authorized bootstrap places it on `main`, the
-`inspect-forums-upstream` workflow is configured for monthly and manual runs. It
-is currently inert in the empty origin. It verifies pinned official bytes and
-the recorded upstream-drift observation; it never updates a pin, opens a pull
-request, promotes a release, or writes repository/provider state.
+## Operate
+
+- [Deployment procedure](docs/operations/DEPLOYMENT.md)
+- [Storage contract](docs/operations/STORAGE.md)
+- [Validation gates](docs/operations/VALIDATION.md)
+- [Backup, restore, and rollback](docs/operations/RECOVERY.md)
+- [Runtime secret names](docs/operations/SECRETS.md)
+- [Third-party notices](docs/operations/THIRD-PARTY-NOTICES.md)
+
+No command in this repository authorizes provider creation or production
+activation outside the current stage-specific authority packet.

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-14",
+  "status": "stage4-source-only-provider-absent",
+  "provider": "DigitalOcean Spaces",
+  "region": "sgp1",
+  "bucket": "mochirii-forums",
+  "normalUploadKeyFamilies": [
+    "original/",
+    "optimized/",
+    "tombstone/"
+  ],
+  "backupPrefix": "backups/",
+  "mediaHostname": "media-forums.mochirii.com",
+  "configuration": {
+    "enableS3Uploads": true,
+    "regionEnvironmentValue": "whatever",
+    "endpoint": "https://sgp1.digitaloceanspaces.com",
+    "uploadBucketSetting": "mochirii-forums",
+    "backupBucketSetting": "mochirii-forums/backups",
+    "cdnUrl": "https://media-forums.mochirii.com",
+    "useCdnForAllUploads": true,
+    "useAcls": true,
+    "installCorsRule": false,
+    "directBrowserUploads": false,
+    "secureUploads": false,
+    "configureTombstonePolicy": false,
+    "includeUploadsInBackups": true,
+    "applicationAssetCdn": false,
+    "uploadAssetsHook": false
+  },
+  "access": {
+    "credentialScope": "one-bucket-read-write-delete",
+    "normalUploadAcl": "public-read",
+    "backupAcl": "private-default",
+    "bucketListingAnonymous": false,
+    "backupRetrievalAnonymous": false,
+    "backupAdminDownload": "time-limited-presigned-url"
+  },
+  "allowedUploadExtensions": [
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "webp"
+  ],
+  "forbidden": {
+    "awsAccount": true,
+    "awsArn": true,
+    "awsEndpoint": true,
+    "awsResource": true,
+    "publicBucketPolicy": true,
+    "publicBackupAcl": true,
+    "secondStorageProvider": true,
+    "widerExtensions": true
+  },
+  "stage5Gates": {
+    "zeroSecureUploadRows": false,
+    "customHostnameTls": false,
+    "normalUploadWriteRetrieveDelete": false,
+    "optimizedVariantsCustomHostnameOnly": false,
+    "anonymousDirectUploadRetrieval": false,
+    "anonymousListingDenied": false,
+    "backupPrivate": false,
+    "backupIntegrity": false,
+    "supportedRestore": false,
+    "includedCdnCompatible": false
+  },
+  "providerMutationAuthorized": false
+}
