@@ -6120,7 +6120,10 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'config/sshd-forums.conf',
             'Prepared installation cannot replace an already hardened host',
             'install -d -m 0755 -o root -g root /var/lib/mochirii "${state_root}"',
-            'install -d -m 0700 -o root -g root "${state_root}/deploy/.ssh"',
+            'install -d -m 0755 -o root -g root "${state_root}/deploy/.ssh"',
+            'atomic_install "${candidate}" "${target}" 0644',
+            'sudo -u "${deploy_user}" test -r "${state_root}/deploy/.ssh/authorized_keys"',
+            'sudo -u "${operator_user}" test -r "${state_root}/operator/.ssh/authorized_keys"',
             'sudo -l -U "${deploy_user}" "${forbidden}"',
             '/usr/local/sbin/mochirii-forums-upgrade-host-control',
             'host-access-install.pending.json',
@@ -6156,6 +6159,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     )
     if "PermitRootLogin no" in prepared_ssh or "AllowUsers " in prepared_ssh:
         fail("Prepared SSH policy can lock out the retained bootstrap session before operator proof.")
+    if 'install -d -m 0700 -o root -g root "${state_root}/deploy/.ssh"' in installer:
+        fail("Host SSH source restored an unreadable privilege-dropped key directory.")
     require_text(
         prepared_ssh,
         [
@@ -6174,6 +6179,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         host_security,
         [
             '"root:root 755"',
+            '"root:root 644"',
+            'sudo -u "mochirii-forums-${home}" test -r "${key_file}"',
             'Sensitive host-control directory',
             'SSH tree contains an alternate key or user-rc source.',
             'authorizedkeyscommand',
@@ -6230,6 +6237,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             '"targetSetSha256"',
             'seal_access()',
             'seal_control(',
+            'STATE_ROOT / "deploy/.ssh/authorized_keys", 0o644',
+            'STATE_ROOT / "operator/.ssh/authorized_keys", 0o644',
         ],
         "host-control evidence sealing",
     )

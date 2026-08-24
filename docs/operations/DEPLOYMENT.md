@@ -270,12 +270,15 @@ session. Preserve the provider console as the recovery path if SSH
 configuration or both accounts fail. Never use the automation key as the
 operator key.
 
-Both accounts have exact root-owned mode-`0755` homes, root-owned mode-`0700`
-`.ssh` directories, root-owned mode-`0600` single `authorized_keys` files,
+Both accounts have exact root-owned mode-`0755` homes, root-owned mode-`0755`
+`.ssh` directories, root-owned mode-`0644` single `authorized_keys` files,
 `/bin/bash`, locked passwords, their matching primary group, and no
-supplementary group. `/var/lib/mochirii/forums` remains root-owned mode `0755`
-so sshd can traverse to those keys; `evidence`, `operator-evidence`, `logs`,
-`quarantine`, and control-upgrade work remain root-owned mode `0700`.
+supplementary group. The public-key sources remain immutable to both principals
+but are readable after sshd drops privileges; the installer and terminal host
+verifier execute that exact dropped-privilege read gate. `/var/lib/mochirii/forums`
+remains root-owned mode `0755` so sshd can traverse to those keys; `evidence`,
+`operator-evidence`, `logs`, `quarantine`, and control-upgrade work remain
+root-owned mode `0700`.
 
 The effective daemon contract is stricter than the key files alone. Root has
 no key source and cannot log in. Operator and deploy use only their one exact
