@@ -6931,6 +6931,7 @@ return -1""",
 def test_restored_mail_suppression_contract() -> None:
     restored = (ROOT / "scripts/verify-restored-backup.rb").read_text(encoding="utf-8")
     VALIDATOR.validate_restored_mail_suppression_contract(restored)
+    VALIDATOR.validate_restored_central_login_contract(restored)
     VALIDATOR.validate_restored_failure_exit_contract(restored)
     hostiles = (
         restored.replace(
@@ -6964,6 +6965,34 @@ def test_restored_mail_suppression_contract() -> None:
         except RuntimeError:
             continue
         raise RuntimeError("Restored-backup verifier accepted unsafe or unbound mail suppression.")
+
+    central_login_hostiles = (
+        restored.replace(
+            'ENV.fetch("DISCOURSE_ENABLE_DISCOURSE_CONNECT")',
+            'ENV["DISCOURSE_ENABLE_DISCOURSE_CONNECT"]',
+            1,
+        ),
+        restored.replace('  when "true" then true', '  when "true" then false', 1),
+        restored.replace('  when "false" then false', '  when "false" then true', 1),
+        restored.replace(
+            "SiteSetting.enable_discourse_connect == runtime_central_login",
+            "SiteSetting.enable_discourse_connect = runtime_central_login",
+            1,
+        ),
+        restored.replace(
+            "SiteSetting.enable_discourse_connect == runtime_central_login",
+            "SiteSetting.enable_discourse_connect == false",
+            1,
+        ),
+    )
+    for hostile in central_login_hostiles:
+        if hostile == restored:
+            raise RuntimeError("Restored central-login hostile mutation anchor is absent.")
+        try:
+            VALIDATOR.validate_restored_central_login_contract(hostile)
+        except RuntimeError:
+            continue
+        raise RuntimeError("Restored-backup verifier accepted unsafe or unbound central login.")
 
     exit_hostiles = (
         restored.replace("  recovery_marker: 65,", "  recovery_marker: 64,", 1),

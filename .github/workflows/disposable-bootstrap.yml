@@ -460,7 +460,7 @@ jobs:
               69) printf '%s\n' 'sidekiq-process-present' ;;
               70) printf '%s\n' 'sidekiq-processing' ;;
               71) printf '%s\n' 'mail-suppression-matches-runtime' ;;
-              72) printf '%s\n' 'central-login-disabled' ;;
+              72) printf '%s\n' 'central-login-matches-runtime' ;;
               73) printf '%s\n' 'secure-uploads-absent' ;;
               74) printf '%s\n' 'normal-upload-inventory' ;;
               *) return 1 ;;

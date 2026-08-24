@@ -15,7 +15,7 @@ RESTORED_CHECK_EXIT_CODES = {
   sidekiq_process_present: 69,
   sidekiq_processing: 70,
   mail_suppression_matches_runtime: 71,
-  central_login_disabled: 72,
+  central_login_matches_runtime: 72,
   secure_uploads_absent: 73,
   normal_upload_inventory: 74,
 }.freeze
@@ -77,6 +77,12 @@ unless expected_inventory_count.nil?
       inventory["normalUploadInventorySha256"] == expected_inventory_sha256
 end
 runtime_mail_suppression = ENV.fetch("DISCOURSE_DISABLE_EMAILS")
+runtime_central_login =
+  case ENV.fetch("DISCOURSE_ENABLE_DISCOURSE_CONNECT")
+  when "true" then true
+  when "false" then false
+  else raise "DiscourseConnect runtime flag is malformed"
+  end
 sidekiq_probe_state = "completed"
 begin
   sidekiq_processing = MochiriiEmailMetadata.verify_sidekiq_processing!
@@ -100,7 +106,8 @@ checks = {
   mail_suppression_matches_runtime:
     %w[yes non-staff].include?(runtime_mail_suppression) &&
       SiteSetting.disable_emails == runtime_mail_suppression,
-  central_login_disabled: SiteSetting.enable_discourse_connect == false,
+  central_login_matches_runtime:
+    SiteSetting.enable_discourse_connect == runtime_central_login,
   secure_uploads_absent: Upload.where(secure: true).none?,
   normal_upload_inventory: normal_upload_inventory_matches,
 }

@@ -198,7 +198,7 @@ ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9e
 ADMIN_QUICK_START_STORED_TEMPLATE_BYTES = 1305
 ADMIN_QUICK_START_STORED_TEMPLATE_SHA256 = "797e8a4616d96ed775fc51b1df92ee3d6bac0ce1b431050ba2af306894bdc766"
 RUNTIME_VERIFIER_SHA256 = "5fdd719f737b67a6ed1dfd544e75a9073ef0a0d5d0048907dc3c838b210f1f2e"
-RESTORED_BACKUP_VERIFIER_SHA256 = "dcb4603e8fb414177f53ab174fc29dc67154d618831d81cb06d354337893c645"
+RESTORED_BACKUP_VERIFIER_SHA256 = "2804d9bfc738ff083f6a286bfa0fbca6bbe0c986e29d69dd732ab9453f832189"
 RESTORED_CHECK_EXIT_CODES = (
     ("repository_revision", 64, "repository-revision"),
     ("recovery_marker", 65, "recovery-marker"),
@@ -208,7 +208,7 @@ RESTORED_CHECK_EXIT_CODES = (
     ("sidekiq_process_present", 69, "sidekiq-process-present"),
     ("sidekiq_processing", 70, "sidekiq-processing"),
     ("mail_suppression_matches_runtime", 71, "mail-suppression-matches-runtime"),
-    ("central_login_disabled", 72, "central-login-disabled"),
+    ("central_login_matches_runtime", 72, "central-login-matches-runtime"),
     ("secure_uploads_absent", 73, "secure-uploads-absent"),
     ("normal_upload_inventory", 74, "normal-upload-inventory"),
 )
@@ -785,6 +785,27 @@ def validate_restored_mail_suppression_contract(source: str) -> None:
         or hashlib.sha256(source.encode("utf-8")).hexdigest() != RESTORED_BACKUP_VERIFIER_SHA256
     ):
         fail("Restored-backup mail suppression is not bound to the exact safe runtime setting.")
+
+
+def validate_restored_central_login_contract(source: str) -> None:
+    runtime_binding = '''runtime_central_login =
+  case ENV.fetch("DISCOURSE_ENABLE_DISCOURSE_CONNECT")
+  when "true" then true
+  when "false" then false
+  else raise "DiscourseConnect runtime flag is malformed"
+  end
+'''
+    check = '''  central_login_matches_runtime:
+    SiteSetting.enable_discourse_connect == runtime_central_login,
+'''
+    if (
+        source.count(runtime_binding) != 1
+        or source.count(check) != 1
+        or source.count("runtime_central_login") != 2
+        or "central_login_disabled" in source
+        or "SiteSetting.enable_discourse_connect == false" in source
+    ):
+        fail("Restored-backup central login is not bound to the exact runtime flag.")
 
 
 def validate_restored_failure_exit_contract(source: str) -> None:
@@ -4997,6 +5018,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     backup_marker = read("scripts/prepare-backup-marker.rb")
     restored_verifier = read("scripts/verify-restored-backup.rb")
     validate_restored_mail_suppression_contract(restored_verifier)
+    validate_restored_central_login_contract(restored_verifier)
     validate_restored_failure_exit_contract(restored_verifier)
     require_text(
         backup_marker,
