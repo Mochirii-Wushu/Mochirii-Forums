@@ -6003,6 +6003,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "direct Git parent",
             "continues the newly approved upgrade in the same locked process",
             "identical-byte",
+            "exact historical certificate-",
+            "root-owned mode-`0755` executable-boundary contract",
+            "exact mode-`0700` defect",
+            "syncs the directory and its parent",
+            "socket-activation recovery branch does not perform this repair",
         ],
         "host-control changed-successor recovery documentation",
     )
@@ -6246,6 +6251,10 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'host-control evidence target inventory differs',
             'certificate automation target set is partial',
             'service_state mochirii-forums-media-certificate-renew.timer',
+            'libexec_root=/usr/local/libexec/mochirii-forums',
+            'deploy_dispatcher="${libexec_root}/ssh-deploy-dispatch.py"',
+            '"$(stat -c \'%U:%G %a\' "${libexec_root}")" == "root:root 755"',
+            'sudo -u mochirii-forums-deploy test -x "${deploy_dispatcher}"',
             '--upgrade-transaction',
             '--socket-activation-recovery',
             '--upgrade-socket-activation-recovery',
@@ -6272,6 +6281,13 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'assert-held --locks primary,media',
             'run --locks primary,media',
             'control-upgrade.pending.json',
+            'readonly libexec_root="/usr/local/libexec/mochirii-forums"',
+            'reconcile_shared_libexec_traversal() {',
+            '[[ ${current_mode} == 700 ]]',
+            'chmod 0755 -- "${libexec_root}"',
+            'sync -d "${libexec_root}"',
+            'sudo -u mochirii-forums-deploy test -x "${libexec_root}/ssh-deploy-dispatch.py"',
+            'reconcile_shared_libexec_traversal "${previous_source}" "${candidate}"',
             'os.fsync(writer.fileno())',
             'os.replace(candidate, target)',
             'rollback_transaction',
@@ -6344,7 +6360,15 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     predecessor_gate = control_upgrade.index(
         'ssh_predecessor="$(ssh_activation_predecessor)"', predecessor_binding
     )
-    recovery_gate = control_upgrade.index('--socket-activation-recovery', predecessor_gate)
+    predecessor_verifier = control_upgrade.index(
+        'bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}"',
+        predecessor_gate,
+    )
+    traversal_repair = control_upgrade.index(
+        'reconcile_shared_libexec_traversal "${previous_source}" "${candidate}"',
+        predecessor_verifier,
+    )
+    recovery_gate = control_upgrade.index('--socket-activation-recovery', traversal_repair)
     retained_archives = control_upgrade.index(
         'retain_disaster_recovery_sources "${archive}"', recovery_gate
     )
@@ -6372,6 +6396,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         candidate_validation
         < predecessor_binding
         < predecessor_gate
+        < predecessor_verifier
+        < traversal_repair
         < recovery_gate
         < retained_archives
         < transaction_move
@@ -6383,6 +6409,34 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         < terminal_verification
     ):
         fail("SSH service activation can bypass validation, journaling, publication, readback, or terminal verification.")
+    traversal_function_start = control_upgrade.index("reconcile_shared_libexec_traversal() {")
+    traversal_function_end = control_upgrade.index("\n}\n", traversal_function_start)
+    traversal_function = control_upgrade[traversal_function_start:traversal_function_end]
+    if [line.strip() for line in traversal_function.splitlines() if "chmod " in line] != [
+        'chmod 0755 -- "${libexec_root}" || return 1'
+    ]:
+        fail("Host-control traversal reconciliation can change more than the exact shared-directory mode.")
+    if traversal_function.count(
+        'sudo -u mochirii-forums-deploy test -x "${libexec_root}/ssh-deploy-dispatch.py"'
+    ) != 2:
+        fail("Host-control traversal reconciliation omits idempotent or corrected deploy-principal readback.")
+    service_branch_end = control_upgrade.index("\nelse\n", predecessor_verifier)
+    socket_branch_end = control_upgrade.index("\nfi\n", service_branch_end)
+    if traversal_repair >= service_branch_end or "reconcile_shared_libexec_traversal" in control_upgrade[
+        service_branch_end:socket_branch_end
+    ]:
+        fail("Host-control traversal reconciliation is not confined to the verified service predecessor.")
+    post_readback_start = control_upgrade.index("post_install_readback() {")
+    post_readback_end = control_upgrade.index("clear_transaction() {", post_readback_start)
+    post_readback = control_upgrade[post_readback_start:post_readback_end]
+    if any(
+        value not in post_readback
+        for value in (
+            '"$(stat -c \'%U:%G %a\' "${libexec_root}")" == "root:root 755"',
+            'sudo -u mochirii-forums-deploy test -x "${libexec_root}/ssh-deploy-dispatch.py"',
+        )
+    ):
+        fail("Host-control terminal readback omits shared executable traversal.")
     reconcile_start = control_upgrade.index("reconcile_pending() {")
     recovery_predecessor_binding = control_upgrade.index(
         'bind_previous_source "${transaction}/backup/current-host-control.json"', reconcile_start
@@ -6573,6 +6627,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     preparation = read("scripts/prepare-media-certificate.sh")
     certificate_installer = read("scripts/install-media-certificate-renewal.sh")
     contract_tests = read("scripts/test-contracts.py")
+    provider_tls_docs = read("docs/operations/PROVIDER-DNS-TLS.md")
     require_text(
         rotation,
         [
@@ -6633,8 +6688,42 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             '--operation certificate-install',
             'verify_certificate_control_state()',
             'timeout --signal=TERM --kill-after=10s 180s bash "${host_security_verifier}"',
+            'install -d -m 0700 -o root -g root "${log_root}" /etc/mochirii /etc/letsencrypt',
+            'install -d -m 0755 -o root -g root "${libexec_root}"',
+            '"$(stat -c \'%U:%G %a\' "${libexec_root}")" == "root:root 755"',
         ],
         "preparation-owned certificate input and host-control evidence adoption",
+    )
+    collapsed_libexec_install = (
+        'install -d -m 0700 -o root -g root "${log_root}" '
+        '/usr/local/libexec/mochirii-forums /etc/mochirii /etc/letsencrypt'
+    )
+    private_directory_install = (
+        'install -d -m 0700 -o root -g root "${log_root}" /etc/mochirii /etc/letsencrypt'
+    )
+    shared_directory_install = 'install -d -m 0755 -o root -g root "${libexec_root}"'
+    if collapsed_libexec_install in certificate_installer:
+        fail("Certificate installer collapses the shared executable parent to the private-directory mode.")
+    installer_directory_order = tuple(
+        certificate_installer.index(value)
+        for value in (
+            private_directory_install,
+            shared_directory_install,
+            '"$(stat -c \'%U:%G %a\' "${libexec_root}")" == "root:root 755"',
+            '[[ ! -e ${preparation_journal}',
+        )
+    )
+    if installer_directory_order != tuple(sorted(installer_directory_order)):
+        fail("Certificate installer does not establish and verify shared traversal before mutation.")
+    require_text(
+        provider_tls_docs,
+        [
+            "shared executable traversal boundary",
+            "mode-`0755` directory",
+            "unprivileged deploy principal",
+            "private-directory mode",
+        ],
+        "certificate shared executable traversal documentation",
     )
     recovery_start = certificate_installer.index('if [[ ${prior_install_phase} == committed ]]')
     recovery_end = certificate_installer.index('cleanup_installation || fail', recovery_start)
@@ -6678,6 +6767,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "test_certificate_identity_read_allowlist",
             "test_certificate_inventory_capacity",
             "test_certificate_preparation_recovery_contract",
+            "test_shared_libexec_traversal_contract",
             "test_certificate_control_evidence_adoption_contract",
             "test_certificate_commit_forward_retirement",
             "test_certificate_commit_forward_ignores_stale_absence",

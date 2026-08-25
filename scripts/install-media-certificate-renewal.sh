@@ -94,6 +94,7 @@ if not re.fullmatch(r"dns_cloudflare_api_token = [A-Za-z0-9_-]{20,512}", value):
 PY
 
 log_root="/var/lib/mochirii/forums/logs"
+libexec_root="/usr/local/libexec/mochirii-forums"
 install_journal="/var/lib/mochirii/forums/media-certificate-install.pending.json"
 preparation_journal="/var/lib/mochirii/forums/media-certificate-preparation.pending.json"
 control_pointer="/var/lib/mochirii/forums/current-host-control.json"
@@ -104,7 +105,9 @@ prepared_runtime="/etc/mochirii/forums-media-certificate.json"
 prepared_certbot="/etc/letsencrypt/mochirii-media.ini"
 prepared_dns="/etc/letsencrypt/mochirii-cloudflare.ini"
 lineage="/etc/letsencrypt/live/media-forums.mochirii.com"
-install -d -m 0700 -o root -g root "${log_root}" /usr/local/libexec/mochirii-forums /etc/mochirii /etc/letsencrypt
+install -d -m 0700 -o root -g root "${log_root}" /etc/mochirii /etc/letsencrypt
+install -d -m 0755 -o root -g root "${libexec_root}"
+[[ -d ${libexec_root} && ! -L ${libexec_root} && "$(stat -c '%U:%G %a' "${libexec_root}")" == "root:root 755" ]] || fail "Shared host-control executable directory is unsafe."
 [[ ! -e ${preparation_journal} && ! -L ${preparation_journal} ]] || fail "Certificate preparation remains incomplete or unproved."
 validate_prepared_input() {
   local source="$1"
@@ -230,6 +233,7 @@ PY
 
 validate_installed_automation_bytes() {
   local source target mode
+  [[ -d ${libexec_root} && ! -L ${libexec_root} && "$(stat -c '%U:%G %a' "${libexec_root}")" == "root:root 755" ]] || return 1
   while IFS=$'\t' read -r source target mode; do
     [[ -f ${target} && ! -L ${target} ]] || return 1
     [[ "$(stat -c '%U:%G %a' "${target}")" == "root:root ${mode}" ]] || return 1

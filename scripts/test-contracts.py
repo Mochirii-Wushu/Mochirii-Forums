@@ -3864,6 +3864,156 @@ def test_certificate_preparation_recovery_contract() -> None:
         raise RuntimeError("Certificate installation journals a mutation before validating prepared input bytes.")
 
 
+def test_shared_libexec_traversal_contract() -> None:
+    installer = (ROOT / "scripts/install-media-certificate-renewal.sh").read_text(encoding="utf-8")
+    upgrader = (ROOT / "scripts/upgrade-host-control.sh").read_text(encoding="utf-8")
+    verifier = (ROOT / "scripts/verify-host-security.sh").read_text(encoding="utf-8")
+    deployment = (ROOT / "docs/operations/DEPLOYMENT.md").read_text(encoding="utf-8")
+    provider = (ROOT / "docs/operations/PROVIDER-DNS-TLS.md").read_text(encoding="utf-8")
+
+    private_directories = (
+        'install -d -m 0700 -o root -g root "${log_root}" /etc/mochirii /etc/letsencrypt'
+    )
+    shared_directory = 'install -d -m 0755 -o root -g root "${libexec_root}"'
+    historical_defect = (
+        'install -d -m 0700 -o root -g root "${log_root}" '
+        '/usr/local/libexec/mochirii-forums /etc/mochirii /etc/letsencrypt'
+    )
+    directory_readback = (
+        '[[ -d ${libexec_root} && ! -L ${libexec_root} && '
+        '"$(stat -c \'%U:%G %a\' "${libexec_root}")" == "root:root 755" ]]'
+    )
+    deploy_traversal = (
+        'sudo -u mochirii-forums-deploy test -x '
+        '"${libexec_root}/ssh-deploy-dispatch.py"'
+    )
+    reconcile_call = (
+        'reconcile_shared_libexec_traversal "${previous_source}" "${candidate}" || '
+        'fail "Shared host-control executable traversal could not be reconciled from the '
+        'exact certificate-installer predecessor."'
+    )
+
+    def assert_contract(
+        installer_source: str,
+        upgrader_source: str,
+        verifier_source: str,
+        deployment_source: str,
+        provider_source: str,
+    ) -> None:
+        if historical_defect in installer_source:
+            raise RuntimeError("Certificate installer still collapses the shared executable parent to mode 0700.")
+        if installer_source.count(private_directories) != 1 or installer_source.count(shared_directory) != 1:
+            raise RuntimeError("Certificate installer private/shared directory modes are undefined or duplicated.")
+        installer_order = tuple(
+            installer_source.index(value)
+            for value in (
+                'libexec_root="/usr/local/libexec/mochirii-forums"',
+                private_directories,
+                shared_directory,
+                directory_readback,
+                '[[ ! -e ${preparation_journal}',
+            )
+        )
+        if installer_order != tuple(sorted(installer_order)):
+            raise RuntimeError("Certificate installer does not bind shared traversal before certificate mutation.")
+        installed_readback = installer_source[
+            installer_source.index("validate_installed_automation_bytes() {") :
+            installer_source.index("write_install_journal() {")
+        ]
+        if directory_readback not in installed_readback:
+            raise RuntimeError("Certificate installer terminal readback omits the shared executable parent.")
+
+        verifier_required = (
+            "libexec_root=/usr/local/libexec/mochirii-forums",
+            'deploy_dispatcher="${libexec_root}/ssh-deploy-dispatch.py"',
+            directory_readback,
+            '[[ -x ${deploy_dispatcher} && ! -L ${deploy_dispatcher}',
+            '"$(stat -c \'%U:%G %a\' "${deploy_dispatcher}")" == "root:root 755"',
+            'sudo -u mochirii-forums-deploy test -x "${deploy_dispatcher}"',
+        )
+        if any(value not in verifier_source for value in verifier_required):
+            raise RuntimeError("Terminal host verifier omits the shared executable traversal contract.")
+
+        reconcile_start = upgrader_source.index("reconcile_shared_libexec_traversal() {")
+        reconcile_end = upgrader_source.index("\n}\n", reconcile_start)
+        reconcile = upgrader_source[reconcile_start:reconcile_end]
+        reconcile_required = (
+            "local previous_defect='" + historical_defect + "'",
+            "local candidate_private='" + private_directories + "'",
+            "local candidate_shared='" + shared_directory + "'",
+            '[[ -d ${libexec_root} && ! -L ${libexec_root} ]]',
+            '[[ "$(stat -c \'%U:%G\' "${libexec_root}")" == root:root ]]',
+            'if [[ ${current_mode} == 755 ]]',
+            '[[ ${current_mode} == 700 ]]',
+            'grep -Fqx -- "${previous_defect}" "${previous_source}/scripts/install-media-certificate-renewal.sh"',
+            'grep -Fqx -- "${candidate_private}" "${candidate_source}/scripts/install-media-certificate-renewal.sh"',
+            'grep -Fqx -- "${candidate_shared}" "${candidate_source}/scripts/install-media-certificate-renewal.sh"',
+            'chmod 0755 -- "${libexec_root}"',
+            'sync -d "${libexec_root}"',
+            'sync -d "$(dirname -- "${libexec_root}")"',
+            deploy_traversal,
+        )
+        if any(value not in reconcile for value in reconcile_required):
+            raise RuntimeError("Governed upgrade lost its exact monotonic traversal repair.")
+        chmod_lines = [line.strip() for line in reconcile.splitlines() if "chmod " in line]
+        if chmod_lines != ['chmod 0755 -- "${libexec_root}" || return 1']:
+            raise RuntimeError("Governed traversal repair can change more than the exact shared-directory mode.")
+        if reconcile.count(deploy_traversal) != 2:
+            raise RuntimeError("Governed traversal repair does not prove both idempotent and corrected execution.")
+
+        predecessor_gate = upgrader_source.index(
+            'bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}"'
+        )
+        service_end = upgrader_source.index("\nelse\n", predecessor_gate)
+        socket_end = upgrader_source.index("\nfi\n", service_end)
+        service_branch = upgrader_source[predecessor_gate:service_end]
+        socket_branch = upgrader_source[service_end:socket_end]
+        if reconcile_call not in service_branch or service_branch.index(reconcile_call) <= 0:
+            raise RuntimeError("Traversal correction is not bound after the exact service predecessor verifier.")
+        if "reconcile_shared_libexec_traversal" in socket_branch:
+            raise RuntimeError("Socket-activation recovery can mutate the shared executable parent.")
+        post_readback = upgrader_source[
+            upgrader_source.index("post_install_readback() {") :
+            upgrader_source.index("clear_transaction() {")
+        ]
+        if directory_readback not in post_readback or deploy_traversal not in post_readback:
+            raise RuntimeError("Transactional terminal readback omits shared executable traversal.")
+
+        deployment_required = (
+            "exact historical certificate-",
+            "root-owned mode-`0755` executable-boundary contract",
+            "exact mode-`0700` defect",
+            "syncs the directory and its parent",
+            "socket-activation recovery branch does not perform this repair",
+        )
+        provider_required = (
+            "shared executable traversal boundary",
+            "mode-`0755` directory",
+            "unprivileged deploy principal",
+            "private-directory mode",
+        )
+        if any(value not in deployment_source for value in deployment_required):
+            raise RuntimeError("Governed traversal repair documentation is incomplete.")
+        if any(value not in provider_source for value in provider_required):
+            raise RuntimeError("Certificate installer traversal documentation is incomplete.")
+
+    assert_contract(installer, upgrader, verifier, deployment, provider)
+    hostile_mutations = (
+        (installer.replace(shared_directory, shared_directory.replace("0755", "0700"), 1), upgrader, verifier, deployment, provider),
+        (installer, upgrader.replace('[[ ${current_mode} == 700 ]]', '[[ ${current_mode} == 777 ]]', 1), verifier, deployment, provider),
+        (installer, upgrader.replace('chmod 0755 -- "${libexec_root}"', 'chmod 0777 -- "${libexec_root}"', 1), verifier, deployment, provider),
+        (installer, upgrader.replace(reconcile_call, "true", 1), verifier, deployment, provider),
+        (installer, upgrader, verifier.replace('sudo -u mochirii-forums-deploy test -x "${deploy_dispatcher}"', "true", 1), deployment, provider),
+        (installer, upgrader, verifier, deployment.replace("syncs the directory and its parent", "changes the directory"), provider),
+    )
+    for sources in hostile_mutations:
+        try:
+            assert_contract(*sources)
+        except (RuntimeError, ValueError):
+            continue
+        raise RuntimeError("Hostile shared-libexec traversal mutation passed the source contract.")
+
+
 def test_certificate_control_evidence_adoption_contract() -> None:
     installer = (ROOT / "scripts/install-media-certificate-renewal.sh").read_text(encoding="utf-8")
     evidence = (ROOT / "scripts/host-control-evidence.py").read_text(encoding="utf-8")
@@ -9772,6 +9922,7 @@ def main() -> int:
     test_http_redirect_boundaries()
     test_certificate_inventory_capacity()
     test_certificate_preparation_recovery_contract()
+    test_shared_libexec_traversal_contract()
     test_certificate_control_evidence_adoption_contract()
     test_certificate_commit_forward_retirement()
     test_certificate_commit_forward_ignores_stale_absence()

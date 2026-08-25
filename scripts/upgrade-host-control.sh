@@ -12,6 +12,7 @@ readonly upgrades_root="${state_root}/control-upgrades"
 readonly pending_journal="${state_root}/control-upgrade.pending.json"
 readonly control_pointer="${state_root}/current-host-control.json"
 readonly host_control_releases_root="/opt/mochirii/forums/host-control-releases"
+readonly libexec_root="/usr/local/libexec/mochirii-forums"
 readonly ssh_generator_parent="/etc/systemd/system-generators"
 readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generator"
 active_transaction=""
@@ -25,6 +26,29 @@ fail() {
 
 bounded() {
   timeout --signal=TERM --kill-after=10s "$@"
+}
+
+reconcile_shared_libexec_traversal() {
+  local previous_source="$1" candidate_source="$2" current_mode
+  local previous_defect='install -d -m 0700 -o root -g root "${log_root}" /usr/local/libexec/mochirii-forums /etc/mochirii /etc/letsencrypt'
+  local candidate_private='install -d -m 0700 -o root -g root "${log_root}" /etc/mochirii /etc/letsencrypt'
+  local candidate_shared='install -d -m 0755 -o root -g root "${libexec_root}"'
+  [[ -d ${libexec_root} && ! -L ${libexec_root} ]] || return 1
+  [[ "$(stat -c '%U:%G' "${libexec_root}")" == root:root ]] || return 1
+  current_mode="$(stat -c '%a' "${libexec_root}")"
+  if [[ ${current_mode} == 755 ]]; then
+    sudo -u mochirii-forums-deploy test -x "${libexec_root}/ssh-deploy-dispatch.py"
+    return
+  fi
+  [[ ${current_mode} == 700 ]] || return 1
+  grep -Fqx -- "${previous_defect}" "${previous_source}/scripts/install-media-certificate-renewal.sh" || return 1
+  grep -Fqx -- "${candidate_private}" "${candidate_source}/scripts/install-media-certificate-renewal.sh" || return 1
+  grep -Fqx -- "${candidate_shared}" "${candidate_source}/scripts/install-media-certificate-renewal.sh" || return 1
+  chmod 0755 -- "${libexec_root}" || return 1
+  sync -d "${libexec_root}" 2>/dev/null || true
+  sync -d "$(dirname -- "${libexec_root}")" 2>/dev/null || true
+  [[ "$(stat -c '%U:%G %a' "${libexec_root}")" == "root:root 755" ]] || return 1
+  sudo -u mochirii-forums-deploy test -x "${libexec_root}/ssh-deploy-dispatch.py"
 }
 
 durable_remove() {
@@ -764,6 +788,8 @@ seal_control_state() {
 post_install_readback() {
   local source_root="$1" certificate_installed="$2" timer_enabled="$3" timer_active="$4"
   [[ -d ${source_root} && ! -L ${source_root} ]] || return 1
+  [[ -d ${libexec_root} && ! -L ${libexec_root} && "$(stat -c '%U:%G %a' "${libexec_root}")" == "root:root 755" ]] || return 1
+  sudo -u mochirii-forums-deploy test -x "${libexec_root}/ssh-deploy-dispatch.py" || return 1
   bounded 20s visudo -cf /etc/sudoers.d/mochirii-forums >/dev/null 2>&1 || return 1
   bounded 20s visudo -cf /etc/sudoers.d/mochirii-forums-operator >/dev/null 2>&1 || return 1
   bounded 20s sshd -t >/dev/null 2>&1 || return 1
@@ -1159,6 +1185,7 @@ bounded 20s visudo -cf "${candidate}/config/sudoers-forums-operator" >/dev/null 
 ssh_predecessor="$(ssh_activation_predecessor)" || fail "OpenSSH activation state is neither the reviewed service state nor the exact Ubuntu socket-activation predecessor."
 if [[ ${ssh_predecessor} == service ]]; then
   bash "${previous_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" >/dev/null 2>&1 || fail "Current host controls failed the pre-upgrade security gate."
+  reconcile_shared_libexec_traversal "${previous_source}" "${candidate}" || fail "Shared host-control executable traversal could not be reconciled from the exact certificate-installer predecessor."
 else
   bash "${candidate}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --socket-activation-recovery >/dev/null 2>&1 || fail "Current host controls failed the exact socket-activation recovery gate."
 fi

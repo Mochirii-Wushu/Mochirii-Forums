@@ -415,6 +415,18 @@ repairing or following it. The certificate installer records the current host-co
 its immutable predecessor, exact-validates the installed certificate-control
 bytes and unit/timer state, reseals the complete control inventory, and passes
 the full host-security verifier before its terminal event or journal removal.
+One governed direct successor may correct the exact historical certificate-
+installer defect that changed `/usr/local/libexec/mochirii-forums` from its
+root-owned mode-`0755` executable-boundary contract to mode `0700`. Only after
+the existing predecessor passes its full verifier, the upgrade requires the
+current directory to be a non-link owned by `root:root`, requires either mode
+`0755` or that exact mode-`0700` defect, and binds the old combined installer
+line plus the successor's reviewed split mode-`0700` private-directory and
+mode-`0755` shared-directory lines. It changes only that exact `0700` mode to
+`0755`, syncs the directory and its parent, and proves the deploy principal can
+execute the forced-command dispatcher. Mode `0755` is idempotently accepted;
+every other mode, owner, link, source, or traversal state fails closed. The
+socket-activation recovery branch does not perform this repair.
 After a host-control source upgrade, deploy that same reviewed commit through
 the ordinary release path before using its release-owned certificate installer
 or declaring the hosted release tuple complete.
