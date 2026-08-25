@@ -21,11 +21,14 @@ readonly pending_journal="${state_root}/failed-bootstrap-quarantine.pending.json
 readonly shared_root="/var/discourse/shared"
 readonly standalone_root="${shared_root}/standalone"
 readonly recovery_root="${shared_root}/.mochirii-forums-failed-bootstrap"
+readonly reviewed_legacy_failed_bootstrap_commit="b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f"
 readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"
+readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"
+readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"
 
 validate_source_lineage() {
-  local current="$1" failed="$2" status_output remote_output
-  local -a actual_paths expected_paths=(
+  local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit
+  local -ar legacy_expected_paths=(
     .github/workflows/deploy-forums.yml
     config/host-control-manifest.v1.json
     docs/operations/DEPLOYMENT.md
@@ -35,13 +38,34 @@ validate_source_lineage() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
   )
+  local -ar active_swap_expected_paths=(
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host.sh
+  )
+  local -a actual_paths expected_paths
+  case "${failed}" in
+    "${reviewed_legacy_failed_bootstrap_commit}")
+      reviewed_recovery_commit="${reviewed_failed_bootstrap_recovery_commit}"
+      expected_paths=("${legacy_expected_paths[@]}")
+      ;;
+    "${reviewed_active_swap_failed_bootstrap_commit}")
+      reviewed_recovery_commit="${reviewed_active_swap_recovery_commit}"
+      expected_paths=("${active_swap_expected_paths[@]}")
+      ;;
+    *) return 1 ;;
+  esac
   [[ -d ${source_root}/.git && ! -L ${source_root}/.git ]] || return 1
   [[ "$(git -C "${source_root}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${current}" ]] || return 1
   [[ "$(git -C "${source_root}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
-  [[ "$(git -C "${source_root}" rev-parse --verify "${current}^1" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
-  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${current}" 2>/dev/null)" == "${current} ${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
-  [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1" 2>/dev/null)" == "${failed}" ]] || return 1
-  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit} ${failed}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-parse --verify "${current}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${current}" 2>/dev/null)" == "${current} ${reviewed_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${failed}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${failed}" ]] || return 1
   status_output="$(git -c core.fsmonitor=false -C "${source_root}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || return 1
   (( ${#status_output} <= 262144 )) || return 1
   [[ -z ${status_output} ]] || return 1
@@ -81,6 +105,12 @@ if (
     raise SystemExit("failed bootstrap journal is unsafe")
 raw = path.read_bytes()
 
+def canonical(document):
+    try:
+        return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    except (RecursionError, TypeError, ValueError) as error:
+        raise SystemExit("failed bootstrap journal is malformed") from error
+
 def reject_duplicate(pairs):
     result = {}
     for key, value in pairs:
@@ -91,8 +121,10 @@ def reject_duplicate(pairs):
 
 try:
     document = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate)
-except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+except (UnicodeDecodeError, ValueError, json.JSONDecodeError, RecursionError) as error:
     raise SystemExit("failed bootstrap journal is malformed") from error
+if not isinstance(document, dict):
+    raise SystemExit("failed bootstrap journal is malformed")
 keys = {
     "schemaVersion", "phase", "recordedAt", "updatedAt", "deploymentMode",
     "repositoryCommit", "productionConfigurationSha256", "releaseArchiveSha256",
@@ -106,16 +138,15 @@ keys = {
     "launcherOperationToken", "launcherPreviousImageId", "launcherCommand",
     "databaseMutationPossible", "applicationStopped",
 }
-canonical = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+canonical_raw = canonical(document)
 previous = (
     "previousRepositoryCommit", "previousProductionConfigurationSha256",
     "previousCurrentReleaseSha256", "previousAppConfigurationFile",
     "previousAppConfigurationSha256", "previousCurrentTarget",
 )
 if (
-    not isinstance(document, dict)
-    or set(document) != keys
-    or raw != canonical
+    set(document) != keys
+    or raw != canonical_raw
     or document.get("schemaVersion") != 1
     or document.get("phase") != "runtime-contained"
     or document.get("deploymentMode") != "bootstrap"
@@ -179,6 +210,7 @@ validate_quarantine_environment() {
 read_quarantine_identity() {
   local kind="$1" current="$2" failed="$3"
   python3 -B - "${kind}" "${pending_journal}" "${evidence_root}" "${current}" "${failed}" <<'PY'
+import itertools
 import json
 import pathlib
 import re
@@ -196,6 +228,12 @@ base_keys = {
     "standalonePath", "quarantinePath", "mutationEvidencePath",
     "standaloneUid", "standaloneGid", "standaloneMode", "sslPresent",
 }
+
+def canonical(document):
+    try:
+        return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    except (RecursionError, TypeError, ValueError) as error:
+        raise SystemExit("failed-bootstrap recovery evidence is noncanonical") from error
 
 def reject_duplicate(pairs):
     document = {}
@@ -224,10 +262,12 @@ def read_exact(path):
     raw = path.read_bytes()
     try:
         document = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate)
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError, RecursionError) as error:
         raise SystemExit("failed-bootstrap recovery evidence is malformed") from error
-    canonical = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-    if raw != canonical:
+    if not isinstance(document, dict):
+        raise SystemExit("failed-bootstrap recovery evidence is malformed")
+    canonical_raw = canonical(document)
+    if raw != canonical_raw:
         raise SystemExit("failed-bootstrap recovery evidence is noncanonical")
     return document
 
@@ -443,8 +483,11 @@ def exact_inventory(path, maximum, label):
         raise SystemExit(f"{label} exceeds its bounded inventory")
     return {entry.name for entry in entries}
 
-def canonical(document):
-    return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+def canonical(document, label):
+    try:
+        return (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    except (RecursionError, TypeError, ValueError) as error:
+        raise SystemExit(f"{label} is not canonical") from error
 
 def reject_duplicate(pairs):
     document = {}
@@ -458,9 +501,11 @@ def decode_canonical(path, label, expected_sha=None):
     raw = exact_regular(path, label, expected_sha)
     try:
         document = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate)
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError, RecursionError) as error:
         raise SystemExit(f"{label} is malformed") from error
-    if raw != canonical(document):
+    if not isinstance(document, dict):
+        raise SystemExit(f"{label} is malformed")
+    if raw != canonical(document, label):
         raise SystemExit(f"{label} is not canonical")
     return raw, document
 
@@ -505,7 +550,7 @@ def validate_state(document, phases, terminal_state=False):
         raise SystemExit("failed-bootstrap terminal evidence tuple differs")
 
 def publish(path, document, create):
-    raw = canonical(document)
+    raw = canonical(document, "failed-bootstrap quarantine document")
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = pathlib.Path(name)
     try:

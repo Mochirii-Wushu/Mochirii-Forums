@@ -9091,9 +9091,17 @@ bounded() {
             (source_root / ".git").mkdir()
             binder_harness = f'''set -u
 canonical_repository=https://github.com/Mochirii-Wushu/Mochirii-Forums.git
-requested=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-pending=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+requested=cccccccccccccccccccccccccccccccccccccccc
+reviewed_legacy_failed_bootstrap_commit=b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f
 reviewed_failed_bootstrap_recovery_commit=1d741eb75d08a226984935aa18e989ee324a0773
+reviewed_active_swap_failed_bootstrap_commit=26e793aada31faeaa8b56308625288164430647c
+reviewed_active_swap_recovery_commit=6e2f1b5c831b992c3222c015836fa180cd591e3e
+case "${{BINDER_LINEAGE:-legacy}}" in
+  legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
+  active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
+  unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
+  *) return 84 ;;
+esac
 source_root={source_root.as_posix()}
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 git() {{
@@ -9106,28 +9114,65 @@ git() {{
       [[ ${{BINDER_MUTATION:-none}} != dirty ]] || printf '%s\n' ' M scripts/upgrade-host-control.sh'
       ;;
     "-C ${{source_root}} remote get-url origin") [[ ${{BINDER_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
-    "-C ${{source_root}} rev-parse --verify ${{requested}}^1") [[ ${{BINDER_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed_failed_bootstrap_recovery_commit" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{requested}}") [[ ${{BINDER_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$requested" "$reviewed_failed_bootstrap_recovery_commit" || printf '%s %s %s\n' "$requested" "$reviewed_failed_bootstrap_recovery_commit" unrelated ;;
-    "-C ${{source_root}} rev-parse --verify ${{reviewed_failed_bootstrap_recovery_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_failed_bootstrap_recovery_commit}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$pending" || printf '%s %s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$pending" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{requested}}^1") [[ ${{BINDER_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{requested}}") [[ ${{BINDER_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$requested" "$reviewed" || printf '%s %s %s\n' "$requested" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{BINDER_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$pending" || printf '%s %s %s\n' "$reviewed" "$pending" unrelated ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{BINDER_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$requested" || printf '%s\trefs/heads/main\n' unrelated ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{pending}} ${{requested}}")
+      if [[ ${{BINDER_LINEAGE:-legacy}} == active ]]; then
+        printf '%s\n' \
+          docs/operations/DEPLOYMENT.md \
+          docs/operations/RECOVERY.md \
+          scripts/quarantine-failed-bootstrap.sh \
+          scripts/test-contracts.py \
+          scripts/upgrade-host-control.sh \
+          scripts/validate-repository.py
+        [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+      else
+        printf '%s\n' \
+          .github/workflows/deploy-forums.yml \
+          config/host-control-manifest.v1.json \
+          docs/operations/DEPLOYMENT.md \
+          docs/operations/RECOVERY.md \
+          scripts/quarantine-failed-bootstrap.sh \
+          scripts/test-contracts.py \
+          scripts/upgrade-host-control.sh
+        [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+      fi
+      ;;
     *) return 82 ;;
   esac
 }}
+{function_block(upgrade, "select_reviewed_failed_bootstrap_recovery_commit")}
+{function_block(upgrade, "validate_reviewed_failed_bootstrap_successor_paths")}
 {function_block(upgrade, "bind_invoked_canonical_successor")}
 bind_invoked_canonical_successor "$requested" "$pending"
 '''
-            for mutation, should_pass in (
+            mutation_cases = (
                 ("none", True), ("head", False), ("branch", False), ("dirty", False),
                 ("status-fail", False), ("origin", False), ("recovery-parent", False),
                 ("current-parents", False), ("failed-parent", False),
-                ("recovery-parents", False), ("remote", False),
-            ):
+                ("recovery-parents", False), ("remote", False), ("paths", False),
+            )
+            binder_cases = [
+                (lineage, mutation, should_pass)
+                for lineage in ("legacy", "active")
+                for mutation, should_pass in mutation_cases
+            ]
+            binder_cases.append(("unknown", "none", False))
+            for lineage, mutation, should_pass in binder_cases:
                 completed = subprocess.run(
                     [bash, "-c", binder_harness, str(entrypoint)],
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                     text=True, timeout=10, check=False,
-                    env={**os.environ, "BINDER_MUTATION": mutation, "GIT_DIR": "/hostile", "GIT_WORK_TREE": "/hostile"},
+                    env={
+                        **os.environ,
+                        "BINDER_LINEAGE": lineage,
+                        "BINDER_MUTATION": mutation,
+                        "GIT_DIR": "/hostile",
+                        "GIT_WORK_TREE": "/hostile",
+                    },
                 )
                 if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
                     raise RuntimeError("Executable changed-successor source binding accepted drift or rejected exact current main.")
@@ -9355,8 +9400,14 @@ printf 'continue:%s\n' "${recovery_continue}"
     ):
         if required not in upgrade:
             raise RuntimeError("Transactional canonical control-upgrade boundary differs.")
-    if upgrade.index('fetch --no-tags --depth=1 --refmap= origin refs/heads/main') > upgrade.index('validate-repository.py'):
+    if upgrade.index('fetch --no-tags --depth=1 --refmap= origin refs/heads/main') > upgrade.index('bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'):
         raise RuntimeError("Candidate-controlled source can run before canonical-main control binding.")
+    binder_start = upgrade.index("bind_invoked_canonical_successor() {")
+    binder = upgrade[binder_start : upgrade.index("\n}\n", binder_start) + 3]
+    remote_binding = binder.index('[[ ${remote_output} == "${requested_commit}"$\'\\trefs/heads/main\' ]] || return 1')
+    path_binding = binder.index('validate_reviewed_failed_bootstrap_successor_paths "${invocation_source_root}" "${requested_commit}" "${pending_commit}"')
+    if remote_binding > path_binding:
+        raise RuntimeError("Changed-successor paths can be evaluated before canonical remote-main binding.")
     clear_start = upgrade.index("clear_transaction() {")
     journal_clear = upgrade.index('durable_remove "${pending_journal}"', clear_start)
     tree_clear = upgrade.index('durable_remove_workdir "${transaction}"', journal_clear)
@@ -10031,11 +10082,14 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         raise RuntimeError("Failed-bootstrap quarantine is not one exact installed host control.")
     required_source = (
         "validate_source_lineage() {",
+        'readonly reviewed_legacy_failed_bootstrap_commit="b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f"',
         'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
+        'readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"',
+        'readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
-        'rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1"',
-        'rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}"',
+        'rev-parse --verify "${reviewed_recovery_commit}^1"',
+        'rev-list --parents -n 1 "${reviewed_recovery_commit}"',
         "validate_quarantine_environment() {",
         "read_quarantine_identity() {",
         'if [[ ${1:-} == --upgrade-preflight ]]',
@@ -10059,7 +10113,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     )
     if any(value not in source for value in required_source):
         raise RuntimeError("Failed-bootstrap quarantine lost a reviewed reversible transaction boundary.")
-    expected_paths = (
+    legacy_expected_paths = (
         ".github/workflows/deploy-forums.yml",
         "config/host-control-manifest.v1.json",
         "docs/operations/DEPLOYMENT.md",
@@ -10069,9 +10123,24 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "scripts/upgrade-host-control.sh",
         "scripts/validate-repository.py",
     )
-    expected_path_block = source[source.index("local -a actual_paths expected_paths=(") : source.index("  )", source.index("local -a actual_paths expected_paths=("))]
-    if [line.strip() for line in expected_path_block.splitlines()[1:]] != list(expected_paths):
-        raise RuntimeError("Failed-bootstrap canonical successor path inventory differs.")
+    active_swap_expected_paths = (
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+        "scripts/verify-host.sh",
+    )
+    for name, expected_paths in (
+        ("legacy_expected_paths", legacy_expected_paths),
+        ("active_swap_expected_paths", active_swap_expected_paths),
+    ):
+        marker = f"local -ar {name}=("
+        block_start = source.index(marker)
+        block = source[block_start : source.index("\n  )", block_start)]
+        if [line.strip() for line in block.splitlines()[1:]] != list(expected_paths):
+            raise RuntimeError("Failed-bootstrap canonical successor path inventory differs.")
     if any(
         value in source
         for value in (
@@ -10085,7 +10154,12 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         raise RuntimeError("Failed-bootstrap quarantine gained retained-evidence deletion authority.")
     for value in (
         "validate_failed_bootstrap_upgrade_exception() {",
+        "select_reviewed_failed_bootstrap_recovery_commit() {",
+        "validate_reviewed_failed_bootstrap_successor_paths() {",
+        'readonly reviewed_legacy_failed_bootstrap_commit="b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f"',
         'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
+        'readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"',
+        'readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -10153,17 +10227,25 @@ validate_failed_bootstrap_upgrade_exception "$requested"
 canonical_repository=https://github.com/Mochirii-Wushu/Mochirii-Forums.git
 source_root={lineage_root.as_posix()}
 current=cccccccccccccccccccccccccccccccccccccccc
-failed=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+reviewed_legacy_failed_bootstrap_commit=b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f
 reviewed_failed_bootstrap_recovery_commit=1d741eb75d08a226984935aa18e989ee324a0773
+reviewed_active_swap_failed_bootstrap_commit=26e793aada31faeaa8b56308625288164430647c
+reviewed_active_swap_recovery_commit=6e2f1b5c831b992c3222c015836fa180cd591e3e
+case "${{LINEAGE_KIND:-legacy}}" in
+  legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
+  active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
+  unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
+  *) exit 84 ;;
+esac
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 git() {{
   case "$*" in
     "-C ${{source_root}} rev-parse --verify HEAD^{{commit}}") [[ ${{LINEAGE_MUTATION:-none}} != head ]] && printf '%s\n' "$current" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} symbolic-ref --short -q HEAD") [[ ${{LINEAGE_MUTATION:-none}} != branch ]] && printf '%s\n' main || printf '%s\n' topic ;;
-    "-C ${{source_root}} rev-parse --verify ${{current}}^1") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed_failed_bootstrap_recovery_commit" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{current}}") [[ ${{LINEAGE_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$current" "$reviewed_failed_bootstrap_recovery_commit" || printf '%s %s %s\n' "$current" "$reviewed_failed_bootstrap_recovery_commit" unrelated ;;
-    "-C ${{source_root}} rev-parse --verify ${{reviewed_failed_bootstrap_recovery_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$failed" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_failed_bootstrap_recovery_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$failed" || printf '%s %s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$failed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{current}}^1") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{current}}") [[ ${{LINEAGE_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$current" "$reviewed" || printf '%s %s %s\n' "$current" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{LINEAGE_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$failed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$failed" || printf '%s %s %s\n' "$reviewed" "$failed" unrelated ;;
     "-c core.fsmonitor=false -C ${{source_root}} status --porcelain=v1 --untracked-files=all")
       [[ ${{LINEAGE_MUTATION:-none}} != status-fail ]] || return 83
       [[ ${{LINEAGE_MUTATION:-none}} != dirty ]] || printf '%s\n' ' M retained'
@@ -10171,15 +10253,26 @@ git() {{
     "-C ${{source_root}} remote get-url origin") [[ ${{LINEAGE_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{LINEAGE_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$current" || printf '%s\trefs/heads/main\n' unrelated ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{failed}} ${{current}}")
-      printf '%s\n' \
-        .github/workflows/deploy-forums.yml \
-        config/host-control-manifest.v1.json \
-        docs/operations/DEPLOYMENT.md \
-        docs/operations/RECOVERY.md \
-        scripts/quarantine-failed-bootstrap.sh \
-        scripts/test-contracts.py \
-        scripts/upgrade-host-control.sh
-      [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+      if [[ ${{LINEAGE_KIND:-legacy}} == active ]]; then
+        printf '%s\n' \
+          docs/operations/DEPLOYMENT.md \
+          docs/operations/RECOVERY.md \
+          scripts/quarantine-failed-bootstrap.sh \
+          scripts/test-contracts.py \
+          scripts/upgrade-host-control.sh \
+          scripts/validate-repository.py
+        [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+      else
+        printf '%s\n' \
+          .github/workflows/deploy-forums.yml \
+          config/host-control-manifest.v1.json \
+          docs/operations/DEPLOYMENT.md \
+          docs/operations/RECOVERY.md \
+          scripts/quarantine-failed-bootstrap.sh \
+          scripts/test-contracts.py \
+          scripts/upgrade-host-control.sh
+        [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+      fi
       ;;
     *) return 82 ;;
   esac
@@ -10187,13 +10280,20 @@ git() {{
 {lineage_source}
 validate_source_lineage "$current" "$failed"
 '''
-            for mutation, should_pass in (
+            mutation_cases = (
                 ("none", True), ("head", False), ("branch", False),
                 ("recovery-parent", False), ("current-parents", False),
                 ("failed-parent", False), ("recovery-parents", False),
                 ("status-fail", False), ("dirty", False), ("origin", False),
                 ("remote", False), ("paths", False),
-            ):
+            )
+            lineage_cases = [
+                (lineage, mutation, should_pass)
+                for lineage in ("legacy", "active")
+                for mutation, should_pass in mutation_cases
+            ]
+            lineage_cases.append(("unknown", "none", False))
+            for lineage, mutation, should_pass in lineage_cases:
                 completed = subprocess.run(
                     [bash, "-c", lineage_harness],
                     stdin=subprocess.DEVNULL,
@@ -10202,12 +10302,25 @@ validate_source_lineage "$current" "$failed"
                     text=True,
                     timeout=10,
                     check=False,
-                    env={**os.environ, "LINEAGE_MUTATION": mutation},
+                    env={
+                        **os.environ,
+                        "LINEAGE_KIND": lineage,
+                        "LINEAGE_MUTATION": mutation,
+                    },
                 )
                 if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
                     raise RuntimeError(
-                        "Executable failed-bootstrap lineage binding accepted drift or rejected the pinned two-commit chain."
+                        "Executable failed-bootstrap lineage binding accepted drift or rejected a pinned two-commit chain."
                     )
+
+    mutation_start = source.index("read_mutation_identity() {")
+    mutation_heredoc = source.index("<<'PY'\n", mutation_start) + len("<<'PY'\n")
+    mutation_reader = source[mutation_heredoc : source.index("\nPY\n}", mutation_heredoc)]
+    identity_start = source.index("read_quarantine_identity() {")
+    identity_heredoc = source.index("<<'PY'\n", identity_start) + len("<<'PY'\n")
+    identity_reader = source[identity_heredoc : source.index("\nPY\n}", identity_heredoc)]
+    if identity_reader.count("import itertools\n") != 1:
+        raise RuntimeError("Failed-bootstrap terminal identity reader does not bind its bounded iterator dependency.")
 
     transaction_match = re.search(
         r"(?ms)^# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION\n(.*?)^# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION$",
@@ -10216,6 +10329,21 @@ validate_source_lineage "$current" "$failed"
     if transaction_match is None:
         raise RuntimeError("Failed-bootstrap transaction source could not be extracted exactly.")
     transaction = transaction_match.group(1)
+
+    def extract_canonical(code: str, signature: str) -> str:
+        start = code.index(signature)
+        return code[start : code.index("\ndef reject_duplicate", start)]
+
+    mutation_canonical = extract_canonical(mutation_reader, "def canonical(document):")
+    identity_canonical = extract_canonical(identity_reader, "def canonical(document):")
+    transaction_canonical = extract_canonical(transaction, "def canonical(document, label):")
+    if (
+        mutation_reader.count("canonical_raw = canonical(document)") != 1
+        or identity_reader.count("canonical_raw = canonical(document)") != 1
+        or transaction.count("if raw != canonical(document, label):") != 1
+        or transaction.count('canonical(document, "failed-bootstrap quarantine document")') != 1
+    ):
+        raise RuntimeError("Failed-bootstrap canonicalizer consumer binding differs.")
     crash_anchors = (
         "publish(pending, state, True)",
         "os.rename(standalone, quarantine)",
@@ -10239,6 +10367,9 @@ validate_source_lineage "$current" "$failed"
     current = "a" * 40
     failed = "b" * 40
     child_environment = {"LC_ALL": "C", "PYTHONHASHSEED": "0"}
+    deep_json = b'{"value":' + (b"[" * 20_000) + b"0" + (b"]" * 20_000) + b"}\n"
+    if len(deep_json) > 65_536:
+        raise RuntimeError("Failed-bootstrap deep-nesting hostile exceeds the production byte cap.")
 
     def publish_json(path: Path, document: dict[str, object]) -> bytes:
         raw = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
@@ -10246,6 +10377,11 @@ validate_source_lineage "$current" "$failed"
         path.chmod(0o600)
         os.chown(path, 0, 0)
         return raw
+
+    def publish_raw(path: Path, raw: bytes) -> None:
+        path.write_bytes(raw)
+        path.chmod(0o600)
+        os.chown(path, 0, 0)
 
     def new_fixture(directory: str, *, ssl_present: bool = True) -> dict[str, object]:
         root = Path(directory)
@@ -10318,6 +10454,75 @@ validate_source_lineage "$current" "$failed"
             check=False,
         )
 
+    def run_identity_reader(kind: str, fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                identity_reader,
+                kind,
+                str(fixture["pending"]),
+                str(fixture["evidence"]),
+                current,
+                failed,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=child_environment,
+            timeout=20,
+            check=False,
+        )
+
+    def run_mutation_reader(fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [sys.executable, "-B", "-c", mutation_reader, str(fixture["mutation"])],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=child_environment,
+            timeout=20,
+            check=False,
+        )
+
+    def run_canonicalizer(code: str, call: str) -> subprocess.CompletedProcess[bytes]:
+        probe = (
+            "import json\n"
+            + code
+            + "\ndocument = {}\ncursor = []\ndocument['value'] = cursor\n"
+            + "for _ in range(20_000):\n    child = []\n    cursor.append(child)\n    cursor = child\n"
+            + call
+            + "\n"
+        )
+        return subprocess.run(
+            [sys.executable, "-B", "-c", probe],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=child_environment,
+            timeout=20,
+            check=False,
+        )
+
+    def assert_categorical_failure(
+        rejected: subprocess.CompletedProcess[bytes], expected: bytes, label: str
+    ) -> None:
+        if (
+            rejected.returncode == 0
+            or rejected.stdout
+            or rejected.stderr != expected
+            or b"Traceback" in rejected.stderr
+        ):
+            raise RuntimeError(f"{label} leaked or accepted hostile evidence.")
+
+    def assert_identity_reader_failure(kind: str, fixture: dict[str, object], expected: bytes) -> None:
+        assert_categorical_failure(
+            run_identity_reader(kind, fixture),
+            expected,
+            "Failed-bootstrap actual identity reader",
+        )
+
     def interrupt_after(code: str, anchor: str) -> str:
         position = code.index(anchor)
         line_start = code.rfind("\n", 0, position) + 1
@@ -10349,6 +10554,10 @@ validate_source_lineage "$current" "$failed"
             raise RuntimeError("Failed-bootstrap terminal evidence ownership differs.")
         if mutation_evidence.read_bytes() != fixture["mutation_raw"]:
             raise RuntimeError("Failed-bootstrap retained mutation evidence differs.")
+        identity = run_identity_reader("terminal", fixture)
+        expected_identity = f"{current}\n{failed}\n{fixture['mutation_sha']}\n".encode("ascii")
+        if identity.returncode != 0 or identity.stdout != expected_identity or identity.stderr:
+            raise RuntimeError("Failed-bootstrap actual terminal identity reader rejected exact completed evidence.")
         expected_standalone = {"ssl"} if fixture["ssl_present"] else set()
         if set(path.name for path in standalone.iterdir()) != expected_standalone:
             raise RuntimeError("Failed-bootstrap clean standalone inventory differs.")
@@ -10362,6 +10571,97 @@ validate_source_lineage "$current" "$failed"
         for name in expected_quarantine:
             if (quarantine / name / "retained.bin").read_bytes() != (name + "-retained").encode("ascii"):
                 raise RuntimeError("Failed-bootstrap retained runtime bytes differ.")
+
+    canonicalizer_cases = (
+        (mutation_canonical, "canonical(document)", b"failed bootstrap journal is malformed\n"),
+        (
+            identity_canonical,
+            "canonical(document)",
+            b"failed-bootstrap recovery evidence is noncanonical\n",
+        ),
+        (
+            transaction_canonical,
+            'canonical(document, "failed-bootstrap canonicalizer")',
+            b"failed-bootstrap canonicalizer is not canonical\n",
+        ),
+    )
+    for canonical_source, canonical_call, expected in canonicalizer_cases:
+        assert_categorical_failure(
+            run_canonicalizer(canonical_source, canonical_call),
+            expected,
+            "Failed-bootstrap actual canonicalizer",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-mutation-reader-deep-") as directory:
+        fixture = new_fixture(directory)
+        publish_raw(fixture["mutation"], deep_json)
+        assert_categorical_failure(
+            run_mutation_reader(fixture),
+            b"failed bootstrap journal is malformed\n",
+            "Failed-bootstrap actual mutation reader",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-pending-reader-") as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        crashed = run_transaction(armed, fixture)
+        if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+            raise RuntimeError("Failed-bootstrap pending-reader fixture did not arm categorically.")
+        pending = fixture["pending"]
+        pending_raw = pending.read_bytes()
+        pending_document = json.loads(pending_raw.decode("utf-8"))
+        identity = run_identity_reader("pending", fixture)
+        expected_identity = f"{current}\n{failed}\n{fixture['mutation_sha']}\n".encode("ascii")
+        if identity.returncode != 0 or identity.stdout != expected_identity or identity.stderr:
+            raise RuntimeError("Failed-bootstrap actual pending identity reader rejected exact evidence.")
+        pending_non_object = (
+            b"null\n",
+            (json.dumps(sorted(pending_document), separators=(",", ":")) + "\n").encode("utf-8"),
+            deep_json,
+        )
+        for hostile_raw in pending_non_object:
+            pending.write_bytes(hostile_raw)
+            pending.chmod(0o600)
+            os.chown(pending, 0, 0)
+            assert_identity_reader_failure(
+                "pending", fixture, b"failed-bootstrap recovery evidence is malformed\n"
+            )
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-transaction-new-deep-") as directory:
+        fixture = new_fixture(directory)
+        publish_raw(fixture["mutation"], deep_json)
+        fixture["mutation_raw"] = deep_json
+        fixture["mutation_sha"] = hashlib.sha256(deep_json).hexdigest()
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"deployment mutation journal is malformed\n",
+            "Failed-bootstrap new-control transaction decoder",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-transaction-pending-deep-") as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        crashed = run_transaction(armed, fixture)
+        if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+            raise RuntimeError("Failed-bootstrap deep pending fixture did not arm categorically.")
+        publish_raw(fixture["pending"], deep_json)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap pending journal is malformed\n",
+            "Failed-bootstrap pending-replay transaction decoder",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-transaction-terminal-deep-") as directory:
+        fixture = new_fixture(directory)
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap deep terminal fixture did not complete.")
+        publish_raw(fixture["terminal"], deep_json)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap terminal evidence is malformed\n",
+            "Failed-bootstrap terminal-replay transaction decoder",
+        )
 
     for anchor in crash_anchors:
         with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-") as directory:
@@ -10409,6 +10709,39 @@ validate_source_lineage "$current" "$failed"
         if completed.returncode != 0 or completed.stdout or completed.stderr:
             raise RuntimeError("Failed-bootstrap no-SSL transaction did not complete.")
         verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-reader-hostile-") as directory:
+        fixture = new_fixture(directory)
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap terminal-reader hostile fixture did not complete.")
+        verify_terminal(fixture)
+        terminal = fixture["terminal"]
+        terminal_raw = terminal.read_bytes()
+        terminal_document = json.loads(terminal_raw.decode("utf-8"))
+        terminal_hostiles = (
+            b"{",
+            b"null\n",
+            (json.dumps(sorted(terminal_document), separators=(",", ":")) + "\n").encode("utf-8"),
+            deep_json,
+        )
+        for hostile_raw in terminal_hostiles:
+            terminal.write_bytes(hostile_raw)
+            terminal.chmod(0o600)
+            os.chown(terminal, 0, 0)
+            assert_identity_reader_failure(
+                "terminal", fixture, b"failed-bootstrap recovery evidence is malformed\n"
+            )
+        terminal.write_bytes(terminal_raw)
+        terminal.chmod(0o600)
+        os.chown(terminal, 0, 0)
+        duplicate = fixture["evidence"] / f"{failed}-{'c' * 64}-failed-bootstrap-quarantine.json"
+        duplicate.write_bytes(terminal_raw)
+        duplicate.chmod(0o600)
+        os.chown(duplicate, 0, 0)
+        assert_identity_reader_failure(
+            "terminal", fixture, b"failed-bootstrap terminal identity is ambiguous\n"
+        )
 
     with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-ambiguous-") as directory:
         fixture = new_fixture(directory)

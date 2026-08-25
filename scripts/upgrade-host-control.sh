@@ -6,7 +6,10 @@ export LC_ALL=C
 readonly canonical_repository="https://github.com/Mochirii-Wushu/Mochirii-Forums.git"
 readonly deployment_source_commit="ed9f680b0df1de28f062de1769d89d22b2644d1b"
 readonly deployment_source_tree="588498dffbea91592fd4e2f10166bc11c8fe7a61"
+readonly reviewed_legacy_failed_bootstrap_commit="b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f"
 readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"
+readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"
+readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -152,8 +155,55 @@ validate_effective_hardened_ssh() {
     validate_effective_hardened_ssh_user mochirii-forums-deploy
 }
 
+select_reviewed_failed_bootstrap_recovery_commit() {
+  case "$1" in
+    "${reviewed_legacy_failed_bootstrap_commit}")
+      printf '%s\n' "${reviewed_failed_bootstrap_recovery_commit}"
+      ;;
+    "${reviewed_active_swap_failed_bootstrap_commit}")
+      printf '%s\n' "${reviewed_active_swap_recovery_commit}"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_reviewed_failed_bootstrap_successor_paths() {
+  local invocation_source_root="$1" requested_commit="$2" pending_commit="$3"
+  local -ar legacy_expected_paths=(
+    .github/workflows/deploy-forums.yml
+    config/host-control-manifest.v1.json
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
+  local -ar active_swap_expected_paths=(
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host.sh
+  )
+  local -a actual_paths expected_paths
+  case "${pending_commit}" in
+    "${reviewed_legacy_failed_bootstrap_commit}") expected_paths=("${legacy_expected_paths[@]}") ;;
+    "${reviewed_active_swap_failed_bootstrap_commit}") expected_paths=("${active_swap_expected_paths[@]}") ;;
+    *) return 1 ;;
+  esac
+  mapfile -t actual_paths < <(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}") || return 1
+  [[ ${#actual_paths[@]} -eq ${#expected_paths[@]} ]] || return 1
+  for index in "${!expected_paths[@]}"; do
+    [[ ${actual_paths[$index]} == "${expected_paths[$index]}" ]] || return 1
+  done
+}
+
 bind_invoked_canonical_successor() {
-  local requested_commit="$1" pending_commit="$2" invocation_script invocation_source_root remote_output status_output
+  local requested_commit="$1" pending_commit="$2" invocation_script invocation_source_root remote_output status_output reviewed_recovery_commit
+  reviewed_recovery_commit="$(select_reviewed_failed_bootstrap_recovery_commit "${pending_commit}")" || return 1
   [[ -f $0 && ! -L $0 ]] || return 1
   invocation_script="$(realpath -e -- "$0")" || return 1
   invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
@@ -167,15 +217,16 @@ bind_invoked_canonical_successor() {
   (( ${#status_output} <= 262144 )) || return 1
   [[ -z ${status_output} ]] || return 1
   [[ "$(git -C "${invocation_source_root}" remote get-url origin 2>/dev/null)" == "${canonical_repository}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${requested_commit}" 2>/dev/null)" == "${requested_commit} ${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit} ${pending_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${requested_commit}" 2>/dev/null)" == "${requested_commit} ${reviewed_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${pending_commit}" ]] || return 1
   remote_output="$(bounded 120s git -c credential.helper= -c core.askPass= \
     -c protocol.allow=never -c protocol.https.allow=always -c http.followRedirects=false \
     ls-remote --refs "${canonical_repository}" refs/heads/main 2>/dev/null)" || return 1
   (( ${#remote_output} <= 256 )) || return 1
-  [[ ${remote_output} == "${requested_commit}"$'\trefs/heads/main' ]]
+  [[ ${remote_output} == "${requested_commit}"$'\trefs/heads/main' ]] || return 1
+  validate_reviewed_failed_bootstrap_successor_paths "${invocation_source_root}" "${requested_commit}" "${pending_commit}"
 }
 
 validate_failed_bootstrap_upgrade_exception() {

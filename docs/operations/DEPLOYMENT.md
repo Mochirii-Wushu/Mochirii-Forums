@@ -658,6 +658,22 @@ publication pointers are absent, the app is stopped, PostgreSQL state is
 present, and every unrelated operation journal is absent. The upgrade must
 leave the mutation journal and failed runtime bytes unchanged.
 
+The later usable-swap verifier incident has a separate, non-interchangeable
+two-commit recovery chain. Failed bootstrap commit
+`26e793aada31faeaa8b56308625288164430647c` is the sole parent of reviewed
+usable-swap repair commit `6e2f1b5c831b992c3222c015836fa180cd591e3e`;
+the recovery source must be one exact sole-parent child of that repair and the
+current canonical `main`. Its cumulative diff from the failed release is
+exactly `docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/upgrade-host-control.sh`, `scripts/validate-repository.py`, and
+`scripts/verify-host.sh`. The historical transport exception and this
+usable-swap exception are selected only by their exact failed commit; neither
+authorizes another lineage or changed-path set. The same stopped/absent
+publication, retained-journal, root-owned-state, and unrelated-journal
+exclusion rules apply, and the upgrade must leave the failed journal and
+runtime bytes unchanged.
+
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh
