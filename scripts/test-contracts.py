@@ -9227,10 +9227,13 @@ reviewed_active_swap_failed_bootstrap_commit=26e793aada31faeaa8b5630862528816443
 reviewed_active_swap_recovery_commit=6e2f1b5c831b992c3222c015836fa180cd591e3e
 reviewed_acme_failed_bootstrap_commit=f564d62a82adf79b8f012a25949826e2b447681d
 reviewed_acme_recovery_commit=85e12f1ce27e1462e7c82e59e1dbf01c190327b9
+reviewed_quarantine_output_failed_bootstrap_commit=c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306
+reviewed_quarantine_output_recovery_commit=8eea740795f0536468e48c5e8cda2ded29b1e51e
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
   acme) pending="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
+  quarantine) pending="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
   unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) return 84 ;;
 esac
@@ -9273,6 +9276,15 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        quarantine)
+          printf '%s\n' \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -9302,7 +9314,7 @@ bind_invoked_canonical_successor "$requested" "$pending"
             )
             binder_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme")
+                for lineage in ("legacy", "active", "acme", "quarantine")
                 for mutation, should_pass in mutation_cases
             ]
             binder_cases.append(("unknown", "none", False))
@@ -10233,6 +10245,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"',
         'readonly reviewed_acme_failed_bootstrap_commit="f564d62a82adf79b8f012a25949826e2b447681d"',
         'readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"',
+        'readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306"',
+        'readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
         'rev-parse --verify "${reviewed_recovery_commit}^1"',
@@ -10288,10 +10302,19 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "scripts/upgrade-host-control.sh",
         "scripts/validate-repository.py",
     )
+    quarantine_output_expected_paths = (
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
         ("active_swap_expected_paths", active_swap_expected_paths),
         ("acme_expected_paths", acme_expected_paths),
+        ("quarantine_output_expected_paths", quarantine_output_expected_paths),
     ):
         marker = f"local -ar {name}=("
         block_start = source.index(marker)
@@ -10319,6 +10342,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"',
         'readonly reviewed_acme_failed_bootstrap_commit="f564d62a82adf79b8f012a25949826e2b447681d"',
         'readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"',
+        'readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306"',
+        'readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -10392,10 +10417,13 @@ reviewed_active_swap_failed_bootstrap_commit=26e793aada31faeaa8b5630862528816443
 reviewed_active_swap_recovery_commit=6e2f1b5c831b992c3222c015836fa180cd591e3e
 reviewed_acme_failed_bootstrap_commit=f564d62a82adf79b8f012a25949826e2b447681d
 reviewed_acme_recovery_commit=85e12f1ce27e1462e7c82e59e1dbf01c190327b9
+reviewed_quarantine_output_failed_bootstrap_commit=c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306
+reviewed_quarantine_output_recovery_commit=8eea740795f0536468e48c5e8cda2ded29b1e51e
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
   acme) failed="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
+  quarantine) failed="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
   unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) exit 84 ;;
 esac
@@ -10436,6 +10464,15 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        quarantine)
+          printf '%s\n' \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -10464,7 +10501,7 @@ validate_source_lineage "$current" "$failed"
             )
             lineage_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme")
+                for lineage in ("legacy", "active", "acme", "quarantine")
                 for mutation, should_pass in mutation_cases
             ]
             lineage_cases.append(("unknown", "none", False))

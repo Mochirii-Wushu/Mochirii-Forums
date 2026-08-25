@@ -690,6 +690,23 @@ for either earlier lineage or authorize another path set. The same retained
 journal/runtime, stopped/absent publication, root-owned-state, and unrelated-
 journal exclusion rules apply.
 
+The later c2f bootstrap incident has a fourth, non-interchangeable recovery
+chain. Failed bootstrap commit
+`c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306` is the sole parent of reviewed
+quarantine-output control repair commit
+`8eea740795f0536468e48c5e8cda2ded29b1e51e`; the recovery source must be one
+exact sole-parent child of that repair and the current canonical `main`. Its
+cumulative diff from the failed release is exactly
+`docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/upgrade-host-control.sh`, and `scripts/validate-repository.py`.
+Selection remains by exact failed commit, so this exception cannot substitute
+for any earlier lineage or authorize another path set. The reviewed recovery
+hardens journal validation and atomic diagnostic output; it does not claim to
+identify or correct the retained c2f launcher/bootstrap cause. The same
+retained-journal/runtime, stopped/absent publication, root-owned-state, and
+unrelated-journal exclusion rules apply.
+
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh

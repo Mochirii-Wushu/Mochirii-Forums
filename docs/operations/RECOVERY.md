@@ -603,6 +603,21 @@ Selection by exact failed commit keeps this lineage separate from both earlier
 exceptions. It uses the same root-only, evidence-preserving quarantine and
 requires the next clean bootstrap to target the then-current canonical main.
 
+A fourth exact bootstrap-only exception covers the c2f failed-runtime
+quarantine control boundary. Failed release
+`c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306`, reviewed quarantine-output
+repair `8eea740795f0536468e48c5e8cda2ded29b1e51e`, and one canonical-main
+recovery child must form an exact sole-parent chain. The cumulative changed
+paths from the failed release are only `docs/operations/DEPLOYMENT.md`,
+`docs/operations/RECOVERY.md`, `scripts/quarantine-failed-bootstrap.sh`,
+`scripts/test-contracts.py`, `scripts/upgrade-host-control.sh`, and
+`scripts/validate-repository.py`. Selection by exact failed commit keeps this
+lineage separate from all earlier exceptions. The reviewed repair hardens the
+quarantine control and does not claim to diagnose or correct the retained c2f
+launcher/bootstrap cause. It uses the same root-only, evidence-preserving
+quarantine and requires the next clean bootstrap to target the then-current
+canonical main.
+
 ## Primary references
 
 - [Official Discourse backup and restore guidance](https://meta.discourse.org/t/create-download-and-restore-a-backup-of-your-discourse-database/122710)
