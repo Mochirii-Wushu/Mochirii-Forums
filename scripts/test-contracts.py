@@ -3805,16 +3805,62 @@ def test_certificate_preparation_recovery_contract() -> None:
     if any(value in prepare for value in ("shutil.rmtree", "rm -rf -- \"${lineage}\"", "find ${lineage} -delete")):
         raise RuntimeError("Prepared certificate recovery broadened beyond the exact journal-owned lineage inventory.")
 
-    prepared_validation = installer[installer.index("validate_prepared_input()") : installer.index("export DEBIAN_FRONTEND")]
-    if any(value not in prepared_validation for value in ('[[ -f ${prepared} && ! -L ${prepared} ]]', 'root:root 600', 'cmp -s -- "${source}" "${prepared}"')):
+    prepared_validation = installer[
+        installer.index('prepared_runtime="/etc/mochirii/forums-media-certificate.json"') :
+        installer.index("export DEBIAN_FRONTEND")
+    ]
+    runtime_path_gate = (
+        '[[ ${runtime_source} == "${prepared_runtime}" ]] || fail '
+        '"Certificate runtime input must be the exact prepared runtime path."'
+    )
+    runtime_validation = (
+        'validate_prepared_input "${runtime_source}" "${prepared_runtime}" || fail '
+        '"Prepared certificate runtime differs from the exact installation input."'
+    )
+    if any(value not in prepared_validation for value in (
+        '[[ -f ${prepared} && ! -L ${prepared} ]]',
+        'root:root 600',
+        'cmp -s -- "${source}" "${prepared}"',
+        runtime_path_gate,
+        runtime_validation,
+    )):
         raise RuntimeError("Certificate installer does not exactly validate preparation-owned inputs before adoption.")
-    targets = installer[installer.index("install_targets=(") : installer.index("write_install_journal()")]
-    if "/etc/letsencrypt/mochirii-media.ini" in targets or "/etc/letsencrypt/mochirii-cloudflare.ini" in targets:
+    if prepared_validation.index(runtime_path_gate) > prepared_validation.index(runtime_validation):
+        raise RuntimeError("Certificate installer can validate or use a runtime alias before requiring the exact prepared path.")
+    targets_start = installer.index("install_targets=(")
+    targets = installer[targets_start : installer.index("\n)\n", targets_start) + 3]
+    if any(value in targets for value in (
+        "/etc/mochirii/forums-media-certificate.json",
+        "/etc/letsencrypt/mochirii-media.ini",
+        "/etc/letsencrypt/mochirii-cloudflare.ini",
+    )):
         raise RuntimeError("Certificate installer can delete or recreate preparation-owned issuance inputs.")
     cleanup = installer[installer.index("cleanup_installation() {") : installer.index("on_exit() {")]
-    if 'for target in "${install_targets[@]}"' not in cleanup or "prepared_certbot" in cleanup or "prepared_dns" in cleanup:
+    if (
+        'for target in "${install_targets[@]}"' not in cleanup
+        or any(value in cleanup for value in ("prepared_runtime", "prepared_certbot", "prepared_dns"))
+    ):
         raise RuntimeError("Partial certificate installation cleanup crosses the adopted preparation boundary.")
-    if installer.index('validate_prepared_input "${dns_source}"') > installer.index("write_install_journal"):
+    runtime_install = (
+        'install -m 0600 -o root -g root "${runtime_source}" '
+        "/etc/mochirii/forums-media-certificate.json"
+    )
+    if runtime_install in installer:
+        raise RuntimeError("Certificate installer can overwrite the preparation-owned runtime.")
+    installed_readback = installer[
+        installer.index("validate_installed_automation_bytes() {") :
+        installer.index("write_install_journal() {")
+    ]
+    if '${runtime_source}\t/etc/mochirii/forums-media-certificate.json\t600' not in installed_readback:
+        raise RuntimeError("Certificate installer no longer proves the adopted runtime bytes and mode at terminal readback.")
+    if any(
+        installer.index(value) > installer.index("write_install_journal")
+        for value in (
+            runtime_validation,
+            'validate_prepared_input "${certbot_source}"',
+            'validate_prepared_input "${dns_source}"',
+        )
+    ):
         raise RuntimeError("Certificate installation journals a mutation before validating prepared input bytes.")
 
 
