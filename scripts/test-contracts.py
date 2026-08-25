@@ -80,6 +80,15 @@ def environment(values: dict[str, str]):
         os.environ.update(previous)
 
 
+@contextlib.contextmanager
+def process_umask(mode: int):
+    previous = os.umask(mode)
+    try:
+        yield
+    finally:
+        os.umask(previous)
+
+
 def expect_render_error(
     values: dict[str, str],
     mutation: tuple[str, str] | None = None,
@@ -9477,7 +9486,9 @@ def test_host_control_predecessor_archive_binding() -> None:
     python_body = bounded_block.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
     ast.parse(python_body, filename="upgrade-host-control predecessor archive binding")
 
-    with tempfile.TemporaryDirectory(prefix="mochirii-control-predecessor-") as directory:
+    with process_umask(0o077), tempfile.TemporaryDirectory(
+        prefix="mochirii-control-predecessor-"
+    ) as directory:
         fixture = Path(directory)
         source_repository = fixture / "source-repository"
         source_repository.mkdir()
@@ -9519,6 +9530,7 @@ def test_host_control_predecessor_archive_binding() -> None:
 
         archive_root = fixture / "host-control-releases"
         archive_root.mkdir(mode=0o755)
+        archive_root.chmod(0o755)
         commit_archive_root = archive_root / commit
         commit_archive_root.mkdir(mode=0o700)
         archive = commit_archive_root / "mochirii-release.tar"
@@ -9540,6 +9552,7 @@ def test_host_control_predecessor_archive_binding() -> None:
 
         state_root = fixture / "state"
         state_root.mkdir(mode=0o755)
+        state_root.chmod(0o755)
         upgrades_root = state_root / "control-upgrades"
         upgrades_root.mkdir(mode=0o700)
         pointer_document = {
