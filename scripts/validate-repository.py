@@ -6025,7 +6025,10 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "syncs the directory and its parent",
             "socket-activation recovery branch does not perform this repair",
             "Both transfer sessions use OpenSSH protocol keepalives every 30 seconds",
-            "direct-parent journal remains `runtime-contained`",
+            "failed release journal remains `runtime-contained`",
+            "`1d741eb75d08a226984935aa18e989ee324a0773`",
+            "`b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f`",
+            "cumulative diff from the failed release",
             "mochirii-forums-quarantine-failed-bootstrap",
             "Crash recovery accepts only the same pending tuple",
         ],
@@ -6039,6 +6042,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "cleanup journal is never mutation authority.",
             "same-version/no-target-migration rollback",
             "bootstrap-only exception",
+            "source-mode correction may upgrade",
+            "`1d741eb75d08a226984935aa18e989ee324a0773`",
+            "`b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f`",
             "complete failed standalone tree",
             "A crash resumes only through its own exact",
         ],
@@ -6377,6 +6383,12 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         control_upgrade,
         [
             "validate_failed_bootstrap_upgrade_exception() {",
+            'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
+            'rev-parse --verify "${requested_commit}^1"',
+            'rev-list --parents -n 1 "${requested_commit}"',
+            'rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1"',
+            'rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}"',
+            '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
             'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
             'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
             "deployment_recovery_upgrade=false",
@@ -6391,6 +6403,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         [
             'readonly pending_journal="${state_root}/failed-bootstrap-quarantine.pending.json"',
             'readonly recovery_root="${shared_root}/.mochirii-forums-failed-bootstrap"',
+            'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
+            'rev-parse --verify "${current}^1"',
+            'rev-list --parents -n 1 "${current}"',
+            'rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1"',
+            'rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}"',
             'expected_paths=(',
             ".github/workflows/deploy-forums.yml",
             "config/host-control-manifest.v1.json",
@@ -6585,6 +6602,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         fail("Host-control journal producer status is hidden by process substitution.")
     if '[[ -z "$(git -c core.fsmonitor=false -C "${invocation_source_root}" status' in control_upgrade:
         fail("Host-control successor binding can hide a failed Git status producer.")
+    if '[[ -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh' in control_upgrade:
+        fail("Host-control failed-bootstrap preflight still requires executable repository source.")
     if control_upgrade.count("validate_effective_hardened_ssh() {") != 1 or control_upgrade.count(
         "validate_effective_hardened_ssh || return 1"
     ) != 1:

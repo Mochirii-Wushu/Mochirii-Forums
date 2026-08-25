@@ -558,15 +558,18 @@ the narrowly scoped prior-rollout verifier; cross-version or
 clean restore.
 
 There is one additional fail-closed bootstrap-only exception for a proved
-transport defect before first publication. A reviewed direct canonical
-successor may upgrade the exact host controls while preserving a direct-parent
-`runtime-contained` bootstrap journal, then the governed
-`mochirii-forums-quarantine-failed-bootstrap` operator command may move the
-complete failed standalone tree and original journal into root-only,
-digest-bound recovery evidence. It restores only the exact ordinary SSL
-directory into a newly empty standalone boundary and never deletes retained
+transport defect before first publication. Reviewed recovery commit
+`1d741eb75d08a226984935aa18e989ee324a0773` and one exact sole-parent
+source-mode correction may upgrade the host controls while preserving the
+`runtime-contained` bootstrap journal for its pinned sole parent
+`b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f`. The cumulative changed-path set
+from that failed release must remain the exact reviewed recovery allowlist.
+The governed `mochirii-forums-quarantine-failed-bootstrap` operator command may
+then move the complete failed standalone tree and original journal into
+root-only, digest-bound recovery evidence. It restores only the exact ordinary
+SSL directory into a newly empty standalone boundary and never deletes retained
 runtime bytes. The exception refuses a rebuild, prior/current publication,
-running app, non-parent source, changed path set, ambiguous partial state, or
+running app, different lineage, changed path set, ambiguous partial state, or
 any unrelated active journal. A crash resumes only through its own exact
 pending journal. The next bootstrap must be exact current `main` with the
 reviewed transport repair; the failed predecessor bytes are preserved for

@@ -9031,6 +9031,7 @@ bounded() {
 canonical_repository=https://github.com/Mochirii-Wushu/Mochirii-Forums.git
 requested=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 pending=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+reviewed_failed_bootstrap_recovery_commit=1d741eb75d08a226984935aa18e989ee324a0773
 source_root={source_root.as_posix()}
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 git() {{
@@ -9043,7 +9044,10 @@ git() {{
       [[ ${{BINDER_MUTATION:-none}} != dirty ]] || printf '%s\n' ' M scripts/upgrade-host-control.sh'
       ;;
     "-C ${{source_root}} remote get-url origin") [[ ${{BINDER_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
-    "-C ${{source_root}} rev-parse --verify ${{requested}}^1") [[ ${{BINDER_MUTATION:-none}} != parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{requested}}^1") [[ ${{BINDER_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed_failed_bootstrap_recovery_commit" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{requested}}") [[ ${{BINDER_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$requested" "$reviewed_failed_bootstrap_recovery_commit" || printf '%s %s %s\n' "$requested" "$reviewed_failed_bootstrap_recovery_commit" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_failed_bootstrap_recovery_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_failed_bootstrap_recovery_commit}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$pending" || printf '%s %s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$pending" unrelated ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{BINDER_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$requested" || printf '%s\trefs/heads/main\n' unrelated ;;
     *) return 82 ;;
   esac
@@ -9053,7 +9057,9 @@ bind_invoked_canonical_successor "$requested" "$pending"
 '''
             for mutation, should_pass in (
                 ("none", True), ("head", False), ("branch", False), ("dirty", False),
-                ("status-fail", False), ("origin", False), ("parent", False), ("remote", False),
+                ("status-fail", False), ("origin", False), ("recovery-parent", False),
+                ("current-parents", False), ("failed-parent", False),
+                ("recovery-parents", False), ("remote", False),
             ):
                 completed = subprocess.run(
                     [bash, "-c", binder_harness, str(entrypoint)],
@@ -9963,6 +9969,11 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         raise RuntimeError("Failed-bootstrap quarantine is not one exact installed host control.")
     required_source = (
         "validate_source_lineage() {",
+        'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
+        'rev-parse --verify "${current}^1"',
+        'rev-list --parents -n 1 "${current}"',
+        'rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1"',
+        'rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}"',
         "validate_quarantine_environment() {",
         "read_quarantine_identity() {",
         'if [[ ${1:-} == --upgrade-preflight ]]',
@@ -10012,6 +10023,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         raise RuntimeError("Failed-bootstrap quarantine gained retained-evidence deletion authority.")
     for value in (
         "validate_failed_bootstrap_upgrade_exception() {",
+        'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
+        '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
         "deployment_recovery_upgrade=true",
@@ -10019,6 +10032,120 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     ):
         if value not in upgrader:
             raise RuntimeError("Host-control upgrade lost the exact failed-bootstrap successor exception.")
+    if '[[ -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh' in upgrader:
+        raise RuntimeError("Host-control upgrade still requires executable failed-bootstrap source.")
+
+    if os.name == "posix":
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeError("Bash is required for the failed-bootstrap source-mode fixture.")
+        function_start = upgrader.index("validate_failed_bootstrap_upgrade_exception() {")
+        function_source = upgrader[
+            function_start : upgrader.index("\n}\n", function_start) + 3
+        ]
+        with tempfile.TemporaryDirectory(prefix="mochirii-quarantine-source-mode-") as directory:
+            fixture_root = Path(directory) / "source"
+            fixture_scripts = fixture_root / "scripts"
+            fixture_scripts.mkdir(parents=True)
+            entrypoint = fixture_scripts / "upgrade-host-control.sh"
+            entrypoint.write_text("fixture\n", encoding="utf-8", newline="\n")
+            quarantine = fixture_scripts / "quarantine-failed-bootstrap.sh"
+            quarantine.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -eu\n"
+                "[[ $# -eq 2 && $1 == --upgrade-preflight && $2 == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ]]\n"
+                "printf '%s\\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            harness = f'''set -u
+requested=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+bind_invoked_canonical_successor() {{
+  [[ $1 == "$requested" && $2 == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]
+}}
+{function_source}
+validate_failed_bootstrap_upgrade_exception "$requested"
+'''
+            for mode, should_pass in ((0o644, True), (0o755, False)):
+                quarantine.chmod(mode)
+                completed = subprocess.run(
+                    [bash, "-c", harness, str(entrypoint)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
+                    raise RuntimeError(
+                        "Executable failed-bootstrap source guard rejected exact 100644 source or accepted executable drift."
+                    )
+
+        lineage_start = source.index("validate_source_lineage() {")
+        lineage_source = source[lineage_start : source.index("\n}\n", lineage_start) + 3]
+        with tempfile.TemporaryDirectory(prefix="mochirii-quarantine-lineage-") as directory:
+            lineage_root = Path(directory) / "source"
+            (lineage_root / ".git").mkdir(parents=True)
+            lineage_harness = f'''set -u
+canonical_repository=https://github.com/Mochirii-Wushu/Mochirii-Forums.git
+source_root={lineage_root.as_posix()}
+current=cccccccccccccccccccccccccccccccccccccccc
+failed=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+reviewed_failed_bootstrap_recovery_commit=1d741eb75d08a226984935aa18e989ee324a0773
+bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
+git() {{
+  case "$*" in
+    "-C ${{source_root}} rev-parse --verify HEAD^{{commit}}") [[ ${{LINEAGE_MUTATION:-none}} != head ]] && printf '%s\n' "$current" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} symbolic-ref --short -q HEAD") [[ ${{LINEAGE_MUTATION:-none}} != branch ]] && printf '%s\n' main || printf '%s\n' topic ;;
+    "-C ${{source_root}} rev-parse --verify ${{current}}^1") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed_failed_bootstrap_recovery_commit" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{current}}") [[ ${{LINEAGE_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$current" "$reviewed_failed_bootstrap_recovery_commit" || printf '%s %s %s\n' "$current" "$reviewed_failed_bootstrap_recovery_commit" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_failed_bootstrap_recovery_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$failed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_failed_bootstrap_recovery_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$failed" || printf '%s %s %s\n' "$reviewed_failed_bootstrap_recovery_commit" "$failed" unrelated ;;
+    "-c core.fsmonitor=false -C ${{source_root}} status --porcelain=v1 --untracked-files=all")
+      [[ ${{LINEAGE_MUTATION:-none}} != status-fail ]] || return 83
+      [[ ${{LINEAGE_MUTATION:-none}} != dirty ]] || printf '%s\n' ' M retained'
+      ;;
+    "-C ${{source_root}} remote get-url origin") [[ ${{LINEAGE_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
+    *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{LINEAGE_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$current" || printf '%s\trefs/heads/main\n' unrelated ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{failed}} ${{current}}")
+      printf '%s\n' \
+        .github/workflows/deploy-forums.yml \
+        config/host-control-manifest.v1.json \
+        docs/operations/DEPLOYMENT.md \
+        docs/operations/RECOVERY.md \
+        scripts/quarantine-failed-bootstrap.sh \
+        scripts/test-contracts.py \
+        scripts/upgrade-host-control.sh
+      [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+      ;;
+    *) return 82 ;;
+  esac
+}}
+{lineage_source}
+validate_source_lineage "$current" "$failed"
+'''
+            for mutation, should_pass in (
+                ("none", True), ("head", False), ("branch", False),
+                ("recovery-parent", False), ("current-parents", False),
+                ("failed-parent", False), ("recovery-parents", False),
+                ("status-fail", False), ("dirty", False), ("origin", False),
+                ("remote", False), ("paths", False),
+            ):
+                completed = subprocess.run(
+                    [bash, "-c", lineage_harness],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                    env={**os.environ, "LINEAGE_MUTATION": mutation},
+                )
+                if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
+                    raise RuntimeError(
+                        "Executable failed-bootstrap lineage binding accepted drift or rejected the pinned two-commit chain."
+                    )
 
     transaction_match = re.search(
         r"(?ms)^# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION\n(.*?)^# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION$",

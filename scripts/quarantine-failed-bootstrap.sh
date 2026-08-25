@@ -21,6 +21,7 @@ readonly pending_journal="${state_root}/failed-bootstrap-quarantine.pending.json
 readonly shared_root="/var/discourse/shared"
 readonly standalone_root="${shared_root}/standalone"
 readonly recovery_root="${shared_root}/.mochirii-forums-failed-bootstrap"
+readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"
 
 validate_source_lineage() {
   local current="$1" failed="$2" status_output remote_output
@@ -37,8 +38,10 @@ validate_source_lineage() {
   [[ -d ${source_root}/.git && ! -L ${source_root}/.git ]] || return 1
   [[ "$(git -C "${source_root}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${current}" ]] || return 1
   [[ "$(git -C "${source_root}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
-  [[ "$(git -C "${source_root}" rev-parse --verify "${current}^1" 2>/dev/null)" == "${failed}" ]] || return 1
-  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${current}" 2>/dev/null)" == "${current} ${failed}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-parse --verify "${current}^1" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${current}" 2>/dev/null)" == "${current} ${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1" 2>/dev/null)" == "${failed}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit} ${failed}" ]] || return 1
   status_output="$(git -c core.fsmonitor=false -C "${source_root}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || return 1
   (( ${#status_output} <= 262144 )) || return 1
   [[ -z ${status_output} ]] || return 1
