@@ -27,6 +27,8 @@ readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b563086
 readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"
 readonly reviewed_acme_failed_bootstrap_commit="f564d62a82adf79b8f012a25949826e2b447681d"
 readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"
+readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306"
+readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"
 
 validate_source_lineage() {
   local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit
@@ -58,6 +60,14 @@ validate_source_lineage() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
   )
+  local -ar quarantine_output_expected_paths=(
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
   local -a actual_paths expected_paths
   case "${failed}" in
     "${reviewed_legacy_failed_bootstrap_commit}")
@@ -71,6 +81,10 @@ validate_source_lineage() {
     "${reviewed_acme_failed_bootstrap_commit}")
       reviewed_recovery_commit="${reviewed_acme_recovery_commit}"
       expected_paths=("${acme_expected_paths[@]}")
+      ;;
+    "${reviewed_quarantine_output_failed_bootstrap_commit}")
+      reviewed_recovery_commit="${reviewed_quarantine_output_recovery_commit}"
+      expected_paths=("${quarantine_output_expected_paths[@]}")
       ;;
     *) return 1 ;;
   esac
