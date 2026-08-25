@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import contextlib
 import ast
+import base64
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -176,6 +178,7 @@ def test_renderer() -> None:
             "acme-sh-3.0.6.gz.b64",
             "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da",
             "--auto-upgrade 0",
+            "NO_DETECT_SH=1",
             "/usr/local/bin/mochirii-acme-cron",
         )
         if any(value not in rendered for value in tls_required):
@@ -402,6 +405,132 @@ def test_renderer() -> None:
                 pass
             else:
                 raise RuntimeError("Stage 4 DiscourseConnect fixture accepted a non-lowercase key.")
+
+
+def test_acme_install_byte_stability() -> None:
+    tls = (ROOT / "config/immutable-letsencrypt.fragment.yml").read_text(encoding="utf-8")
+    VALIDATOR.validate_immutable_acme_install_contract(tls)
+
+    controlled_install = '''        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
+          --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0\n'''
+    uncontrolled_install = controlled_install.replace(" NO_DETECT_SH=1", "")
+    terminal = "        exec /usr/local/bin/letsencrypt\n"
+    hostile = tls.replace(controlled_install, uncontrolled_install, 1).replace(
+        terminal,
+        terminal + controlled_install,
+        1,
+    )
+    if hostile == tls:
+        raise RuntimeError("Unreachable ACME install hostile did not change the production fragment.")
+    with tempfile.TemporaryDirectory(prefix="mochirii-acme-render-hostile-") as directory:
+        hostile_fragment = Path(directory) / "immutable-letsencrypt.fragment.yml"
+        hostile_fragment.write_text(hostile, encoding="utf-8", newline="\n")
+        previous_fragment = RENDER.TLS_FRAGMENT
+        RENDER.TLS_FRAGMENT = hostile_fragment
+        try:
+            rendered_run = RENDER.tls_fragment_section("RUN")
+        finally:
+            RENDER.TLS_FRAGMENT = previous_fragment
+    if controlled_install.strip() not in rendered_run or uncontrolled_install.strip() not in rendered_run:
+        raise RuntimeError("Actual renderer seam did not expose both reachable and unreachable hostile commands.")
+    try:
+        VALIDATOR.validate_immutable_acme_install_contract(hostile)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Actual validator accepted an unreachable byte-stability decoy.")
+
+    inert_run = tls.replace(
+        "# MOCHIRII TLS RUN BEGIN\n",
+        "# MOCHIRII TLS RUN BEGIN\ndead: |1\n",
+        1,
+    )
+    with tempfile.TemporaryDirectory(prefix="mochirii-acme-render-inert-") as directory:
+        inert_fragment = Path(directory) / "immutable-letsencrypt.fragment.yml"
+        inert_fragment.write_text(inert_run, encoding="utf-8", newline="\n")
+        previous_fragment = RENDER.TLS_FRAGMENT
+        RENDER.TLS_FRAGMENT = inert_fragment
+        try:
+            rendered_run = RENDER.tls_fragment_section("RUN")
+        finally:
+            RENDER.TLS_FRAGMENT = previous_fragment
+    if not rendered_run.startswith("dead: |1\n  - exec:") or "NO_DETECT_SH=1" not in rendered_run:
+        raise RuntimeError("Actual renderer seam did not preserve the inert RUN block-scalar hostile.")
+    try:
+        VALIDATOR.validate_immutable_acme_install_contract(inert_run)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Actual validator accepted an inert immutable TLS RUN section.")
+
+    encoded = (ROOT / "config/acme-sh-3.0.6.gz.b64").read_text(encoding="ascii")
+    source = gzip.decompress(base64.b64decode("".join(encoded.splitlines()), validate=True))
+    if hashlib.sha256(source).hexdigest() != VALIDATOR.ACME_SOURCE_SHA256:
+        raise RuntimeError("Pinned ACME fixture bytes differ before the install control test.")
+
+    # The production image is Linux. The actual install behavior is exercised on
+    # Linux CI; Windows still binds the exact rendered command and pinned bytes.
+    if os.name == "nt":
+        return
+
+    def installed_bytes(*, preserve_shebang: bool) -> bytes:
+        with tempfile.TemporaryDirectory(prefix="mochirii-acme-install-") as directory:
+            root = Path(directory)
+            script = root / "acme.sh"
+            home = root / "home"
+            install = root / "installed"
+            log = root / "acme.log"
+            home.mkdir(mode=0o700)
+            script.write_bytes(source)
+            script.chmod(0o755)
+            child_environment = {
+                "AUTO_UPGRADE": "0",
+                "HOME": str(home),
+                "LC_ALL": "C",
+                "LE_WORKING_DIR": str(install),
+                "PATH": "/usr/bin:/bin",
+            }
+            if preserve_shebang:
+                child_environment["NO_DETECT_SH"] = "1"
+            result = subprocess.run(
+                [
+                    "/bin/sh",
+                    str(script),
+                    "--install",
+                    "--nocron",
+                    "--noprofile",
+                    "--log",
+                    str(log),
+                    "--auto-upgrade",
+                    "0",
+                ],
+                cwd=root,
+                env=child_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=30,
+            )
+            target = install / "acme.sh"
+            if result.returncode != 0 or not target.is_file() or target.is_symlink():
+                raise RuntimeError("Pinned ACME install fixture did not complete as an ordinary file.")
+            return target.read_bytes()
+
+    controlled = installed_bytes(preserve_shebang=True)
+    if controlled != source:
+        raise RuntimeError("NO_DETECT_SH did not preserve the pinned ACME bytes exactly.")
+
+    uncontrolled = installed_bytes(preserve_shebang=False)
+    first_line, separator, tail = uncontrolled.partition(b"\n")
+    source_tail = source.partition(b"\n")[2]
+    if (
+        uncontrolled == source
+        or separator != b"\n"
+        or first_line not in {b"#!/bin/bash", b"#!/usr/bin/bash"}
+        or tail != source_tail
+    ):
+        raise RuntimeError("Uncontrolled ACME install did not reproduce the deterministic shebang-only drift.")
 
 
 def test_opensearch_filter_contract() -> None:
@@ -10776,6 +10905,7 @@ validate_source_lineage "$current" "$failed"
 
 def main() -> int:
     test_renderer()
+    test_acme_install_byte_stability()
     test_opensearch_filter_contract()
     test_html_denial_types_contract()
     test_login_code_denial_contract()
