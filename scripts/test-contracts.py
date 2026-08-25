@@ -4790,6 +4790,15 @@ def test_repository_governance() -> None:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")
+    VALIDATOR.validate_tracked_entry_mode("100644", "scripts/fixture.py")
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_tracked_entry_mode("100755", "scripts/fixture.py"),
+        "executable tracked source",
+    )
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_tracked_entry_mode("120000", "scripts/fixture.py"),
+        "linked tracked source",
+    )
     expect_validation_failure(
         lambda: VALIDATOR.validate_inventory_paths([*allowed, "rogue.py"]),
         "extra untracked source",

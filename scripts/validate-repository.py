@@ -1368,6 +1368,11 @@ def validate_inventory_paths(
     return normalized
 
 
+def validate_tracked_entry_mode(mode: str, relative: str) -> None:
+    if mode != "100644":
+        fail(f"Tracked repository entry differs from the exact non-executable source boundary: {relative}")
+
+
 def enumerate_repository_files() -> list[str]:
     if ARCHIVE_MODE:
         allowed_directories = {
@@ -1439,8 +1444,7 @@ def enumerate_repository_files() -> list[str]:
         if match is None:
             fail("Tracked repository metadata is malformed or contains a conflict stage.")
         mode, relative = match.groups()
-        if mode not in {"100644", "100755"}:
-            fail(f"Tracked symlink, submodule, or special entry is forbidden: {relative}")
+        validate_tracked_entry_mode(mode, relative)
     return inventory
 
 
