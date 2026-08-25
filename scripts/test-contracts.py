@@ -6650,6 +6650,68 @@ stop_app_safely
             raise RuntimeError("Disposable restore hostile stop-state fixture changed.")
 
 
+def test_active_swap_capacity_contract() -> None:
+    verifier = (ROOT / "scripts/verify-host.sh").read_text(encoding="utf-8")
+    function_start = verifier.index("active_swap_capacity_is_sufficient() {")
+    function_source = verifier[
+        function_start : verifier.index("\n}\n", function_start) + 3
+    ]
+    required = (
+        'local -r nominal_bytes=2147483648',
+        '[[ ${active_bytes} =~ ^(0|[1-9][0-9]{0,11})$ ]]',
+        '[[ ${page_size} =~ ^[1-9][0-9]{3,5}$ ]]',
+        'page_size >= 4096 && page_size <= 65536',
+        '(page_size & (page_size - 1)) == 0',
+        'active_bytes >= nominal_bytes - page_size',
+        'page_size="$(timeout --signal=TERM --kill-after=5s 15s getconf PAGESIZE)"',
+        'active_swap_capacity_is_sufficient "${swap_bytes}" "${page_size}"',
+    )
+    if any(value not in verifier for value in required):
+        raise RuntimeError("Host active-swap verification lost its nominal-file/header-page contract.")
+    swap_read = verifier.index('swap_bytes="$(timeout --signal=TERM --kill-after=5s 15s swapon')
+    page_read = verifier.index('page_size="$(timeout --signal=TERM --kill-after=5s 15s getconf PAGESIZE)"')
+    capacity_gate = verifier.index('active_swap_capacity_is_sufficient "${swap_bytes}" "${page_size}"')
+    if not swap_read < page_read < capacity_gate or '[[ ${swap_bytes} -ge 2147483648 ]]' in verifier:
+        raise RuntimeError("Host active-swap verification still compares usable bytes to nominal file bytes.")
+
+    if os.name == "posix":
+        bash = shutil.which("bash")
+        if bash is None:
+            raise RuntimeError("Bash is required for the active-swap capacity fixture.")
+        harness = (
+            "set -euo pipefail\n"
+            + function_source
+            + 'active_swap_capacity_is_sufficient "$ACTIVE_BYTES" "$PAGE_SIZE"\n'
+        )
+        cases = (
+            ("2147483648", "4096", True),
+            ("2147479552", "4096", True),
+            ("2147479551", "4096", False),
+            ("2147418112", "65536", True),
+            ("2147418111", "65536", False),
+            ("2147483647", "6000", False),
+            ("2147483647", "2048", False),
+            ("2147483647", "131072", False),
+            ("02147479552", "4096", False),
+            ("9999999999999", "4096", False),
+            ("", "4096", False),
+            ("2147483648", "4096x", False),
+        )
+        for active_bytes, page_size, expected in cases:
+            completed = subprocess.run(
+                [bash, "-c", harness],
+                env={"ACTIVE_BYTES": active_bytes, "PAGE_SIZE": page_size},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if (completed.returncode == 0) is not expected or completed.stdout or completed.stderr:
+                raise RuntimeError("Host active-swap capacity fixture accepted an unsafe boundary.")
+
+
 def test_host_containment_contract() -> None:
     import ast
 
@@ -10410,6 +10472,7 @@ def main() -> int:
     test_sensitive_callback_markers()
     test_website_producer_probe_contract()
     test_restore_stop_boundary()
+    test_active_swap_capacity_contract()
     test_host_containment_contract()
     test_process_group_timeout()
     test_sidekiq_processing_contract()
