@@ -10488,12 +10488,53 @@ validate_source_lineage "$current" "$failed"
                         "Executable failed-bootstrap lineage binding accepted drift or rejected a pinned two-commit chain."
                     )
 
+    if source.count("read_mutation_identity() {") != 1 or source.count(
+        "read_quarantine_identity() {"
+    ) != 1:
+        raise RuntimeError("Failed-bootstrap identity reader function inventory differs.")
+
     mutation_start = source.index("read_mutation_identity() {")
-    mutation_heredoc = source.index("<<'PY'\n", mutation_start) + len("<<'PY'\n")
-    mutation_reader = source[mutation_heredoc : source.index("\nPY\n}", mutation_heredoc)]
+    mutation_end = source.index("\n}\n\nvalidate_quarantine_environment() {", mutation_start) + 2
+    mutation_function = source[mutation_start:mutation_end]
     identity_start = source.index("read_quarantine_identity() {")
-    identity_heredoc = source.index("<<'PY'\n", identity_start) + len("<<'PY'\n")
-    identity_reader = source[identity_heredoc : source.index("\nPY\n}", identity_heredoc)]
+    identity_end = source.index("\n}\n\nvalidate_failed_bootstrap_state() {", identity_start) + 2
+    identity_function = source[identity_start:identity_end]
+
+    def exact_reader_body(function: str, prefix: str, label: str) -> str:
+        if (
+            not function.startswith(prefix)
+            or not function.endswith("\nPY\n}")
+            or function.count("<<'PY'\n") != 1
+            or function.count("\nPY\n}") != 1
+        ):
+            raise RuntimeError(f"{label} shell boundary differs.")
+        heredoc = function.index("<<'PY'\n") + len("<<'PY'\n")
+        return function[heredoc : function.index("\nPY\n}", heredoc)]
+
+    mutation_prefix = 'read_mutation_identity() {\n  python3 -B - "${deployment_journal}" <<\'PY\'\n'
+    identity_prefix = (
+        'read_quarantine_identity() {\n  local kind="$1" current="$2" failed="$3"\n'
+        '  python3 -B - "${kind}" "${pending_journal}" "${evidence_root}" "${current}" "${failed}" <<\'PY\'\n'
+    )
+    mutation_reader = exact_reader_body(
+        mutation_function, mutation_prefix, "Failed-bootstrap mutation identity reader"
+    )
+    identity_reader = exact_reader_body(
+        identity_function, identity_prefix, "Failed-bootstrap recovery identity reader"
+    )
+    spoofed_function = mutation_function.replace(
+        "read_mutation_identity() {\n",
+        'read_mutation_identity() {\n  printf \'spoof\\n\'\n  return 0\n',
+        1,
+    )
+    try:
+        exact_reader_body(
+            spoofed_function, mutation_prefix, "Failed-bootstrap spoofed mutation identity reader"
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Failed-bootstrap identity tests accepted an early shell success decoy.")
     if identity_reader.count("import itertools\n") != 1:
         raise RuntimeError("Failed-bootstrap terminal identity reader does not bind its bounded iterator dependency.")
 
@@ -10514,6 +10555,9 @@ validate_source_lineage "$current" "$failed"
     transaction_canonical = extract_canonical(transaction, "def canonical(document, label):")
     if (
         mutation_reader.count("canonical_raw = canonical(document)") != 1
+        or mutation_reader.count("sys.stdout.buffer.write(output)") != 1
+        or "print(" in mutation_reader
+        or 'target_app_configuration != expected_target_app_configuration' not in mutation_reader
         or identity_reader.count("canonical_raw = canonical(document)") != 1
         or transaction.count("if raw != canonical(document, label):") != 1
         or transaction.count('canonical(document, "failed-bootstrap quarantine document")') != 1
@@ -10557,6 +10601,43 @@ validate_source_lineage "$current" "$failed"
         path.write_bytes(raw)
         path.chmod(0o600)
         os.chown(path, 0, 0)
+
+    def mutation_document(target_app_configuration: str | None = None) -> dict[str, object]:
+        configuration = "c" * 64
+        target_root = f"/var/discourse/containers/releases/{current}/{configuration}"
+        target_app = (
+            f"{target_root}/app.yml" if target_app_configuration is None else target_app_configuration
+        )
+        return {
+            "schemaVersion": 1,
+            "phase": "runtime-contained",
+            "recordedAt": "2026-08-25T20:00:00Z",
+            "updatedAt": "2026-08-25T20:01:00Z",
+            "deploymentMode": "bootstrap",
+            "repositoryCommit": current,
+            "productionConfigurationSha256": configuration,
+            "releaseArchiveSha256": "d" * 64,
+            "requestedDiscourseConnect": False,
+            "targetAppConfigurationFile": target_app,
+            "targetAppConfigurationSha256": configuration,
+            "targetRestoreConfigurationFile": f"{target_root}/restore.yml",
+            "targetRestoreConfigurationSha256": "e" * 64,
+            "targetActivationConfigurationFile": None,
+            "targetActivationConfigurationSha256": None,
+            "previousRepositoryCommit": None,
+            "previousProductionConfigurationSha256": None,
+            "previousCurrentReleaseSha256": None,
+            "previousAppConfigurationFile": None,
+            "previousAppConfigurationSha256": None,
+            "previousCurrentTarget": None,
+            "activeConfigurationFile": target_app,
+            "activeConfigurationSha256": configuration,
+            "launcherOperationToken": None,
+            "launcherPreviousImageId": None,
+            "launcherCommand": None,
+            "databaseMutationPossible": True,
+            "applicationStopped": True,
+        }
 
     def new_fixture(directory: str, *, ssl_present: bool = True) -> dict[str, object]:
         root = Path(directory)
@@ -10630,12 +10711,19 @@ validate_source_lineage "$current" "$failed"
         )
 
     def run_identity_reader(kind: str, fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
+        shell_source = (
+            "set -euo pipefail\n"
+            'readonly pending_journal="$2"\n'
+            'readonly evidence_root="$3"\n'
+            + identity_function
+            + '\nread_quarantine_identity "$1" "$4" "$5"\n'
+        )
         return subprocess.run(
             [
-                sys.executable,
-                "-B",
+                "/bin/bash",
                 "-c",
-                identity_reader,
+                shell_source,
+                "mochirii-failed-bootstrap-identity-reader",
                 kind,
                 str(fixture["pending"]),
                 str(fixture["evidence"]),
@@ -10645,18 +10733,30 @@ validate_source_lineage "$current" "$failed"
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=child_environment,
+            env={**child_environment, "PATH": "/usr/bin:/bin"},
             timeout=20,
             check=False,
         )
 
     def run_mutation_reader(fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
+        shell_source = (
+            "set -euo pipefail\n"
+            'readonly deployment_journal="$1"\n'
+            + mutation_function
+            + "\nread_mutation_identity\n"
+        )
         return subprocess.run(
-            [sys.executable, "-B", "-c", mutation_reader, str(fixture["mutation"])],
+            [
+                "/bin/bash",
+                "-c",
+                shell_source,
+                "mochirii-failed-bootstrap-mutation-reader",
+                str(fixture["mutation"]),
+            ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=child_environment,
+            env={**child_environment, "PATH": "/usr/bin:/bin"},
             timeout=20,
             check=False,
         )
@@ -10776,6 +10876,68 @@ validate_source_lineage "$current" "$failed"
             "Failed-bootstrap actual mutation reader",
         )
 
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-mutation-reader-output-") as directory:
+        fixture = new_fixture(directory)
+        valid_document = mutation_document()
+        valid_raw = publish_json(fixture["mutation"], valid_document)
+        accepted = run_mutation_reader(fixture)
+        expected_output = (
+            f"{current}\n"
+            f"{'c' * 64}\n"
+            f"{'d' * 64}\n"
+            f"{valid_document['targetAppConfigurationFile']}\n"
+            f"{hashlib.sha256(valid_raw).hexdigest()}\n"
+        ).encode("ascii")
+        if accepted.returncode != 0 or accepted.stdout != expected_output or accepted.stderr:
+            raise RuntimeError("Failed-bootstrap actual mutation reader rejected its exact five-line tuple.")
+        hostile_paths = (
+            "",
+            "\ud800",
+            f"{valid_document['targetAppConfigurationFile']}\n",
+            f"{valid_document['targetAppConfigurationFile']}\x00",
+            "/var/discourse/containers/releases/" + ("x" * 4097) + "/app.yml",
+        )
+        for hostile_path in hostile_paths:
+            publish_json(fixture["mutation"], mutation_document(hostile_path))
+            assert_categorical_failure(
+                run_mutation_reader(fixture),
+                b"failed bootstrap journal tuple differs\n",
+                "Failed-bootstrap actual mutation reader output contract",
+            )
+        for schema_version in (True, 1.0):
+            hostile_document = mutation_document()
+            hostile_document["schemaVersion"] = schema_version
+            publish_json(fixture["mutation"], hostile_document)
+            assert_categorical_failure(
+                run_mutation_reader(fixture),
+                b"failed bootstrap journal tuple differs\n",
+                "Failed-bootstrap actual mutation reader schema contract",
+            )
+        numeric_output_fields = (
+            ("repositoryCommit", int("1" * 40)),
+            ("productionConfigurationSha256", int("1" * 64)),
+            ("releaseArchiveSha256", int("1" * 64)),
+        )
+        for field, value in numeric_output_fields:
+            hostile_document = mutation_document()
+            hostile_document[field] = value
+            hostile_target = (
+                "/var/discourse/containers/releases/"
+                f"{hostile_document['repositoryCommit']}/"
+                f"{hostile_document['productionConfigurationSha256']}/app.yml"
+            )
+            hostile_document["targetAppConfigurationFile"] = hostile_target
+            hostile_document["activeConfigurationFile"] = hostile_target
+            if field == "productionConfigurationSha256":
+                hostile_document["targetAppConfigurationSha256"] = value
+                hostile_document["activeConfigurationSha256"] = value
+            publish_json(fixture["mutation"], hostile_document)
+            assert_categorical_failure(
+                run_mutation_reader(fixture),
+                b"failed bootstrap journal tuple differs\n",
+                "Failed-bootstrap actual mutation reader scalar contract",
+            )
+
     with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-pending-reader-") as directory:
         fixture = new_fixture(directory)
         armed = interrupt_after(transaction, "publish(pending, state, True)")
@@ -10789,6 +10951,12 @@ validate_source_lineage "$current" "$failed"
         expected_identity = f"{current}\n{failed}\n{fixture['mutation_sha']}\n".encode("ascii")
         if identity.returncode != 0 or identity.stdout != expected_identity or identity.stderr:
             raise RuntimeError("Failed-bootstrap actual pending identity reader rejected exact evidence.")
+        for schema_version in (True, 1.0):
+            hostile_document = {**pending_document, "schemaVersion": schema_version}
+            publish_json(pending, hostile_document)
+            assert_identity_reader_failure(
+                "pending", fixture, b"failed-bootstrap pending identity differs\n"
+            )
         pending_non_object = (
             b"null\n",
             (json.dumps(sorted(pending_document), separators=(",", ":")) + "\n").encode("utf-8"),
@@ -10837,6 +11005,41 @@ validate_source_lineage "$current" "$failed"
             b"failed-bootstrap terminal evidence is malformed\n",
             "Failed-bootstrap terminal-replay transaction decoder",
         )
+
+    for schema_version in (True, 1.0):
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-transaction-pending-schema-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = interrupt_after(transaction, "publish(pending, state, True)")
+            crashed = run_transaction(armed, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError("Failed-bootstrap pending schema fixture did not arm categorically.")
+            pending = fixture["pending"]
+            pending_document = json.loads(pending.read_text(encoding="utf-8"))
+            pending_document["schemaVersion"] = schema_version
+            publish_json(pending, pending_document)
+            assert_categorical_failure(
+                run_transaction(transaction, fixture),
+                b"failed-bootstrap quarantine journal tuple differs\n",
+                "Failed-bootstrap pending-replay transaction schema contract",
+            )
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-transaction-terminal-schema-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            completed = run_transaction(transaction, fixture)
+            if completed.returncode != 0 or completed.stdout or completed.stderr:
+                raise RuntimeError("Failed-bootstrap terminal schema fixture did not complete.")
+            terminal = fixture["terminal"]
+            terminal_document = json.loads(terminal.read_text(encoding="utf-8"))
+            terminal_document["schemaVersion"] = schema_version
+            publish_json(terminal, terminal_document)
+            assert_categorical_failure(
+                run_transaction(transaction, fixture),
+                b"failed-bootstrap quarantine journal tuple differs\n",
+                "Failed-bootstrap terminal-replay transaction schema contract",
+            )
 
     for anchor in crash_anchors:
         with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-") as directory:
@@ -10906,6 +11109,12 @@ validate_source_lineage "$current" "$failed"
             os.chown(terminal, 0, 0)
             assert_identity_reader_failure(
                 "terminal", fixture, b"failed-bootstrap recovery evidence is malformed\n"
+            )
+        for schema_version in (True, 1.0):
+            hostile_document = {**terminal_document, "schemaVersion": schema_version}
+            publish_json(terminal, hostile_document)
+            assert_identity_reader_failure(
+                "terminal", fixture, b"failed-bootstrap terminal identity differs\n"
             )
         terminal.write_bytes(terminal_raw)
         terminal.chmod(0o600)

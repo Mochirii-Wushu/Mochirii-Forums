@@ -159,20 +159,34 @@ previous = (
     "previousCurrentReleaseSha256", "previousAppConfigurationFile",
     "previousAppConfigurationSha256", "previousCurrentTarget",
 )
+repository_commit = document.get("repositoryCommit")
+production_configuration_sha = document.get("productionConfigurationSha256")
+release_archive_sha = document.get("releaseArchiveSha256")
+target_app_configuration = document.get("targetAppConfigurationFile")
+expected_target_app_configuration = (
+    f"/var/discourse/containers/releases/{repository_commit}/"
+    f"{production_configuration_sha}/app.yml"
+)
 if (
     set(document) != keys
     or raw != canonical_raw
+    or type(document.get("schemaVersion")) is not int
     or document.get("schemaVersion") != 1
     or document.get("phase") != "runtime-contained"
     or document.get("deploymentMode") != "bootstrap"
-    or re.fullmatch(r"[0-9a-f]{40}", str(document.get("repositoryCommit", ""))) is None
-    or re.fullmatch(r"[0-9a-f]{64}", str(document.get("productionConfigurationSha256", ""))) is None
-    or re.fullmatch(r"[0-9a-f]{64}", str(document.get("releaseArchiveSha256", ""))) is None
+    or not isinstance(repository_commit, str)
+    or re.fullmatch(r"[0-9a-f]{40}", repository_commit) is None
+    or not isinstance(production_configuration_sha, str)
+    or re.fullmatch(r"[0-9a-f]{64}", production_configuration_sha) is None
+    or not isinstance(release_archive_sha, str)
+    or re.fullmatch(r"[0-9a-f]{64}", release_archive_sha) is None
     or document.get("requestedDiscourseConnect") is not False
     or any(document.get(key) is not None for key in previous)
     or document.get("targetActivationConfigurationFile") is not None
     or document.get("targetActivationConfigurationSha256") is not None
-    or document.get("activeConfigurationFile") != document.get("targetAppConfigurationFile")
+    or not isinstance(target_app_configuration, str)
+    or target_app_configuration != expected_target_app_configuration
+    or document.get("activeConfigurationFile") != target_app_configuration
     or document.get("activeConfigurationSha256") != document.get("targetAppConfigurationSha256")
     or document.get("launcherOperationToken") is not None
     or document.get("launcherPreviousImageId") is not None
@@ -181,11 +195,19 @@ if (
     or document.get("applicationStopped") is not True
 ):
     raise SystemExit("failed bootstrap journal tuple differs")
-print(document["repositoryCommit"])
-print(document["productionConfigurationSha256"])
-print(document["releaseArchiveSha256"])
-print(document["targetAppConfigurationFile"])
-print(hashlib.sha256(raw).hexdigest())
+output = (
+    "\n".join(
+        (
+            repository_commit,
+            production_configuration_sha,
+            release_archive_sha,
+            target_app_configuration,
+            hashlib.sha256(raw).hexdigest(),
+        )
+    )
+    + "\n"
+).encode("utf-8")
+sys.stdout.buffer.write(output)
 PY
 }
 
@@ -291,7 +313,8 @@ def valid_base(document, phases):
     uid = document.get("standaloneUid")
     gid = document.get("standaloneGid")
     return (
-        document.get("schemaVersion") == 1
+        type(document.get("schemaVersion")) is int
+        and document.get("schemaVersion") == 1
         and document.get("operation") == "failed-bootstrap-quarantine"
         and document.get("phase") in phases
         and document.get("currentControlCommit") == current
@@ -540,6 +563,7 @@ def validate_state(document, phases, terminal_state=False):
     if (
         not isinstance(document, dict)
         or set(document) != expected_keys
+        or type(document.get("schemaVersion")) is not int
         or document.get("schemaVersion") != 1
         or document.get("operation") != "failed-bootstrap-quarantine"
         or document.get("phase") not in phases
