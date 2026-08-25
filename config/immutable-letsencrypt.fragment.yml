@@ -52,7 +52,7 @@
         test "$(sha256sum /opt/acme.sh | awk '{print $1}')" = "${acme_sha256}"
         install -d -m 0755 -g root -o root "${letsencrypt_dir}"
         cd /opt
-        AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \
+        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \
           --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0
         test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
         grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"

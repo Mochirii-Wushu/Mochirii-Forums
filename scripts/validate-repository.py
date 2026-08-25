@@ -27,6 +27,8 @@ BASE_DIGEST = "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759
 ACME_REVISION = "b7caf7a0165d80dd1556b16057a06bb32025066d"
 ACME_SOURCE_SHA256 = "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
 ACME_COMPRESSED_SHA256 = "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
+CONFIGURE_LETSENCRYPT_SHA256 = "6bc09ec78a82d5b3e1cc6046517bec6a537b2aea50bc2be00f08d889cd65af8d"
+IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "cb4c6646bcf57fb57a92b0c67f17fbc13679930f16b1a553b288f1571b8125bb"
 OBSERVED_MAIN_REVISION = "00595119c368c0aef7d7019ec66ffc8fa51cce79"
 OBSERVED_MAIN_TREE = "d5b846bf4e59784c5220c48839d7eb1b45671aae"
 OBSERVED_RANGE = [
@@ -1608,6 +1610,54 @@ def require_text(text: str, snippets: list[str], label: str) -> None:
     for snippet in snippets:
         if snippet not in text:
             fail(f"Missing reviewed {label} value: {snippet}")
+
+
+def yaml_executable_file_contents(text: str, path: str) -> str:
+    marker = (
+        "  - file:\n"
+        f"      path: {path}\n"
+        '      chmod: "+x"\n'
+        "      contents: |\n"
+    )
+    if text.count(marker) != 1:
+        fail("Immutable TLS executable file boundary differs.")
+    remainder = text.split(marker, 1)[1]
+    boundary = "  - file:\n"
+    if boundary not in remainder:
+        fail("Immutable TLS executable file has no exact terminal boundary.")
+    block, _ = remainder.split(boundary, 1)
+    if not block.endswith("\n"):
+        fail("Immutable TLS executable file is not final-LF terminated.")
+    executable: list[str] = []
+    for line in block.splitlines(keepends=True):
+        if line == "\n":
+            executable.append(line)
+        elif line.startswith("        ") and line.endswith("\n"):
+            executable.append(line[8:])
+        else:
+            fail("Immutable TLS executable file indentation differs.")
+    return "".join(executable)
+
+
+def validate_immutable_acme_install_contract(tls: str) -> None:
+    if hashlib.sha256(tls.encode("utf-8")).hexdigest() != IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256:
+        fail("Immutable TLS fragment differs from the exact active reviewed structure.")
+    configure = yaml_executable_file_contents(tls, "/usr/local/bin/configure-letsencrypt")
+    if hashlib.sha256(configure.encode("utf-8")).hexdigest() != CONFIGURE_LETSENCRYPT_SHA256:
+        fail("Immutable ACME configuration executable differs from the exact reviewed source.")
+    exact_install = '''AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
+  --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0'''
+    terminal = "exec /usr/local/bin/letsencrypt\n"
+    if (
+        configure.count(exact_install) != 1
+        or configure.count("./acme.sh") != 1
+        or configure.count("--install") != 1
+        or configure.count("NO_DETECT_SH") != 1
+        or tls.count("NO_DETECT_SH") != 1
+        or not configure.endswith(terminal)
+        or configure.index(exact_install) >= configure.index(terminal)
+    ):
+        fail("Immutable ACME installation is not the sole reachable byte-stable invocation.")
 
 
 def validate_stage4_pull_request_template(text: str) -> None:
@@ -4017,6 +4067,7 @@ def validate_template() -> None:
             fail(f"Forbidden storage or provider configuration matched: {pattern}")
 
     tls = read("config/immutable-letsencrypt.fragment.yml")
+    validate_immutable_acme_install_contract(tls)
     expected_tls_outlet_rewrite = r'''        sed -Ei "s/ssl_certificate .+/ssl_certificate \/shared\/ssl\/${DISCOURSE_HOSTNAME}.cer;\
           ssl_certificate \/shared\/ssl\/${DISCOURSE_HOSTNAME}_ecc.cer;/" \
           /etc/nginx/conf.d/outlets/server/20-https.conf
@@ -4033,6 +4084,7 @@ def validate_template() -> None:
             ACME_COMPRESSED_SHA256,
             "--install --nocron --noprofile",
             "--auto-upgrade 0",
+            "NO_DETECT_SH=1",
             'grep -Eq "^AUTO_UPGRADE=',
             "/usr/local/bin/mochirii-acme-cron",
         ],
