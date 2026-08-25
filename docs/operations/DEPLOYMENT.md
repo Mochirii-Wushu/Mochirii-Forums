@@ -583,6 +583,10 @@ directly as an ordinary operator procedure:
 
 The deployment workflow creates a secret-free `git archive`, records its
 SHA-256 and byte size, and sends it to the exact protected incoming filename.
+Both transfer sessions use OpenSSH protocol keepalives every 30 seconds, allow
+at most ten unanswered keepalives, and retain TCP keepalive. A broken or
+unresponsive transport therefore reaches the existing dispatcher containment
+boundary instead of silently abandoning a long root operation.
 The deploy authorized-key record uses OpenSSH `restrict` plus the exact
 root-installed `ssh-deploy-dispatch.py` forced command. It has no shell, SFTP,
 subsystem, forwarding, tunnel, agent, X11, or TTY surface. The dispatcher
@@ -638,6 +642,39 @@ old code. A failed bootstrap retains
 persistent state and its exact journal for
 bounded replay or explicit disposal review; it never silently deletes shared
 data.
+
+If an exact bootstrap replay is prevented by a proved deployment-transport
+defect, one reviewed direct canonical successor may install only the bounded
+transport repair and the governed failed-bootstrap quarantine control while the
+direct-parent journal remains `runtime-contained`. The host-control upgrader
+accepts that exception only when the journal is one canonical root-owned
+bootstrap tuple, the application and all publication pointers are absent, the
+app is stopped, PostgreSQL state is present, every unrelated operation journal
+is absent, and the successor changes exactly the reviewed workflow,
+host-control, quarantine, validation, and runbook paths. The upgrade must leave
+the mutation journal and failed runtime bytes unchanged.
+
+After that exact upgrade, use the separately authenticated operator session:
+
+```sh
+sudo /usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap \
+  <exact-current-main> <exact-failed-direct-parent> \
+  'QUARANTINE FAILED MOCHIRII FORUMS BOOTSTRAP'
+```
+
+The command takes the primary and media locks, revalidates canonical lineage,
+the complete journal tuple, stopped/absent publication state, certificate
+timer, and host controls, then journals its own work. It atomically renames the
+complete failed `shared/standalone` tree into the root-only sibling recovery
+boundary, recreates the clean standalone directory with its exact metadata,
+restores only the exact ordinary `ssl` directory when present, and moves the
+original mutation journal to digest-named protected evidence. It never deletes
+the database, uploads, logs, certificate material, release, configuration, or
+journal bytes. Crash recovery accepts only the same pending tuple and exact
+partial filesystem state. Only after terminal evidence and active-journal
+retirement may the keepalive-protected workflow bootstrap exact current `main`.
+That deployment has a changed canonical commit, archive, installed control, and
+clean runtime boundary; it is not an identical-byte retry.
 An exact consumer-enabled tuple whose authentication state is already
 `complete` may use the same rebuild entrypoint: the deployer deep-validates the
 immutable pending/Website/complete chain, repeats the live producer-enabled

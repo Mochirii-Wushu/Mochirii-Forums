@@ -4786,10 +4786,19 @@ def expect_validation_failure(action, label: str) -> None:
 
 def test_repository_governance() -> None:
     allowed = sorted(VALIDATOR.ALLOWED_FILES)
-    if len(allowed) != 162:
+    if len(allowed) != 163:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")
+    VALIDATOR.validate_tracked_entry_mode("100644", "scripts/fixture.py")
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_tracked_entry_mode("100755", "scripts/fixture.py"),
+        "executable tracked source",
+    )
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_tracked_entry_mode("120000", "scripts/fixture.py"),
+        "linked tracked source",
+    )
     expect_validation_failure(
         lambda: VALIDATOR.validate_inventory_paths([*allowed, "rogue.py"]),
         "extra untracked source",
@@ -8733,6 +8742,7 @@ def test_host_security_control_plane_contract() -> None:
             "/usr/local/sbin/mochirii-forums-finalize-authentication",
             "/usr/local/sbin/mochirii-forums-finalize-member-rollout",
             "/usr/local/sbin/mochirii-forums-historical-disaster-recovery",
+            "/usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap",
             "/usr/local/sbin/mochirii-forums-restore",
             "/usr/local/sbin/mochirii-forums-stop-pending-activation",
             "/usr/local/sbin/mochirii-forums-upgrade-host-control",
@@ -9919,6 +9929,304 @@ def test_effective_allow_users_parser_contract() -> None:
             raise RuntimeError("Reviewed AllowUsers parser accepted a hostile effective tuple.")
 
 
+def test_failed_bootstrap_quarantine_contract() -> None:
+    source = (ROOT / "scripts/quarantine-failed-bootstrap.sh").read_text(encoding="utf-8")
+    upgrader = (ROOT / "scripts/upgrade-host-control.sh").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy-forums.yml").read_text(encoding="utf-8")
+    manifest = json.loads((ROOT / "config/host-control-manifest.v1.json").read_text(encoding="utf-8"))
+    expected_transport = (
+        'ssh_options=(-T -i "$key" -o BatchMode=yes -o ClearAllForwardings=yes '
+        '-o IdentitiesOnly=yes -o RequestTTY=no -o ServerAliveInterval=30 '
+        '-o ServerAliveCountMax=10 -o TCPKeepAlive=yes -o StrictHostKeyChecking=yes '
+        '-o UserKnownHostsFile="$known_hosts")'
+    )
+    if (
+        workflow.count(expected_transport) != 1
+        or workflow.count('ssh "${ssh_options[@]}" --') != 2
+        or re.search(r"(?m)^\s*ssh\s+-T\b", workflow)
+    ):
+        raise RuntimeError("Deployment workflow lost its one reviewed keepalive transport tuple.")
+    control_rows = manifest.get("coreTargets")
+    quarantine_rows = [
+        row
+        for row in control_rows
+        if isinstance(row, dict)
+        and row.get("target") == "/usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap"
+    ] if isinstance(control_rows, list) else []
+    if quarantine_rows != [
+        {
+            "mode": "0755",
+            "source": "scripts/quarantine-failed-bootstrap.sh",
+            "target": "/usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap",
+        }
+    ]:
+        raise RuntimeError("Failed-bootstrap quarantine is not one exact installed host control.")
+    required_source = (
+        "validate_source_lineage() {",
+        "validate_quarantine_environment() {",
+        "read_quarantine_identity() {",
+        'if [[ ${1:-} == --upgrade-preflight ]]',
+        "QUARANTINE FAILED MOCHIRII FORUMS BOOTSTRAP",
+        "assert-held --locks primary,media",
+        "run --locks primary,media",
+        "object_pairs_hook=reject_duplicate",
+        "list(itertools.islice(evidence.iterdir(), 4097))",
+        "def exact_inventory(path, maximum, label):",
+        "list(itertools.islice(path.iterdir(), maximum + 1))",
+        "# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
+        'phase_order = {"prepared": 0, "runtime-quarantined": 1, "clean-boundary": 2, "authority-retired": 3}',
+        "os.rename(standalone, quarantine)",
+        "os.rename(old_ssl, new_ssl)",
+        "os.rename(mutation, mutation_evidence)",
+        'validate_state(state, {"prepared"})',
+        "validate_state(state, {phase})",
+        'validate_state(terminal_document, {"complete"}, terminal_state=True)',
+        "publish(terminal, terminal_document, True)",
+        "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
+    )
+    if any(value not in source for value in required_source):
+        raise RuntimeError("Failed-bootstrap quarantine lost a reviewed reversible transaction boundary.")
+    expected_paths = (
+        ".github/workflows/deploy-forums.yml",
+        "config/host-control-manifest.v1.json",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
+    expected_path_block = source[source.index("local -a actual_paths expected_paths=(") : source.index("  )", source.index("local -a actual_paths expected_paths=("))]
+    if [line.strip() for line in expected_path_block.splitlines()[1:]] != list(expected_paths):
+        raise RuntimeError("Failed-bootstrap canonical successor path inventory differs.")
+    if any(
+        value in source
+        for value in (
+            "rm -rf",
+            "shutil.rmtree",
+            "mutation.unlink()",
+            "mutation_evidence.unlink()",
+            "quarantine.rmdir()",
+        )
+    ):
+        raise RuntimeError("Failed-bootstrap quarantine gained retained-evidence deletion authority.")
+    for value in (
+        "validate_failed_bootstrap_upgrade_exception() {",
+        'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
+        'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
+        "deployment_recovery_upgrade=true",
+        'terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh"',
+    ):
+        if value not in upgrader:
+            raise RuntimeError("Host-control upgrade lost the exact failed-bootstrap successor exception.")
+
+    transaction_match = re.search(
+        r"(?ms)^# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION\n(.*?)^# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION$",
+        source,
+    )
+    if transaction_match is None:
+        raise RuntimeError("Failed-bootstrap transaction source could not be extracted exactly.")
+    transaction = transaction_match.group(1)
+    crash_anchors = (
+        "publish(pending, state, True)",
+        "os.rename(standalone, quarantine)",
+        'advance("runtime-quarantined")',
+        'standalone.mkdir(mode=state["standaloneMode"])',
+        "os.rename(old_ssl, new_ssl)",
+        'advance("clean-boundary")',
+        "os.rename(mutation, mutation_evidence)",
+        'advance("authority-retired")',
+        "publish(terminal, terminal_document, True)",
+    )
+    if any(transaction.count(anchor) != 1 for anchor in crash_anchors):
+        raise RuntimeError("Failed-bootstrap crash-window anchor inventory differs.")
+
+    # The production transaction is root-only. Windows and an unprivileged
+    # Linux source check still execute every static consumer binding above;
+    # the pinned root/Linux check drives every journal phase below.
+    if os.name != "posix" or os.geteuid() != 0:
+        return
+
+    current = "a" * 40
+    failed = "b" * 40
+    child_environment = {"LC_ALL": "C", "PYTHONHASHSEED": "0"}
+
+    def publish_json(path: Path, document: dict[str, object]) -> bytes:
+        raw = (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+        path.write_bytes(raw)
+        path.chmod(0o600)
+        os.chown(path, 0, 0)
+        return raw
+
+    def new_fixture(directory: str, *, ssl_present: bool = True) -> dict[str, object]:
+        root = Path(directory)
+        state = root / "state"
+        evidence = state / "evidence"
+        shared = root / "shared"
+        standalone = shared / "standalone"
+        recovery = shared / ".mochirii-forums-failed-bootstrap"
+        state.mkdir(mode=0o755)
+        state.chmod(0o755)
+        evidence.mkdir(mode=0o700)
+        evidence.chmod(0o700)
+        shared.mkdir(mode=0o755)
+        shared.chmod(0o755)
+        standalone.mkdir(mode=0o755)
+        standalone.chmod(0o755)
+        retained_names = ["postgres_data", "redis_data", "uploads", "log", "tmp"]
+        if ssl_present:
+            retained_names.append("ssl")
+        for name in retained_names:
+            path = standalone / name
+            path.mkdir(mode=0o700)
+            (path / "retained.bin").write_bytes((name + "-retained").encode("ascii"))
+        mutation = state / "deployment-mutation.json"
+        mutation_raw = publish_json(mutation, {})
+        mutation_sha = hashlib.sha256(mutation_raw).hexdigest()
+        quarantine = recovery / f"{failed}-{mutation_sha}"
+        mutation_evidence = evidence / f"{failed}-{mutation_sha}-deployment-mutation.json"
+        terminal = evidence / f"{failed}-{mutation_sha}-failed-bootstrap-quarantine.json"
+        pending = state / "failed-bootstrap-quarantine.pending.json"
+        return {
+            "root": root,
+            "state": state,
+            "evidence": evidence,
+            "shared": shared,
+            "standalone": standalone,
+            "recovery": recovery,
+            "mutation": mutation,
+            "mutation_raw": mutation_raw,
+            "mutation_sha": mutation_sha,
+            "quarantine": quarantine,
+            "mutation_evidence": mutation_evidence,
+            "terminal": terminal,
+            "pending": pending,
+            "ssl_present": ssl_present,
+        }
+
+    def run_transaction(code: str, fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                code,
+                str(fixture["pending"]),
+                str(fixture["mutation"]),
+                str(fixture["evidence"]),
+                str(fixture["shared"]),
+                str(fixture["standalone"]),
+                str(fixture["recovery"]),
+                current,
+                failed,
+                str(fixture["mutation_sha"]),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=child_environment,
+            timeout=20,
+            check=False,
+        )
+
+    def interrupt_after(code: str, anchor: str) -> str:
+        position = code.index(anchor)
+        line_start = code.rfind("\n", 0, position) + 1
+        indentation = code[line_start:position]
+        if indentation.strip():
+            raise RuntimeError("Failed-bootstrap crash anchor is not at statement position.")
+        insertion = position + len(anchor)
+        return code[:insertion] + "\n" + indentation + "raise SystemExit(86)" + code[insertion:]
+
+    def verify_terminal(fixture: dict[str, object]) -> None:
+        pending = fixture["pending"]
+        mutation = fixture["mutation"]
+        standalone = fixture["standalone"]
+        quarantine = fixture["quarantine"]
+        mutation_evidence = fixture["mutation_evidence"]
+        terminal = fixture["terminal"]
+        if pending.exists() or mutation.exists() or not terminal.is_file() or not mutation_evidence.is_file():
+            raise RuntimeError("Failed-bootstrap terminal authority inventory differs.")
+        terminal_document = json.loads(terminal.read_text(encoding="utf-8"))
+        if (
+            terminal_document.get("phase") != "complete"
+            or terminal_document.get("currentControlCommit") != current
+            or terminal_document.get("failedReleaseCommit") != failed
+            or terminal_document.get("mutationSha256") != fixture["mutation_sha"]
+            or terminal_document.get("sslRestored") is not fixture["ssl_present"]
+        ):
+            raise RuntimeError("Failed-bootstrap terminal evidence tuple differs.")
+        if terminal.stat().st_uid != 0 or stat.S_IMODE(terminal.stat().st_mode) != 0o600:
+            raise RuntimeError("Failed-bootstrap terminal evidence ownership differs.")
+        if mutation_evidence.read_bytes() != fixture["mutation_raw"]:
+            raise RuntimeError("Failed-bootstrap retained mutation evidence differs.")
+        expected_standalone = {"ssl"} if fixture["ssl_present"] else set()
+        if set(path.name for path in standalone.iterdir()) != expected_standalone:
+            raise RuntimeError("Failed-bootstrap clean standalone inventory differs.")
+        if fixture["ssl_present"] and (standalone / "ssl/retained.bin").read_bytes() != b"ssl-retained":
+            raise RuntimeError("Failed-bootstrap SSL bytes were not retained exactly.")
+        if stat.S_IMODE(quarantine.stat().st_mode) != 0o700 or quarantine.stat().st_uid != 0:
+            raise RuntimeError("Failed-bootstrap quarantine ownership differs.")
+        expected_quarantine = {"postgres_data", "redis_data", "uploads", "log", "tmp"}
+        if set(path.name for path in quarantine.iterdir()) != expected_quarantine:
+            raise RuntimeError("Failed-bootstrap retained runtime inventory differs.")
+        for name in expected_quarantine:
+            if (quarantine / name / "retained.bin").read_bytes() != (name + "-retained").encode("ascii"):
+                raise RuntimeError("Failed-bootstrap retained runtime bytes differ.")
+
+    for anchor in crash_anchors:
+        with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-") as directory:
+            fixture = new_fixture(directory)
+            interrupted = interrupt_after(transaction, anchor)
+            crashed = run_transaction(interrupted, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError("Failed-bootstrap crash-window fixture did not stop categorically.")
+            resumed = run_transaction(transaction, fixture)
+            if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                raise RuntimeError("Failed-bootstrap exact pending transaction did not resume.")
+            verify_terminal(fixture)
+            repeated = run_transaction(transaction, fixture)
+            if repeated.returncode != 0 or repeated.stdout or repeated.stderr:
+                raise RuntimeError("Failed-bootstrap terminal transaction is not idempotent.")
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-no-ssl-") as directory:
+        fixture = new_fixture(directory, ssl_present=False)
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap no-SSL transaction did not complete.")
+        verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-ambiguous-") as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        if run_transaction(armed, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap ambiguity fixture could not arm its journal.")
+        quarantine = fixture["quarantine"]
+        quarantine.parent.mkdir(mode=0o700, exist_ok=True)
+        quarantine.mkdir(mode=0o700)
+        rejected = run_transaction(transaction, fixture)
+        if rejected.returncode == 0 or not fixture["mutation"].is_file() or not fixture["standalone"].is_dir():
+            raise RuntimeError("Failed-bootstrap ambiguous runtime state was accepted or changed.")
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-duplicate-") as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        if run_transaction(armed, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap duplicate-key fixture could not arm its journal.")
+        pending = fixture["pending"]
+        pending_text = pending.read_text(encoding="utf-8")
+        duplicate = pending_text.replace(
+            '"currentControlCommit":',
+            '"currentControlCommit":"hostile","currentControlCommit":',
+            1,
+        )
+        pending.write_text(duplicate, encoding="utf-8", newline="\n")
+        pending.chmod(0o600)
+        rejected = run_transaction(transaction, fixture)
+        if rejected.returncode == 0 or not fixture["mutation"].is_file() or not fixture["standalone"].is_dir():
+            raise RuntimeError("Failed-bootstrap duplicate pending identity was accepted or changed.")
+
+
 def main() -> int:
     test_renderer()
     test_opensearch_filter_contract()
@@ -9967,6 +10275,7 @@ def main() -> int:
     test_disposable_restore_command_diagnostics()
     test_disposable_nginx_fixture_final_command_contract()
     test_effective_allow_users_parser_contract()
+    test_failed_bootstrap_quarantine_contract()
     print("Configuration and theme hostile fixtures passed.")
     return 0
 

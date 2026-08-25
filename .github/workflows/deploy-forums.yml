@@ -108,7 +108,8 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
           printf '%s\n' "$DEPLOY_KNOWN_HOST" > "$known_hosts"
           chmod 0600 "$key" "$known_hosts"
-          ssh -T -i "$key" -o BatchMode=yes -o ClearAllForwardings=yes -o IdentitiesOnly=yes -o RequestTTY=no -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" -- \
+          ssh_options=(-T -i "$key" -o BatchMode=yes -o ClearAllForwardings=yes -o IdentitiesOnly=yes -o RequestTTY=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o TCPKeepAlive=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts")
+          ssh "${ssh_options[@]}" -- \
             "${DEPLOY_USER}@${DEPLOY_HOST}" "receive ${RELEASE_COMMIT} ${ARCHIVE_DIGEST} ${ARCHIVE_SIZE}" <"$ARCHIVE"
-          ssh -T -i "$key" -o BatchMode=yes -o ClearAllForwardings=yes -o IdentitiesOnly=yes -o RequestTTY=no -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts" -- \
+          ssh "${ssh_options[@]}" -- \
             "${DEPLOY_USER}@${DEPLOY_HOST}" "deploy ${RELEASE_COMMIT} ${ARCHIVE_DIGEST} ${ARCHIVE_SIZE} ${MODE}"

@@ -552,6 +552,7 @@ ALLOWED_FILES = frozenset(
     "scripts/prepare-media-certificate.sh",
     "scripts/probe-website-forums-producer.py",
     "scripts/publish-disaster-recovery-evidence.rb",
+    "scripts/quarantine-failed-bootstrap.sh",
     "scripts/reconcile-acme-dns.py",
     "scripts/render-app-config.py",
     "scripts/render-branding-email.rb",
@@ -617,7 +618,7 @@ ALLOWED_FILES = frozenset(
 MAX_FILE_BYTES = 1024 * 1024
 JSON_SHAPE_SHA256 = {
     "config/docker-daemon-policy.json": "b463d5412575e0b75c225ade0cbc4bffbf61633eeeea956a6621729859e60113",
-    "config/host-control-manifest.v1.json": "cec0e13f9c88dc97ec16c7a9514843ffadd04226f3d908a0dfb487e835a13ecd",
+    "config/host-control-manifest.v1.json": "a3a1f8a8c55afaf4e88774a07e7bdc7414976fbd77390da43b4077229a8e53f0",
     "config/media-certificate.runtime.json.example": "6c5764ec4d954960987f91a8812b8c1fd805cda280bf9c236b500b4aeacf190f",
     "config/runtime.json.example": "5ab0c927fd6c0a85c45b605d2b22a6203a216e823ff61f45e22efc37e05b1238",
     "docs/operations/activation.v1.json": "50fcd14b2495d5f88582652f284d0a6e278fde9d428e983dfb12879a1ff13d3e",
@@ -1367,6 +1368,11 @@ def validate_inventory_paths(
     return normalized
 
 
+def validate_tracked_entry_mode(mode: str, relative: str) -> None:
+    if mode != "100644":
+        fail(f"Tracked repository entry differs from the exact non-executable source boundary: {relative}")
+
+
 def enumerate_repository_files() -> list[str]:
     if ARCHIVE_MODE:
         allowed_directories = {
@@ -1438,8 +1444,7 @@ def enumerate_repository_files() -> list[str]:
         if match is None:
             fail("Tracked repository metadata is malformed or contains a conflict stage.")
         mode, relative = match.groups()
-        if mode not in {"100644", "100755"}:
-            fail(f"Tracked symlink, submodule, or special entry is forbidden: {relative}")
+        validate_tracked_entry_mode(mode, relative)
     return inventory
 
 
@@ -4513,17 +4518,26 @@ def validate_secrets_and_workflows() -> None:
             '[[ "$(git rev-parse HEAD)" == "$RELEASE_COMMIT" ]]',
             '[[ "$(git rev-parse refs/remotes/origin/main)" == "$RELEASE_COMMIT" ]]',
             "persist-credentials: false",
-            "ssh -T",
+            'ssh_options=(-T -i "$key" -o BatchMode=yes -o ClearAllForwardings=yes -o IdentitiesOnly=yes -o RequestTTY=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o TCPKeepAlive=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known_hosts")',
             "BatchMode=yes",
             "ClearAllForwardings=yes",
             "IdentitiesOnly=yes",
             "RequestTTY=no",
+            "ServerAliveInterval=30",
+            "ServerAliveCountMax=10",
+            "TCPKeepAlive=yes",
             "StrictHostKeyChecking=yes",
             '"receive ${RELEASE_COMMIT} ${ARCHIVE_DIGEST} ${ARCHIVE_SIZE}"',
             '"deploy ${RELEASE_COMMIT} ${ARCHIVE_DIGEST} ${ARCHIVE_SIZE} ${MODE}"',
         ],
         "protected deploy workflow",
     )
+    if (
+        deploy_workflow.count("ssh_options=(") != 1
+        or deploy_workflow.count('ssh "${ssh_options[@]}" --') != 2
+        or re.search(r"(?m)^\s*ssh\s+-T\b", deploy_workflow)
+    ):
+        fail("Protected deploy workflow does not share one exact keepalive transport tuple.")
     if re.search(r"(?m)\b(?:scp|sftp|sudo)\b|/usr/local/sbin/mochirii-forums-", deploy_workflow):
         fail("Protected deploy workflow bypasses the forced-command SSH boundary.")
 
@@ -5731,6 +5745,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     host_verify = read("scripts/verify-host.sh")
     deployment_checkout = read("scripts/verify-discourse-docker-checkout.sh")
     control_upgrade = read("scripts/upgrade-host-control.sh")
+    failed_bootstrap_quarantine = read("scripts/quarantine-failed-bootstrap.sh")
     control_evidence = read("scripts/host-control-evidence.py")
     operation_lock = read("scripts/host-operation-lock.py")
     operation_lock_fixture = read("scripts/test-host-operation-lock.py")
@@ -5825,6 +5840,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "primary,media": (
             "scripts/install-host-control.sh",
             "scripts/install-media-certificate-renewal.sh",
+            "scripts/quarantine-failed-bootstrap.sh",
             "scripts/upgrade-host-control.sh",
         ),
     }
@@ -5844,7 +5860,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             )
             if "--locks media,primary" in source:
                 fail(f"{relative} can acquire the media lock before the primary lock.")
-    if len(lock_sources) != 13:
+    if len(lock_sources) != 14:
         fail("The complete primary/media lock-consumer inventory differs.")
     retired_lock_paths = (
         "/run/lock/mochirii-forums.lock",
@@ -6008,6 +6024,10 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "exact mode-`0700` defect",
             "syncs the directory and its parent",
             "socket-activation recovery branch does not perform this repair",
+            "Both transfer sessions use OpenSSH protocol keepalives every 30 seconds",
+            "direct-parent journal remains `runtime-contained`",
+            "mochirii-forums-quarantine-failed-bootstrap",
+            "Crash recovery accepts only the same pending tuple",
         ],
         "host-control changed-successor recovery documentation",
     )
@@ -6018,6 +6038,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "An orphan hosted-storage",
             "cleanup journal is never mutation authority.",
             "same-version/no-target-migration rollback",
+            "bootstrap-only exception",
+            "complete failed standalone tree",
+            "A crash resumes only through its own exact",
         ],
         "deployment mutation recovery documentation",
     )
@@ -6350,6 +6373,112 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ],
         "transactional host-control upgrade",
     )
+    require_text(
+        control_upgrade,
+        [
+            "validate_failed_bootstrap_upgrade_exception() {",
+            'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
+            'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
+            "deployment_recovery_upgrade=false",
+            'validate_failed_bootstrap_upgrade_exception "${expected_commit}"',
+            'terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
+            '[[ ${terminal_recovery_passed} != true ]] || ! bash "${candidate}/scripts/verify-host-security.sh"',
+        ],
+        "failed-bootstrap direct-successor host-control exception",
+    )
+    require_text(
+        failed_bootstrap_quarantine,
+        [
+            'readonly pending_journal="${state_root}/failed-bootstrap-quarantine.pending.json"',
+            'readonly recovery_root="${shared_root}/.mochirii-forums-failed-bootstrap"',
+            'expected_paths=(',
+            ".github/workflows/deploy-forums.yml",
+            "config/host-control-manifest.v1.json",
+            "docs/operations/DEPLOYMENT.md",
+            "docs/operations/RECOVERY.md",
+            "scripts/quarantine-failed-bootstrap.sh",
+            "scripts/test-contracts.py",
+            "scripts/upgrade-host-control.sh",
+            "scripts/validate-repository.py",
+            'object_pairs_hook=reject_duplicate',
+            'metadata.st_uid != 0',
+            'metadata.st_gid != 0',
+            'metadata.st_nlink != 1',
+            "list(itertools.islice(evidence.iterdir(), 4097))",
+            "validate_quarantine_environment() {",
+            "read_quarantine_identity() {",
+            'if [[ ${1:-} == --upgrade-preflight ]]',
+            "QUARANTINE FAILED MOCHIRII FORUMS BOOTSTRAP",
+            "assert-held --locks primary,media",
+            "run --locks primary,media",
+            "# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
+            'phase_order = {"prepared": 0, "runtime-quarantined": 1, "clean-boundary": 2, "authority-retired": 3}',
+            "decode_canonical(pending, \"failed-bootstrap pending journal\")",
+            "def exact_inventory(path, maximum, label):",
+            "list(itertools.islice(path.iterdir(), maximum + 1))",
+            "decode_canonical(mutation, \"deployment mutation journal\", mutation_sha)",
+            "os.rename(standalone, quarantine)",
+            "os.rename(old_ssl, new_ssl)",
+            "os.rename(mutation, mutation_evidence)",
+            'expected_inventory = {"ssl"} if state["sslPresent"] else set()',
+            'validate_state(state, {"prepared"})',
+            "validate_state(state, {phase})",
+            'validate_state(terminal_document, {"complete"}, terminal_state=True)',
+            "publish(terminal, terminal_document, True)",
+            "pending.unlink()",
+            "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
+            'verify-host-security.sh" "${current_commit}"',
+            "mochirii-forums-media-certificate-renew.timer",
+            '[[ ! -e ${deployment_journal} && ! -L ${deployment_journal} ]]',
+        ],
+        "failed-bootstrap reversible quarantine transaction",
+    )
+    if any(
+        value in failed_bootstrap_quarantine
+        for value in (
+            "shutil.rmtree",
+            "rm -rf",
+            "find ${quarantine} -delete",
+            "mutation.unlink()",
+            "mutation_evidence.unlink()",
+            "quarantine.rmdir()",
+        )
+    ):
+        fail("Failed-bootstrap quarantine gained a destructive retained-evidence path.")
+    if "{entry.name for entry in standalone.iterdir()}" in failed_bootstrap_quarantine:
+        fail("Failed-bootstrap clean-boundary inventory is not bounded.")
+    if (
+        failed_bootstrap_quarantine.count("# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION") != 1
+        or failed_bootstrap_quarantine.count("# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION") != 1
+        or failed_bootstrap_quarantine.count("pending.unlink()") != 2
+    ):
+        fail("Failed-bootstrap quarantine transaction or exact journal retirement count differs.")
+    quarantine_order = tuple(
+        failed_bootstrap_quarantine.index(value)
+        for value in (
+            "# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
+            "publish(pending, state, True)",
+            "os.rename(standalone, quarantine)",
+            "standalone.mkdir(mode=state[\"standaloneMode\"])",
+            "os.rename(mutation, mutation_evidence)",
+            "publish(terminal, terminal_document, True)",
+            "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
+        )
+    )
+    if quarantine_order != tuple(sorted(quarantine_order)):
+        fail("Failed-bootstrap quarantine can retire authority before durable runtime preservation.")
+    upgrade_exception_gate = control_upgrade.index(
+        'if [[ -e ${state_root}/deployment-mutation.json || -L ${state_root}/deployment-mutation.json ]]'
+    )
+    upgrade_first_mutation = control_upgrade.index('install -d -m 0755 -o root -g root /var/lib/mochirii', upgrade_exception_gate)
+    upgrade_seal = control_upgrade.index('seal_control_state upgrade "${expected_commit}"')
+    upgrade_recovery_readback = control_upgrade.index('terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh"', upgrade_seal)
+    upgrade_terminal_verifier = control_upgrade.index(
+        'bash "${candidate}/scripts/verify-host-security.sh" "${expected_commit}" "${candidate}" --upgrade-transaction',
+        upgrade_recovery_readback,
+    )
+    if not upgrade_exception_gate < upgrade_first_mutation < upgrade_seal < upgrade_recovery_readback < upgrade_terminal_verifier:
+        fail("Failed-bootstrap host-control exception can bypass pre-mutation or terminal verification.")
     candidate_validation = control_upgrade.index(
         'bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'
     )
@@ -6559,6 +6688,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "/usr/local/sbin/mochirii-forums-finalize-authentication",
         "/usr/local/sbin/mochirii-forums-finalize-member-rollout",
         "/usr/local/sbin/mochirii-forums-historical-disaster-recovery",
+        "/usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap",
         "/usr/local/sbin/mochirii-forums-restore",
         "/usr/local/sbin/mochirii-forums-stop-pending-activation",
         "/usr/local/sbin/mochirii-forums-upgrade-host-control",
