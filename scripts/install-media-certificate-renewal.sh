@@ -100,6 +100,7 @@ control_pointer="/var/lib/mochirii/forums/current-host-control.json"
 control_evidence_root="/var/lib/mochirii/forums/evidence"
 control_evidence_helper="/usr/local/libexec/mochirii-forums/host-control-evidence.py"
 host_security_verifier="/usr/local/libexec/mochirii-forums/verify-host-security.sh"
+prepared_runtime="/etc/mochirii/forums-media-certificate.json"
 prepared_certbot="/etc/letsencrypt/mochirii-media.ini"
 prepared_dns="/etc/letsencrypt/mochirii-cloudflare.ini"
 lineage="/etc/letsencrypt/live/media-forums.mochirii.com"
@@ -112,6 +113,8 @@ validate_prepared_input() {
   [[ "$(stat -c '%U:%G %a' "${prepared}")" == "root:root 600" ]] || return 1
   cmp -s -- "${source}" "${prepared}"
 }
+[[ ${runtime_source} == "${prepared_runtime}" ]] || fail "Certificate runtime input must be the exact prepared runtime path."
+validate_prepared_input "${runtime_source}" "${prepared_runtime}" || fail "Prepared certificate runtime differs from the exact installation input."
 validate_prepared_input "${certbot_source}" "${prepared_certbot}" || fail "Prepared Certbot configuration differs from the exact installation input."
 validate_prepared_input "${dns_source}" "${prepared_dns}" || fail "Prepared DNS credential differs from the exact installation input."
 
@@ -121,7 +124,6 @@ install_targets=(
   /usr/local/libexec/mochirii-forums/rotate-media-certificate.py
   /usr/local/sbin/mochirii-forums-rotate-media-certificate
   /usr/local/sbin/mochirii-forums-renew-media-certificate
-  /etc/mochirii/forums-media-certificate.json
   /etc/systemd/system/mochirii-forums-media-certificate-renew.service
   /etc/systemd/system/mochirii-forums-media-certificate-renew.timer
 )
@@ -541,7 +543,6 @@ install -m 0755 -o root -g root "${script_root}/reconcile-acme-dns.py" /usr/loca
 install -m 0755 -o root -g root "${script_root}/rotate-media-certificate.py" /usr/local/libexec/mochirii-forums/rotate-media-certificate.py
 install -m 0755 -o root -g root "${script_root}/rotate-media-certificate.sh" /usr/local/sbin/mochirii-forums-rotate-media-certificate
 install -m 0755 -o root -g root "${script_root}/run-media-certificate-renewal.sh" /usr/local/sbin/mochirii-forums-renew-media-certificate
-install -m 0600 -o root -g root "${runtime_source}" /etc/mochirii/forums-media-certificate.json
 install -m 0644 -o root -g root "${repository_root}/config/mochirii-forums-media-certificate-renew.service" /etc/systemd/system/mochirii-forums-media-certificate-renew.service
 install -m 0644 -o root -g root "${repository_root}/config/mochirii-forums-media-certificate-renew.timer" /etc/systemd/system/mochirii-forums-media-certificate-renew.timer
 media_run_bounded install-daemon-reload 30 systemctl daemon-reload || fail "Certificate unit daemon reload failed within its bounded operation."
