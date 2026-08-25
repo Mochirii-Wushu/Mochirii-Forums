@@ -590,6 +590,19 @@ the same root-only evidence-preserving quarantine transaction, restores only
 the exact SSL authority, and requires the new clean bootstrap to target the
 then-current canonical main.
 
+A third exact bootstrap-only exception covers the proved ACME installed-byte
+drift. Failed release `f564d62a82adf79b8f012a25949826e2b447681d`, reviewed
+repair `85e12f1ce27e1462e7c82e59e1dbf01c190327b9`, and one canonical-main
+recovery child must form an exact sole-parent chain. The cumulative changed
+paths from the failed release are only
+`config/immutable-letsencrypt.fragment.yml`,
+`docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/upgrade-host-control.sh`, and `scripts/validate-repository.py`.
+Selection by exact failed commit keeps this lineage separate from both earlier
+exceptions. It uses the same root-only, evidence-preserving quarantine and
+requires the next clean bootstrap to target the then-current canonical main.
+
 ## Primary references
 
 - [Official Discourse backup and restore guidance](https://meta.discourse.org/t/create-download-and-restore-a-backup-of-your-discourse-database/122710)

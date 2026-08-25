@@ -9225,9 +9225,12 @@ reviewed_legacy_failed_bootstrap_commit=b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f
 reviewed_failed_bootstrap_recovery_commit=1d741eb75d08a226984935aa18e989ee324a0773
 reviewed_active_swap_failed_bootstrap_commit=26e793aada31faeaa8b56308625288164430647c
 reviewed_active_swap_recovery_commit=6e2f1b5c831b992c3222c015836fa180cd591e3e
+reviewed_acme_failed_bootstrap_commit=f564d62a82adf79b8f012a25949826e2b447681d
+reviewed_acme_recovery_commit=85e12f1ce27e1462e7c82e59e1dbf01c190327b9
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
+  acme) pending="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
   unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) return 84 ;;
 esac
@@ -9249,26 +9252,39 @@ git() {{
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$pending" || printf '%s %s %s\n' "$reviewed" "$pending" unrelated ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{BINDER_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$requested" || printf '%s\trefs/heads/main\n' unrelated ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{pending}} ${{requested}}")
-      if [[ ${{BINDER_LINEAGE:-legacy}} == active ]]; then
-        printf '%s\n' \
-          docs/operations/DEPLOYMENT.md \
-          docs/operations/RECOVERY.md \
-          scripts/quarantine-failed-bootstrap.sh \
-          scripts/test-contracts.py \
-          scripts/upgrade-host-control.sh \
-          scripts/validate-repository.py
-        [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
-      else
-        printf '%s\n' \
-          .github/workflows/deploy-forums.yml \
-          config/host-control-manifest.v1.json \
-          docs/operations/DEPLOYMENT.md \
-          docs/operations/RECOVERY.md \
-          scripts/quarantine-failed-bootstrap.sh \
-          scripts/test-contracts.py \
-          scripts/upgrade-host-control.sh
-        [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
-      fi
+      case "${{BINDER_LINEAGE:-legacy}}" in
+        active)
+          printf '%s\n' \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh \
+            scripts/validate-repository.py
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+          ;;
+        acme)
+          printf '%s\n' \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
+        *)
+          printf '%s\n' \
+            .github/workflows/deploy-forums.yml \
+            config/host-control-manifest.v1.json \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
+      esac
       ;;
     *) return 82 ;;
   esac
@@ -9286,7 +9302,7 @@ bind_invoked_canonical_successor "$requested" "$pending"
             )
             binder_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active")
+                for lineage in ("legacy", "active", "acme")
                 for mutation, should_pass in mutation_cases
             ]
             binder_cases.append(("unknown", "none", False))
@@ -10215,6 +10231,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
         'readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"',
         'readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"',
+        'readonly reviewed_acme_failed_bootstrap_commit="f564d62a82adf79b8f012a25949826e2b447681d"',
+        'readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
         'rev-parse --verify "${reviewed_recovery_commit}^1"',
@@ -10261,9 +10279,19 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "scripts/validate-repository.py",
         "scripts/verify-host.sh",
     )
+    acme_expected_paths = (
+        "config/immutable-letsencrypt.fragment.yml",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
         ("active_swap_expected_paths", active_swap_expected_paths),
+        ("acme_expected_paths", acme_expected_paths),
     ):
         marker = f"local -ar {name}=("
         block_start = source.index(marker)
@@ -10289,6 +10317,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
         'readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"',
         'readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"',
+        'readonly reviewed_acme_failed_bootstrap_commit="f564d62a82adf79b8f012a25949826e2b447681d"',
+        'readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -10360,9 +10390,12 @@ reviewed_legacy_failed_bootstrap_commit=b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f
 reviewed_failed_bootstrap_recovery_commit=1d741eb75d08a226984935aa18e989ee324a0773
 reviewed_active_swap_failed_bootstrap_commit=26e793aada31faeaa8b56308625288164430647c
 reviewed_active_swap_recovery_commit=6e2f1b5c831b992c3222c015836fa180cd591e3e
+reviewed_acme_failed_bootstrap_commit=f564d62a82adf79b8f012a25949826e2b447681d
+reviewed_acme_recovery_commit=85e12f1ce27e1462e7c82e59e1dbf01c190327b9
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
+  acme) failed="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
   unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) exit 84 ;;
 esac
@@ -10382,26 +10415,39 @@ git() {{
     "-C ${{source_root}} remote get-url origin") [[ ${{LINEAGE_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{LINEAGE_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$current" || printf '%s\trefs/heads/main\n' unrelated ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{failed}} ${{current}}")
-      if [[ ${{LINEAGE_KIND:-legacy}} == active ]]; then
-        printf '%s\n' \
-          docs/operations/DEPLOYMENT.md \
-          docs/operations/RECOVERY.md \
-          scripts/quarantine-failed-bootstrap.sh \
-          scripts/test-contracts.py \
-          scripts/upgrade-host-control.sh \
-          scripts/validate-repository.py
-        [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
-      else
-        printf '%s\n' \
-          .github/workflows/deploy-forums.yml \
-          config/host-control-manifest.v1.json \
-          docs/operations/DEPLOYMENT.md \
-          docs/operations/RECOVERY.md \
-          scripts/quarantine-failed-bootstrap.sh \
-          scripts/test-contracts.py \
-          scripts/upgrade-host-control.sh
-        [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
-      fi
+      case "${{LINEAGE_KIND:-legacy}}" in
+        active)
+          printf '%s\n' \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh \
+            scripts/validate-repository.py
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+          ;;
+        acme)
+          printf '%s\n' \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
+        *)
+          printf '%s\n' \
+            .github/workflows/deploy-forums.yml \
+            config/host-control-manifest.v1.json \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
+      esac
       ;;
     *) return 82 ;;
   esac
@@ -10418,7 +10464,7 @@ validate_source_lineage "$current" "$failed"
             )
             lineage_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active")
+                for lineage in ("legacy", "active", "acme")
                 for mutation, should_pass in mutation_cases
             ]
             lineage_cases.append(("unknown", "none", False))

@@ -674,6 +674,22 @@ publication, retained-journal, root-owned-state, and unrelated-journal
 exclusion rules apply, and the upgrade must leave the failed journal and
 runtime bytes unchanged.
 
+The primary-certificate bootstrap incident has a third, non-interchangeable
+two-commit recovery chain. Failed bootstrap commit
+`f564d62a82adf79b8f012a25949826e2b447681d` is the sole parent of reviewed
+ACME installed-byte repair commit
+`85e12f1ce27e1462e7c82e59e1dbf01c190327b9`; the recovery source must be one
+exact sole-parent child of that repair and the current canonical `main`. Its
+cumulative diff from the failed release is exactly
+`config/immutable-letsencrypt.fragment.yml`,
+`docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/upgrade-host-control.sh`, and `scripts/validate-repository.py`.
+Selection remains by exact failed commit, so this exception cannot substitute
+for either earlier lineage or authorize another path set. The same retained
+journal/runtime, stopped/absent publication, root-owned-state, and unrelated-
+journal exclusion rules apply.
+
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh
