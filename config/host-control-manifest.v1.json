@@ -109,6 +109,11 @@
     },
     {
       "mode": "0755",
+      "source": "scripts/quarantine-failed-bootstrap.sh",
+      "target": "/usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap"
+    },
+    {
+      "mode": "0755",
       "source": "scripts/host-restore-validate.sh",
       "target": "/usr/local/sbin/mochirii-forums-restore"
     },

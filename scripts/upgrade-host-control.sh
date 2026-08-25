@@ -174,6 +174,20 @@ bind_invoked_canonical_successor() {
   [[ ${remote_output} == "${requested_commit}"$'\trefs/heads/main' ]]
 }
 
+validate_failed_bootstrap_upgrade_exception() {
+  local requested_commit="$1" invocation_script invocation_source_root output
+  local -a state
+  [[ -f $0 && ! -L $0 ]] || return 1
+  invocation_script="$(realpath -e -- "$0")" || return 1
+  invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
+  [[ -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]] || return 1
+  output="$(bash "${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight "${requested_commit}" 2>/dev/null)" || return 1
+  (( ${#output} <= 64 )) || return 1
+  readarray -t state <<<"${output}"
+  [[ ${#state[@]} -eq 1 && ${state[0]} =~ ^[0-9a-f]{40}$ ]] || return 1
+  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"
+}
+
 publish_ssh_generator_mask() {
   local staging
   if [[ -e ${ssh_generator_parent} || -L ${ssh_generator_parent} ]]; then
@@ -1090,7 +1104,11 @@ else
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
   exec python3 -B "${lock_helper}" run --locks primary,media -- /bin/bash "$0" "$@"
 fi
-[[ ! -e ${state_root}/deployment-mutation.json && ! -L ${state_root}/deployment-mutation.json ]] || fail "Host-control upgrade refuses an active deployment mutation."
+deployment_recovery_upgrade=false
+if [[ -e ${state_root}/deployment-mutation.json || -L ${state_root}/deployment-mutation.json ]]; then
+  validate_failed_bootstrap_upgrade_exception "${expected_commit}" || fail "Host-control upgrade refuses this active deployment mutation."
+  deployment_recovery_upgrade=true
+fi
 trap handle_signal HUP INT TERM
 
 install -d -m 0755 -o root -g root /var/lib/mochirii "${state_root}"
@@ -1341,7 +1359,12 @@ post_install_readback "${candidate}" "${certificate_installed}" "${timer_enabled
   fail "Host-control post-install readback failed; the exact prior controls were restored."
 }
 seal_control_state upgrade "${expected_commit}" "${candidate}" "${previous_evidence_sha}" || fail "Host-control evidence commit failed; the durable journal was retained."
-if ! bash "${candidate}/scripts/verify-host-security.sh" "${expected_commit}" "${candidate}" --upgrade-transaction >/dev/null 2>&1; then
+terminal_recovery_passed=true
+if [[ ${deployment_recovery_upgrade} == true ]]; then
+  terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight "${expected_commit}" 2>/dev/null)" || terminal_recovery_passed=false
+  [[ ${#terminal_recovery_output} -le 64 && ${terminal_recovery_output} =~ ^[0-9a-f]{40}$ ]] || terminal_recovery_passed=false
+fi
+if [[ ${terminal_recovery_passed} != true ]] || ! bash "${candidate}/scripts/verify-host-security.sh" "${expected_commit}" "${candidate}" --upgrade-transaction >/dev/null 2>&1; then
   rollback_transaction "${transaction}" || fail "Upgraded host controls failed terminal verification and exact rollback is blocked."
   post_install_readback "${previous_source}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" || fail "Terminal host-control rollback service readback failed."
   verify_previous_host_controls "${previous_commit}" "${previous_source}" "${candidate}" "${ssh_predecessor}" || fail "Terminal host-control rollback verification failed."
