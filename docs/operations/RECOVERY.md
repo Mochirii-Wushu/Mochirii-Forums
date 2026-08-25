@@ -575,6 +575,21 @@ pending journal. The next bootstrap must be exact current `main` with the
 reviewed transport repair; the failed predecessor bytes are preserved for
 rollback review and are never relabeled as the new release.
 
+A second exact bootstrap-only exception covers the proved active-swap
+usable-capacity verifier defect. Failed release
+`26e793aada31faeaa8b56308625288164430647c`, reviewed repair
+`6e2f1b5c831b992c3222c015836fa180cd591e3e`, and one canonical-main recovery
+child must form an exact sole-parent chain. The cumulative changed paths from
+the failed release are only `docs/operations/DEPLOYMENT.md`,
+`docs/operations/RECOVERY.md`, `scripts/quarantine-failed-bootstrap.sh`,
+`scripts/test-contracts.py`, `scripts/upgrade-host-control.sh`,
+`scripts/validate-repository.py`, and `scripts/verify-host.sh`. Runtime
+selection is by the exact failed commit, so this chain cannot substitute for
+the historical transport exception or authorize an unreviewed failure. It uses
+the same root-only evidence-preserving quarantine transaction, restores only
+the exact SSL authority, and requires the new clean bootstrap to target the
+then-current canonical main.
+
 ## Primary references
 
 - [Official Discourse backup and restore guidance](https://meta.discourse.org/t/create-download-and-restore-a-backup-of-your-discourse-database/122710)
