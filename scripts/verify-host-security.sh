@@ -35,7 +35,12 @@ operator_proof="${state_root}/operator-ssh-proved"
 upgrades_root="${state_root}/control-upgrades"
 pending_upgrade="${state_root}/control-upgrade.pending.json"
 lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py
+libexec_root=/usr/local/libexec/mochirii-forums
+deploy_dispatcher="${libexec_root}/ssh-deploy-dispatch.py"
 
+[[ -d ${libexec_root} && ! -L ${libexec_root} && "$(stat -c '%U:%G %a' "${libexec_root}")" == "root:root 755" ]] || fail "Shared host-control executable directory must remain root:root mode 0755."
+[[ -x ${deploy_dispatcher} && ! -L ${deploy_dispatcher} && "$(stat -c '%U:%G %a' "${deploy_dispatcher}")" == "root:root 755" ]] || fail "Deploy SSH dispatcher is absent or unsafe."
+sudo -u mochirii-forums-deploy test -x "${deploy_dispatcher}" || fail "Deploy principal cannot traverse the forced-command boundary."
 [[ -x ${lock_helper} && ! -L ${lock_helper} && "$(stat -c '%U:%G %a' "${lock_helper}")" == "root:root 755" ]] || fail "Installed host operation lock helper is unsafe."
 "${lock_helper}" verify-namespace --locks primary,media || fail "Host operation lock namespace is unsafe."
 

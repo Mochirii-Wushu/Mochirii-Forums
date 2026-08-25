@@ -197,6 +197,15 @@ Initial issuance/binding and recurring renewal are deliberately separate:
    ID, certificate outside the `mochirii-media-forums-` ownership prefix, or a
    served fingerprint that differs from the protected lineage.
 
+The certificate installer keeps the root-only configuration and log
+directories at mode `0700`, but `/usr/local/libexec/mochirii-forums` is the
+shared executable traversal boundary and must remain a non-link, root-owned
+mode-`0755` directory. Installation and terminal host verification prove both
+that directory tuple and execution of the forced-command dispatcher by the
+unprivileged deploy principal. Never collapse the shared executable parent to
+the private-directory mode; an ownership, link, mode, or traversal mismatch
+fails closed.
+
 Run the installer only from the exact source whose manifest digest is already
 bound by `current-host-control.json`. It takes the primary host lock before the
 media lock through the installed no-follow helper. The helper accepts only its
