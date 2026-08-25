@@ -6,6 +6,17 @@ fail() {
   exit 1
 }
 
+active_swap_capacity_is_sufficient() {
+  [[ $# -eq 2 ]] || return 1
+  local active_bytes="$1"
+  local page_size="$2"
+  local -r nominal_bytes=2147483648
+  [[ ${active_bytes} =~ ^(0|[1-9][0-9]{0,11})$ ]] || return 1
+  [[ ${page_size} =~ ^[1-9][0-9]{3,5}$ ]] || return 1
+  (( page_size >= 4096 && page_size <= 65536 && (page_size & (page_size - 1)) == 0 )) || return 1
+  (( active_bytes >= nominal_bytes - page_size ))
+}
+
 [[ ${EUID} -eq 0 ]] || fail "Host verification must run as root."
 [[ $# -eq 2 || ( $# -eq 3 && ( $3 == --deployment-transaction || $3 == --deployment-prior-rollback || $3 == --restore-transaction ) ) ]] || fail "Usage: verify-host.sh EXPECTED_COMMIT EXPECTED_CONFIGURATION_SHA256 [--deployment-transaction|--deployment-prior-rollback|--restore-transaction]"
 expected_commit="$1"
@@ -820,7 +831,8 @@ timeout --signal=TERM --kill-after=10s 180s bash "${release_dir}/scripts/verify-
 memory_mib="$(awk '/MemTotal/ { print int($2 / 1024) }' /proc/meminfo)"
 [[ ${memory_mib} -ge 1900 && ${memory_mib} -le 2300 ]] || fail "Host memory is outside the reviewed 2 GiB class."
 swap_bytes="$(timeout --signal=TERM --kill-after=5s 15s swapon --show=SIZE --bytes --noheadings | awk '{ total += $1 } END { print total + 0 }')" || fail "Host swap readback failed or timed out."
-[[ ${swap_bytes} -ge 2147483648 ]] || fail "Host has less than 2 GiB active swap."
+page_size="$(timeout --signal=TERM --kill-after=5s 15s getconf PAGESIZE)" || fail "Host page-size readback failed or timed out."
+active_swap_capacity_is_sufficient "${swap_bytes}" "${page_size}" || fail "Host has less than the reviewed 2 GiB nominal swap capacity."
 
 [[ "$(timeout --signal=TERM --kill-after=5s 30s docker inspect --format '{{.State.Running}}' app)" == true ]] || fail "Application container is not running."
 [[ "$(timeout --signal=TERM --kill-after=5s 30s docker inspect --format '{{.State.Status}}' app)" == running ]] || fail "Application container state is not healthy-running."
