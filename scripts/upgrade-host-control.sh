@@ -6,6 +6,7 @@ export LC_ALL=C
 readonly canonical_repository="https://github.com/Mochirii-Wushu/Mochirii-Forums.git"
 readonly deployment_source_commit="ed9f680b0df1de28f062de1769d89d22b2644d1b"
 readonly deployment_source_tree="588498dffbea91592fd4e2f10166bc11c8fe7a61"
+readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -166,7 +167,10 @@ bind_invoked_canonical_successor() {
   (( ${#status_output} <= 262144 )) || return 1
   [[ -z ${status_output} ]] || return 1
   [[ "$(git -C "${invocation_source_root}" remote get-url origin 2>/dev/null)" == "${canonical_repository}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${requested_commit}" 2>/dev/null)" == "${requested_commit} ${reviewed_failed_bootstrap_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_failed_bootstrap_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_failed_bootstrap_recovery_commit}" 2>/dev/null)" == "${reviewed_failed_bootstrap_recovery_commit} ${pending_commit}" ]] || return 1
   remote_output="$(bounded 120s git -c credential.helper= -c core.askPass= \
     -c protocol.allow=never -c protocol.https.allow=always -c http.followRedirects=false \
     ls-remote --refs "${canonical_repository}" refs/heads/main 2>/dev/null)" || return 1
@@ -180,7 +184,7 @@ validate_failed_bootstrap_upgrade_exception() {
   [[ -f $0 && ! -L $0 ]] || return 1
   invocation_script="$(realpath -e -- "$0")" || return 1
   invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
-  [[ -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]] || return 1
+  [[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]] || return 1
   output="$(bash "${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight "${requested_commit}" 2>/dev/null)" || return 1
   (( ${#output} <= 64 )) || return 1
   readarray -t state <<<"${output}"

@@ -644,21 +644,25 @@ bounded replay or explicit disposal review; it never silently deletes shared
 data.
 
 If an exact bootstrap replay is prevented by a proved deployment-transport
-defect, one reviewed direct canonical successor may install only the bounded
+defect, one reviewed canonical recovery commit may install only the bounded
 transport repair and the governed failed-bootstrap quarantine control while the
-direct-parent journal remains `runtime-contained`. The host-control upgrader
-accepts that exception only when the journal is one canonical root-owned
-bootstrap tuple, the application and all publication pointers are absent, the
-app is stopped, PostgreSQL state is present, every unrelated operation journal
-is absent, and the successor changes exactly the reviewed workflow,
-host-control, quarantine, validation, and runbook paths. The upgrade must leave
-the mutation journal and failed runtime bytes unchanged.
+failed release journal remains `runtime-contained`. The source-mode correction
+is one exact sole-parent child of reviewed recovery commit
+`1d741eb75d08a226984935aa18e989ee324a0773`; that reviewed commit must itself
+have failed release `b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f` as its sole parent. The
+cumulative diff from the failed release must still contain exactly the reviewed
+workflow, host-control, quarantine, validation, and runbook paths. The
+host-control upgrader accepts that pinned two-commit exception only when the
+journal is one canonical root-owned bootstrap tuple, the application and all
+publication pointers are absent, the app is stopped, PostgreSQL state is
+present, and every unrelated operation journal is absent. The upgrade must
+leave the mutation journal and failed runtime bytes unchanged.
 
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh
 sudo /usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap \
-  <exact-current-main> <exact-failed-direct-parent> \
+  <exact-current-main> <exact-failed-journal-commit> \
   'QUARANTINE FAILED MOCHIRII FORUMS BOOTSTRAP'
 ```
 
