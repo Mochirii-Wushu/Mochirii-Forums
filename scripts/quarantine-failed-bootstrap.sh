@@ -639,9 +639,29 @@ if phase_order[state["phase"]] <= phase_order["prepared"]:
 if phase_order[state["phase"]] <= phase_order["runtime-quarantined"]:
     if not standalone.exists() and not standalone.is_symlink():
         standalone.mkdir(mode=state["standaloneMode"])
-        os.chown(standalone, state["standaloneUid"], state["standaloneGid"])
-        os.chmod(standalone, state["standaloneMode"])
-        fsync_directory(shared_root)
+    old_ssl = quarantine / "ssl"
+    new_ssl = standalone / "ssl"
+    partial_inventory = exact_inventory(standalone, 1, "clean standalone partial inventory")
+    old_ssl_exists = old_ssl.exists() or old_ssl.is_symlink()
+    new_ssl_exists = new_ssl.exists() or new_ssl.is_symlink()
+    if state["sslPresent"]:
+        if old_ssl_exists and not new_ssl_exists:
+            exact_directory(old_ssl, "quarantined SSL directory")
+            expected_partial_inventory = set()
+        elif not old_ssl_exists and new_ssl_exists:
+            exact_directory(new_ssl, "restored SSL directory")
+            expected_partial_inventory = {"ssl"}
+        else:
+            raise SystemExit("failed-bootstrap SSL recovery state is ambiguous")
+    else:
+        if old_ssl_exists or new_ssl_exists:
+            raise SystemExit("unexpected SSL directory appeared during failed-bootstrap quarantine")
+        expected_partial_inventory = set()
+    if partial_inventory != expected_partial_inventory:
+        raise SystemExit("clean standalone partial inventory differs")
+    os.chown(standalone, state["standaloneUid"], state["standaloneGid"])
+    os.chmod(standalone, state["standaloneMode"])
+    fsync_directory(shared_root)
     clean_metadata = exact_directory(standalone, "clean standalone root")
     if (
         clean_metadata.st_uid != state["standaloneUid"]
@@ -649,8 +669,6 @@ if phase_order[state["phase"]] <= phase_order["runtime-quarantined"]:
         or stat.S_IMODE(clean_metadata.st_mode) != state["standaloneMode"]
     ):
         raise SystemExit("clean standalone metadata differs")
-    old_ssl = quarantine / "ssl"
-    new_ssl = standalone / "ssl"
     if state["sslPresent"]:
         if (old_ssl.exists() or old_ssl.is_symlink()) and not (new_ssl.exists() or new_ssl.is_symlink()):
             exact_directory(old_ssl, "quarantined SSL directory")

@@ -10237,7 +10237,7 @@ validate_source_lineage "$current" "$failed"
                 sys.executable,
                 "-B",
                 "-c",
-                code,
+                "import os\nos.umask(0o077)\n" + code,
                 str(fixture["pending"]),
                 str(fixture["mutation"]),
                 str(fixture["evidence"]),
@@ -10308,6 +10308,11 @@ validate_source_lineage "$current" "$failed"
             crashed = run_transaction(interrupted, fixture)
             if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
                 raise RuntimeError("Failed-bootstrap crash-window fixture did not stop categorically.")
+            if (
+                anchor == 'standalone.mkdir(mode=state["standaloneMode"])'
+                and stat.S_IMODE(fixture["standalone"].stat().st_mode) != 0o700
+            ):
+                raise RuntimeError("Failed-bootstrap secure-umask crash fixture did not retain the partial mode.")
             resumed = run_transaction(transaction, fixture)
             if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
                 raise RuntimeError("Failed-bootstrap exact pending transaction did not resume.")
@@ -10315,6 +10320,26 @@ validate_source_lineage "$current" "$failed"
             repeated = run_transaction(transaction, fixture)
             if repeated.returncode != 0 or repeated.stdout or repeated.stderr:
                 raise RuntimeError("Failed-bootstrap terminal transaction is not idempotent.")
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-partial-inventory-") as directory:
+        fixture = new_fixture(directory)
+        interrupted = interrupt_after(transaction, 'standalone.mkdir(mode=state["standaloneMode"])')
+        crashed = run_transaction(interrupted, fixture)
+        standalone = fixture["standalone"]
+        if crashed.returncode != 86 or crashed.stdout or crashed.stderr or not standalone.is_dir():
+            raise RuntimeError("Failed-bootstrap partial-inventory fixture did not reach its exact crash window.")
+        partial_mode = stat.S_IMODE(standalone.stat().st_mode)
+        (standalone / "unexpected").mkdir()
+        rejected = run_transaction(transaction, fixture)
+        if (
+            rejected.returncode == 0
+            or not fixture["pending"].is_file()
+            or not fixture["mutation"].is_file()
+            or not fixture["quarantine"].is_dir()
+            or not (standalone / "unexpected").is_dir()
+            or stat.S_IMODE(standalone.stat().st_mode) != partial_mode
+        ):
+            raise RuntimeError("Failed-bootstrap unexpected partial inventory was accepted or changed.")
 
     with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-no-ssl-") as directory:
         fixture = new_fixture(directory, ssl_present=False)
