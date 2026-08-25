@@ -10,6 +10,8 @@ readonly reviewed_legacy_failed_bootstrap_commit="b2eb4edb17d72f49b6f979b19d9ee4
 readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"
 readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"
 readonly reviewed_active_swap_recovery_commit="6e2f1b5c831b992c3222c015836fa180cd591e3e"
+readonly reviewed_acme_failed_bootstrap_commit="f564d62a82adf79b8f012a25949826e2b447681d"
+readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -163,6 +165,9 @@ select_reviewed_failed_bootstrap_recovery_commit() {
     "${reviewed_active_swap_failed_bootstrap_commit}")
       printf '%s\n' "${reviewed_active_swap_recovery_commit}"
       ;;
+    "${reviewed_acme_failed_bootstrap_commit}")
+      printf '%s\n' "${reviewed_acme_recovery_commit}"
+      ;;
     *) return 1 ;;
   esac
 }
@@ -188,10 +193,20 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     scripts/validate-repository.py
     scripts/verify-host.sh
   )
+  local -ar acme_expected_paths=(
+    config/immutable-letsencrypt.fragment.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
   local -a actual_paths expected_paths
   case "${pending_commit}" in
     "${reviewed_legacy_failed_bootstrap_commit}") expected_paths=("${legacy_expected_paths[@]}") ;;
     "${reviewed_active_swap_failed_bootstrap_commit}") expected_paths=("${active_swap_expected_paths[@]}") ;;
+    "${reviewed_acme_failed_bootstrap_commit}") expected_paths=("${acme_expected_paths[@]}") ;;
     *) return 1 ;;
   esac
   mapfile -t actual_paths < <(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}") || return 1
