@@ -9697,12 +9697,15 @@ reviewed_acme_reload_privacy_failed_bootstrap_commit=fae3770f0817d05bbfd2520e965
 reviewed_acme_reload_privacy_recovery_commit=f51c2e8deaf39293c9b97f3aab797b882c3dc628
 reviewed_acme_reload_privacy_recovery_child_commit=591d96484369ae29a8fa4e61219b325997f4b679
 reviewed_acme_reload_privacy_launcher_child_commit=a71bbe8070ca6dadeff3c4966e81bd97fee83cf7
+reviewed_acme_webroot_failed_bootstrap_commit=9110568e09bda4d572eaf2c27a768b9c053048f9
+reviewed_acme_webroot_recovery_commit=bb891aa65ebe8470fa04cdd639185afdad7372f7
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
   acme) pending="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
   quarantine) pending="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
   reload_privacy) pending="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
+  webroot) pending="$reviewed_acme_webroot_failed_bootstrap_commit"; reviewed="$reviewed_acme_webroot_recovery_commit" ;;
   unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) return 84 ;;
 esac
@@ -9773,6 +9776,16 @@ git() {{
             scripts/validate-repository.py
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
           ;;
+        webroot)
+          printf '%s\n' \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -9802,7 +9815,7 @@ bind_invoked_canonical_successor "$requested" "$pending"
             )
             binder_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot")
                 for mutation, should_pass in mutation_cases
             ]
             binder_cases.extend(
@@ -10705,6 +10718,223 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     upgrader = (ROOT / "scripts/upgrade-host-control.sh").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/deploy-forums.yml").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "config/host-control-manifest.v1.json").read_text(encoding="utf-8"))
+    if (
+        hashlib.sha256(source.encode("utf-8")).hexdigest()
+        != "7a18ed6f5f522dcd090663f036d65b8af3d9b42e7745e68f191b578c0b1b5de1"
+        or hashlib.sha256(upgrader.encode("utf-8")).hexdigest()
+        != "96b27fb1f9f6e0ce45d4e5c1ab146aad3ddfe673793bd7c41a9fe38807902a2b"
+    ):
+        raise RuntimeError("Failed-bootstrap production control source seal differs.")
+
+    def exact_shell_function(script_source: str, name: str) -> str:
+        marker = f"{name}() {{"
+        definitions = list(
+            re.finditer(
+                rf"(?m)^[ \t]*(?:function[ \t]+)?{re.escape(name)}(?:[ \t]*\(\))?[ \t]*\{{",
+                script_source,
+            )
+        )
+        if len(definitions) != 1 or definitions[0].group(0) != marker:
+            raise RuntimeError(f"Shell function {name} is absent, duplicated, or noncanonical.")
+        start = definitions[0].start()
+        try:
+            end = script_source.index("\n}\n", start) + 3
+        except ValueError as error:
+            raise RuntimeError(f"Shell function {name} is unterminated.") from error
+        return script_source[start:end]
+
+    def require_exact_line(block: str, line: str, label: str) -> None:
+        if block.splitlines().count(line) != 1:
+            raise RuntimeError(f"{label} is absent, duplicated, or outside its live section.")
+
+    def assert_failed_bootstrap_runtime_bindings(
+        quarantine_source: str,
+        upgrade_source: str,
+    ) -> None:
+        lineage = exact_shell_function(quarantine_source, "validate_source_lineage")
+        state = exact_shell_function(quarantine_source, "validate_failed_bootstrap_state")
+        identity = exact_shell_function(quarantine_source, "read_quarantine_identity")
+        preflight_start = quarantine_source.index('if [[ ${1:-} == --upgrade-preflight ]]; then')
+        preflight_end = quarantine_source.index("\nfi\n\n[[ $# -eq 3 ]]", preflight_start) + 4
+        preflight = quarantine_source[preflight_start:preflight_end]
+        recovery_start = quarantine_source.index(
+            'if [[ -e ${pending_journal} || -L ${pending_journal} ]]; then',
+            preflight_end,
+        )
+        recovery_end = quarantine_source.index("\nfi\n[[ ${#preflight[@]}", recovery_start) + 3
+        recovery = quarantine_source[recovery_start:recovery_end]
+        if not lineage.startswith("validate_source_lineage() {\n"):
+            raise RuntimeError("Failed-bootstrap lineage definition is not the live canonical function.")
+        require_exact_line(
+            state,
+            '  validate_source_lineage "${current}" "${failed}" || return 1',
+            "Failed-bootstrap retained-state lineage call",
+        )
+        require_exact_line(
+            preflight,
+            '  readarray -t preflight < <(validate_failed_bootstrap_state "$2") || fail "Failed-bootstrap upgrade preflight rejected the retained state."',
+            "Failed-bootstrap upgrade-preflight state call",
+        )
+        require_exact_line(
+            recovery,
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs."',
+            "Failed-bootstrap pending-recovery lineage call",
+        )
+        require_exact_line(
+            recovery,
+            '  readarray -t preflight < <(validate_failed_bootstrap_state "${current_commit}") || fail "Failed-bootstrap quarantine rejected the retained state."',
+            "Failed-bootstrap active-journal state call",
+        )
+        require_exact_line(
+            recovery,
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs."',
+            "Failed-bootstrap terminal-recovery lineage call",
+        )
+
+        bind = exact_shell_function(upgrade_source, "bind_invoked_canonical_successor")
+        exception = exact_shell_function(upgrade_source, "validate_failed_bootstrap_upgrade_exception")
+        reconcile = exact_shell_function(upgrade_source, "reconcile_pending")
+        signal = exact_shell_function(upgrade_source, "handle_signal")
+        selector = exact_shell_function(upgrade_source, "select_reviewed_failed_bootstrap_recovery_commit")
+        path_validator = exact_shell_function(upgrade_source, "validate_reviewed_failed_bootstrap_successor_paths")
+        main_start = upgrade_source.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."')
+        main = upgrade_source[main_start:]
+        exact_section_sha256 = {
+            "quarantine-lineage": "5664cab82a15c6e1bebf567a16f0537347c9022b27718746b3393aeee1cfb4ce",
+            "quarantine-state": "df91f3b80c769445be74dde7ad48ddbc2fc7ac364178a1bfcea8a802e56a6b3f",
+            "quarantine-identity": "0fbfc024186b764aeda3f06972706fdc8e0a3158b9e0c2be19c8434c3c0b5ba2",
+            "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
+            "quarantine-recovery": "b376df77881d87ecfb32b1ccfa57b64c1cc9aad5bccd0f01084c9088c3582c59",
+            "upgrade-selector": "bc916459809376bf402e4637b607e1b7888ba12b1377ec792007dfe4556851cf",
+            "upgrade-path-validator": "fb0c43523264cf31afcc0d8122dc9500d43cab249aa7d82d6d68982f98a5a36e",
+            "upgrade-binder": "dae6ab03616bf9df78d91f869e49836dbb7e827b6737b7f7d9c6a57aa2a377c8",
+            "upgrade-exception": "6ea0d4ff36175b26333ce78608d1f12092da953a192170897c33340411f5dbe3",
+            "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
+            "upgrade-signal": "e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f",
+            "upgrade-main": "330c799924dc01eb499fe639ed9e4f99606f6b64dcba352c7d2de6a84bf56488",
+        }
+        exact_sections = {
+            "quarantine-lineage": lineage,
+            "quarantine-state": state,
+            "quarantine-identity": identity,
+            "quarantine-preflight": preflight,
+            "quarantine-recovery": recovery,
+            "upgrade-selector": selector,
+            "upgrade-path-validator": path_validator,
+            "upgrade-binder": bind,
+            "upgrade-exception": exception,
+            "upgrade-reconcile": reconcile,
+            "upgrade-signal": signal,
+            "upgrade-main": main,
+        }
+        for label, block in exact_sections.items():
+            if hashlib.sha256(block.encode("utf-8")).hexdigest() != exact_section_sha256[label]:
+                raise RuntimeError(f"{label} exact live source section differs.")
+        require_exact_line(
+            bind,
+            '  reviewed_recovery_commit="$(select_reviewed_failed_bootstrap_recovery_commit "${pending_commit}")" || return 1',
+            "Host-control reviewed-recovery selector call",
+        )
+        require_exact_line(
+            bind,
+            '  validate_reviewed_failed_bootstrap_successor_paths "${invocation_source_root}" "${requested_commit}" "${pending_commit}"',
+            "Host-control successor-path validator call",
+        )
+        require_exact_line(
+            exception,
+            '  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
+            "Host-control active-mutation successor binder call",
+        )
+        require_exact_line(
+            reconcile,
+            '    bind_invoked_canonical_successor "${requested_commit}" "${commit}" ||',
+            "Host-control pending-journal successor binder call",
+        )
+        require_exact_line(
+            signal,
+            '    reconcile_pending "${expected_commit:-invalid}" || true',
+            "Host-control signal recovery call",
+        )
+        require_exact_line(
+            main,
+            '  validate_failed_bootstrap_upgrade_exception "${expected_commit}" || fail "Host-control upgrade refuses this active deployment mutation."',
+            "Host-control active-mutation exception call",
+        )
+        require_exact_line(
+            main,
+            '  reconcile_pending "${expected_commit}"',
+            "Host-control pending-journal reconciliation call",
+        )
+
+    def replace_once(text: str, old: str, new: str) -> str:
+        if text.count(old) != 1:
+            raise RuntimeError("Hostile call-site fixture no longer identifies one exact source line.")
+        return text.replace(old, new, 1)
+
+    def require_binding_rejection(
+        quarantine_source: str,
+        upgrade_source: str,
+        label: str,
+    ) -> None:
+        try:
+            assert_failed_bootstrap_runtime_bindings(quarantine_source, upgrade_source)
+        except (RuntimeError, ValueError):
+            return
+        raise RuntimeError(f"{label} passed the failed-bootstrap runtime binding contract.")
+
+    assert_failed_bootstrap_runtime_bindings(source, upgrader)
+    quarantine_calls = (
+        '  validate_source_lineage "${current}" "${failed}" || return 1',
+        '  readarray -t preflight < <(validate_failed_bootstrap_state "$2") || fail "Failed-bootstrap upgrade preflight rejected the retained state."',
+        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs."',
+        '  readarray -t preflight < <(validate_failed_bootstrap_state "${current_commit}") || fail "Failed-bootstrap quarantine rejected the retained state."',
+        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs."',
+    )
+    for index, call in enumerate(quarantine_calls):
+        require_binding_rejection(
+            replace_once(source, call, "  :"),
+            upgrader,
+            f"Inert quarantine call-site mutation {index}",
+        )
+    quarantine_guard = '[[ ${EUID} -eq 0 ]] || fail "Failed-bootstrap quarantine must run as root."'
+    for name in ("validate_source_lineage", "validate_failed_bootstrap_state"):
+        duplicate = f"function {name} {{\n  return 0\n}}\n"
+        require_binding_rejection(
+            replace_once(source, quarantine_guard, duplicate + quarantine_guard),
+            upgrader,
+            f"Late quarantine {name} override",
+        )
+
+    upgrade_calls = (
+        '  reviewed_recovery_commit="$(select_reviewed_failed_bootstrap_recovery_commit "${pending_commit}")" || return 1',
+        '  validate_reviewed_failed_bootstrap_successor_paths "${invocation_source_root}" "${requested_commit}" "${pending_commit}"',
+        '  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
+        '    bind_invoked_canonical_successor "${requested_commit}" "${commit}" ||',
+        '    reconcile_pending "${expected_commit:-invalid}" || true',
+        '  validate_failed_bootstrap_upgrade_exception "${expected_commit}" || fail "Host-control upgrade refuses this active deployment mutation."',
+        '  reconcile_pending "${expected_commit}"',
+    )
+    for index, call in enumerate(upgrade_calls):
+        require_binding_rejection(
+            source,
+            replace_once(upgrader, call, "  :"),
+            f"Inert host-control call-site mutation {index}",
+        )
+    upgrade_guard = '[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."'
+    for name in (
+        "select_reviewed_failed_bootstrap_recovery_commit",
+        "validate_reviewed_failed_bootstrap_successor_paths",
+        "bind_invoked_canonical_successor",
+        "validate_failed_bootstrap_upgrade_exception",
+        "reconcile_pending",
+    ):
+        duplicate = f"function {name} {{\n  return 0\n}}\n"
+        require_binding_rejection(
+            source,
+            replace_once(upgrader, upgrade_guard, duplicate + upgrade_guard),
+            f"Late host-control {name} override",
+        )
+
     expected_transport = (
         'ssh_options=(-T -i "$key" -o BatchMode=yes -o ClearAllForwardings=yes '
         '-o IdentitiesOnly=yes -o RequestTTY=no -o ServerAliveInterval=30 '
@@ -10746,6 +10976,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
         'readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"',
         'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
+        'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
+        'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
         'rev-parse --verify "${reviewed_recovery_commit}^1"',
@@ -10821,12 +11053,22 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "scripts/validate-repository.py",
         "scripts/verify-host.sh",
     )
+    acme_webroot_expected_paths = (
+        "config/immutable-letsencrypt.fragment.yml",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
         ("active_swap_expected_paths", active_swap_expected_paths),
         ("acme_expected_paths", acme_expected_paths),
         ("quarantine_output_expected_paths", quarantine_output_expected_paths),
         ("acme_reload_privacy_expected_paths", acme_reload_privacy_expected_paths),
+        ("acme_webroot_expected_paths", acme_webroot_expected_paths),
     ):
         marker = f"local -ar {name}=("
         block_start = source.index(marker)
@@ -10860,6 +11102,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
         'readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"',
         'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
+        'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
+        'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -10939,12 +11183,15 @@ reviewed_acme_reload_privacy_failed_bootstrap_commit=fae3770f0817d05bbfd2520e965
 reviewed_acme_reload_privacy_recovery_commit=f51c2e8deaf39293c9b97f3aab797b882c3dc628
 reviewed_acme_reload_privacy_recovery_child_commit=591d96484369ae29a8fa4e61219b325997f4b679
 reviewed_acme_reload_privacy_launcher_child_commit=a71bbe8070ca6dadeff3c4966e81bd97fee83cf7
+reviewed_acme_webroot_failed_bootstrap_commit=9110568e09bda4d572eaf2c27a768b9c053048f9
+reviewed_acme_webroot_recovery_commit=bb891aa65ebe8470fa04cdd639185afdad7372f7
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
   acme) failed="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
   quarantine) failed="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
   reload_privacy) failed="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
+  webroot) failed="$reviewed_acme_webroot_failed_bootstrap_commit"; reviewed="$reviewed_acme_webroot_recovery_commit" ;;
   unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) exit 84 ;;
 esac
@@ -11013,6 +11260,16 @@ git() {{
             scripts/validate-repository.py
           [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
           ;;
+        webroot)
+          printf '%s\n' \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -11041,7 +11298,7 @@ validate_source_lineage "$current" "$failed"
             )
             lineage_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot")
                 for mutation, should_pass in mutation_cases
             ]
             lineage_cases.extend(

@@ -640,6 +640,24 @@ claims an additional retained-runtime cause. The exception uses the same
 root-only, evidence-preserving quarantine and requires the next clean bootstrap
 to target the then-current canonical main.
 
+A sixth exact bootstrap-only exception covers the proved ACME webroot
+traversal boundary. Failed release
+`9110568e09bda4d572eaf2c27a768b9c053048f9`, reviewed webroot repair
+`bb891aa65ebe8470fa04cdd639185afdad7372f7`, and one canonical-main
+control/quarantine child must form an exact sole-parent chain. The cumulative
+changed paths from the failed release are only
+`config/immutable-letsencrypt.fragment.yml`,
+`docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/upgrade-host-control.sh`, and `scripts/validate-repository.py`.
+Selection by exact failed commit keeps this lineage separate from all earlier
+exceptions; the final child cannot be another descendant or a merge commit.
+The reviewed repair corrects only the proved public challenge-directory
+traversal boundary and neither authorizes an identical-byte retry nor claims a
+different retained-runtime cause. It uses the same root-only,
+evidence-preserving quarantine and requires the next clean bootstrap to target
+the then-current canonical main.
+
 ## Primary references
 
 - [Official Discourse backup and restore guidance](https://meta.discourse.org/t/create-download-and-restore-a-backup-of-your-discourse-database/122710)

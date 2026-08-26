@@ -5967,6 +5967,13 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     control_evidence = read("scripts/host-control-evidence.py")
     operation_lock = read("scripts/host-operation-lock.py")
     operation_lock_fixture = read("scripts/test-host-operation-lock.py")
+    if (
+        hashlib.sha256(failed_bootstrap_quarantine.encode("utf-8")).hexdigest()
+        != "7a18ed6f5f522dcd090663f036d65b8af3d9b42e7745e68f191b578c0b1b5de1"
+        or hashlib.sha256(control_upgrade.encode("utf-8")).hexdigest()
+        != "96b27fb1f9f6e0ce45d4e5c1ab146aad3ddfe673793bd7c41a9fe38807902a2b"
+    ):
+        fail("Failed-bootstrap production control source seal differs.")
     if operator_sudoers.splitlines() != [
         'Defaults:mochirii-forums-operator env_keep += "SSH_CONNECTION"',
         "mochirii-forums-operator ALL=(ALL:ALL) NOPASSWD: ALL",
@@ -6619,6 +6626,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
             'readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"',
             'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
+            'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
+            'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
             'rev-parse --verify "${requested_commit}^1"',
             'rev-list --parents -n 1 "${requested_commit}"',
             'rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1"',
@@ -6655,6 +6664,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
             'readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"',
             'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
+            'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
+            'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
             'rev-parse --verify "${current}^1"',
             'rev-list --parents -n 1 "${current}"',
             'rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1"',
@@ -6678,6 +6689,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "config/immutable-letsencrypt.fragment.yml",
             'quarantine_output_expected_paths=(',
             'acme_reload_privacy_expected_paths=(',
+            'acme_webroot_expected_paths=(',
             'object_pairs_hook=reject_duplicate',
             'metadata.st_uid != 0',
             'metadata.st_gid != 0',
@@ -6711,6 +6723,198 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ],
         "failed-bootstrap reversible quarantine transaction",
     )
+
+    def exact_shell_function(script_source: str, name: str, label: str) -> str:
+        marker = f"{name}() {{"
+        definitions = list(
+            re.finditer(
+                rf"(?m)^[ \t]*(?:function[ \t]+)?{re.escape(name)}(?:[ \t]*\(\))?[ \t]*\{{",
+                script_source,
+            )
+        )
+        if len(definitions) != 1 or definitions[0].group(0) != marker:
+            fail(f"{label} function is absent, duplicated, or noncanonical.")
+        start = definitions[0].start()
+        try:
+            end = script_source.index("\n}\n", start) + 3
+        except ValueError:
+            fail(f"{label} function is unterminated.")
+        return script_source[start:end]
+
+    def require_exact_live_line(block: str, line: str, label: str) -> None:
+        if block.splitlines().count(line) != 1:
+            fail(f"{label} is absent, duplicated, or outside its live section.")
+
+    quarantine_lineage = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "validate_source_lineage",
+        "Failed-bootstrap lineage",
+    )
+    quarantine_state = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "validate_failed_bootstrap_state",
+        "Failed-bootstrap retained-state validator",
+    )
+    quarantine_identity = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "read_quarantine_identity",
+        "Failed-bootstrap recovery identity reader",
+    )
+    quarantine_preflight_start = failed_bootstrap_quarantine.index(
+        'if [[ ${1:-} == --upgrade-preflight ]]; then'
+    )
+    quarantine_preflight_end = failed_bootstrap_quarantine.index(
+        "\nfi\n\n[[ $# -eq 3 ]]",
+        quarantine_preflight_start,
+    ) + 4
+    quarantine_preflight = failed_bootstrap_quarantine[
+        quarantine_preflight_start:quarantine_preflight_end
+    ]
+    quarantine_recovery_start = failed_bootstrap_quarantine.index(
+        'if [[ -e ${pending_journal} || -L ${pending_journal} ]]; then',
+        quarantine_preflight_end,
+    )
+    quarantine_recovery_end = failed_bootstrap_quarantine.index(
+        "\nfi\n[[ ${#preflight[@]}",
+        quarantine_recovery_start,
+    ) + 3
+    quarantine_recovery = failed_bootstrap_quarantine[
+        quarantine_recovery_start:quarantine_recovery_end
+    ]
+    if not quarantine_lineage.startswith("validate_source_lineage() {\n"):
+        fail("Failed-bootstrap lineage definition is not the live canonical function.")
+    for block, line, label in (
+        (
+            quarantine_state,
+            '  validate_source_lineage "${current}" "${failed}" || return 1',
+            "Failed-bootstrap retained-state lineage call",
+        ),
+        (
+            quarantine_preflight,
+            '  readarray -t preflight < <(validate_failed_bootstrap_state "$2") || fail "Failed-bootstrap upgrade preflight rejected the retained state."',
+            "Failed-bootstrap upgrade-preflight state call",
+        ),
+        (
+            quarantine_recovery,
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs."',
+            "Failed-bootstrap pending-recovery lineage call",
+        ),
+        (
+            quarantine_recovery,
+            '  readarray -t preflight < <(validate_failed_bootstrap_state "${current_commit}") || fail "Failed-bootstrap quarantine rejected the retained state."',
+            "Failed-bootstrap active-journal state call",
+        ),
+        (
+            quarantine_recovery,
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs."',
+            "Failed-bootstrap terminal-recovery lineage call",
+        ),
+    ):
+        require_exact_live_line(block, line, label)
+
+    upgrade_bind = exact_shell_function(
+        control_upgrade,
+        "bind_invoked_canonical_successor",
+        "Host-control canonical successor binder",
+    )
+    upgrade_exception = exact_shell_function(
+        control_upgrade,
+        "validate_failed_bootstrap_upgrade_exception",
+        "Host-control failed-bootstrap exception",
+    )
+    upgrade_reconcile = exact_shell_function(
+        control_upgrade,
+        "reconcile_pending",
+        "Host-control pending-journal reconciler",
+    )
+    upgrade_signal = exact_shell_function(
+        control_upgrade,
+        "handle_signal",
+        "Host-control signal handler",
+    )
+    upgrade_selector = exact_shell_function(
+        control_upgrade,
+        "select_reviewed_failed_bootstrap_recovery_commit",
+        "Host-control reviewed-recovery selector",
+    )
+    upgrade_path_validator = exact_shell_function(
+        control_upgrade,
+        "validate_reviewed_failed_bootstrap_successor_paths",
+        "Host-control successor-path validator",
+    )
+    upgrade_main = control_upgrade[
+        control_upgrade.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."'):
+    ]
+    exact_section_sha256 = {
+        "quarantine-lineage": "5664cab82a15c6e1bebf567a16f0537347c9022b27718746b3393aeee1cfb4ce",
+        "quarantine-state": "df91f3b80c769445be74dde7ad48ddbc2fc7ac364178a1bfcea8a802e56a6b3f",
+        "quarantine-identity": "0fbfc024186b764aeda3f06972706fdc8e0a3158b9e0c2be19c8434c3c0b5ba2",
+        "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
+        "quarantine-recovery": "b376df77881d87ecfb32b1ccfa57b64c1cc9aad5bccd0f01084c9088c3582c59",
+        "upgrade-selector": "bc916459809376bf402e4637b607e1b7888ba12b1377ec792007dfe4556851cf",
+        "upgrade-path-validator": "fb0c43523264cf31afcc0d8122dc9500d43cab249aa7d82d6d68982f98a5a36e",
+        "upgrade-binder": "dae6ab03616bf9df78d91f869e49836dbb7e827b6737b7f7d9c6a57aa2a377c8",
+        "upgrade-exception": "6ea0d4ff36175b26333ce78608d1f12092da953a192170897c33340411f5dbe3",
+        "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
+        "upgrade-signal": "e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f",
+        "upgrade-main": "330c799924dc01eb499fe639ed9e4f99606f6b64dcba352c7d2de6a84bf56488",
+    }
+    exact_sections = {
+        "quarantine-lineage": quarantine_lineage,
+        "quarantine-state": quarantine_state,
+        "quarantine-identity": quarantine_identity,
+        "quarantine-preflight": quarantine_preflight,
+        "quarantine-recovery": quarantine_recovery,
+        "upgrade-selector": upgrade_selector,
+        "upgrade-path-validator": upgrade_path_validator,
+        "upgrade-binder": upgrade_bind,
+        "upgrade-exception": upgrade_exception,
+        "upgrade-reconcile": upgrade_reconcile,
+        "upgrade-signal": upgrade_signal,
+        "upgrade-main": upgrade_main,
+    }
+    for label, block in exact_sections.items():
+        if hashlib.sha256(block.encode("utf-8")).hexdigest() != exact_section_sha256[label]:
+            fail(f"{label} exact live source section differs.")
+    for block, line, label in (
+        (
+            upgrade_bind,
+            '  reviewed_recovery_commit="$(select_reviewed_failed_bootstrap_recovery_commit "${pending_commit}")" || return 1',
+            "Host-control reviewed-recovery selector call",
+        ),
+        (
+            upgrade_bind,
+            '  validate_reviewed_failed_bootstrap_successor_paths "${invocation_source_root}" "${requested_commit}" "${pending_commit}"',
+            "Host-control successor-path validator call",
+        ),
+        (
+            upgrade_exception,
+            '  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
+            "Host-control active-mutation successor binder call",
+        ),
+        (
+            upgrade_reconcile,
+            '    bind_invoked_canonical_successor "${requested_commit}" "${commit}" ||',
+            "Host-control pending-journal successor binder call",
+        ),
+        (
+            upgrade_signal,
+            '    reconcile_pending "${expected_commit:-invalid}" || true',
+            "Host-control signal recovery call",
+        ),
+        (
+            upgrade_main,
+            '  validate_failed_bootstrap_upgrade_exception "${expected_commit}" || fail "Host-control upgrade refuses this active deployment mutation."',
+            "Host-control active-mutation exception call",
+        ),
+        (
+            upgrade_main,
+            '  reconcile_pending "${expected_commit}"',
+            "Host-control pending-journal reconciliation call",
+        ),
+    ):
+        require_exact_live_line(block, line, label)
+
     if any(
         value in failed_bootstrap_quarantine
         for value in (
