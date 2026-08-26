@@ -745,6 +745,25 @@ additional retained-runtime cause. The same retained-journal/runtime,
 stopped/absent publication, root-owned-state, and unrelated-journal exclusion
 rules apply.
 
+The later bootstrap at exact release
+`9110568e09bda4d572eaf2c27a768b9c053048f9` has a sixth,
+non-interchangeable recovery chain for the proved ACME webroot traversal
+boundary. That failed release is the sole parent of reviewed webroot repair
+commit `bb891aa65ebe8470fa04cdd639185afdad7372f7`; the recovery source must be
+one exact sole-parent child of that repair and the current canonical `main`.
+Its cumulative diff from the failed release is exactly
+`config/immutable-letsencrypt.fragment.yml`, `docs/operations/DEPLOYMENT.md`,
+`docs/operations/RECOVERY.md`, `scripts/quarantine-failed-bootstrap.sh`,
+`scripts/test-contracts.py`, `scripts/upgrade-host-control.sh`, and
+`scripts/validate-repository.py`. Selection remains by exact failed commit, so
+this exception cannot substitute for an earlier lineage, admit another
+descendant or merge commit, or authorize another path set. The reviewed repair
+creates and verifies only the public ACME challenge directories before the
+bootstrap Nginx process; it does not authorize an identical-byte retry or
+identify any additional retained-runtime cause. The same retained journal and
+runtime, stopped/absent publication, root-owned state, unrelated-journal
+exclusion, and evidence-preserving quarantine rules apply.
+
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh

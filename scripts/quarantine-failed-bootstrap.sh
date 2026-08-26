@@ -33,6 +33,8 @@ readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bb
 readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"
 readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"
 readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"
+readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"
+readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"
 
 validate_source_lineage() {
   local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit current_parent_commit
@@ -84,6 +86,15 @@ validate_source_lineage() {
     scripts/validate-repository.py
     scripts/verify-host.sh
   )
+  local -ar acme_webroot_expected_paths=(
+    config/immutable-letsencrypt.fragment.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
   local -a actual_paths expected_paths
   case "${failed}" in
     "${reviewed_legacy_failed_bootstrap_commit}")
@@ -110,6 +121,11 @@ validate_source_lineage() {
       reviewed_recovery_commit="${reviewed_acme_reload_privacy_recovery_commit}"
       current_parent_commit="${reviewed_acme_reload_privacy_launcher_child_commit}"
       expected_paths=("${acme_reload_privacy_expected_paths[@]}")
+      ;;
+    "${reviewed_acme_webroot_failed_bootstrap_commit}")
+      reviewed_recovery_commit="${reviewed_acme_webroot_recovery_commit}"
+      current_parent_commit="${reviewed_recovery_commit}"
+      expected_paths=("${acme_webroot_expected_paths[@]}")
       ;;
     *) return 1 ;;
   esac
