@@ -35,29 +35,78 @@
       contents: |
         #!/bin/bash
         set -euo pipefail
+        umask 077
         readonly letsencrypt_dir="/shared/letsencrypt"
         readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        test -d "${letsencrypt_dir}"
+        test ! -L "${letsencrypt_dir}"
+        test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"
         test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
         grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"
-        exec env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \
+        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          test -f "${private_path}"
+          test ! -L "${private_path}"
+          test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+        done
+        env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \
           "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"
+        /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload
+        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          test -f "${private_path}"
+          test ! -L "${private_path}"
+          test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+        done
   - file:
       path: /usr/local/bin/configure-letsencrypt
       chmod: "+x"
       contents: |
         #!/bin/bash
         set -euo pipefail
+        umask 077
         readonly letsencrypt_dir="/shared/letsencrypt"
         readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
         test "$(sha256sum /opt/acme.sh | awk '{print $1}')" = "${acme_sha256}"
-        install -d -m 0755 -g root -o root "${letsencrypt_dir}"
+        if test -e "${letsencrypt_dir}" || test -L "${letsencrypt_dir}"; then
+          test -d "${letsencrypt_dir}"
+          test ! -L "${letsencrypt_dir}"
+          chown root:root -- "${letsencrypt_dir}"
+          chmod 0755 -- "${letsencrypt_dir}"
+        else
+          install -d -m 0755 -g root -o root "${letsencrypt_dir}"
+        fi
+        test -d "${letsencrypt_dir}"
+        test ! -L "${letsencrypt_dir}"
+        test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"
+        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          if test -e "${private_path}" || test -L "${private_path}"; then
+            test -f "${private_path}"
+            test ! -L "${private_path}"
+            test "$(stat -c '%h' -- "${private_path}")" = "1"
+            chown root:root -- "${private_path}"
+            chmod 0600 -- "${private_path}"
+            test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+          fi
+        done
         cd /opt
         AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \
           --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0
+        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          test -f "${private_path}"
+          test ! -L "${private_path}"
+          test "$(stat -c '%h' -- "${private_path}")" = "1"
+          chown root:root -- "${private_path}"
+          chmod 0600 -- "${private_path}"
+          test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+        done
         test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
         grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"
         LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
           --set-default-ca --server letsencrypt
+        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          test -f "${private_path}"
+          test ! -L "${private_path}"
+          test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+        done
         install -m 0600 -o root -g root /dev/null /var/spool/cron/crontabs/root
         printf '%s\n' '17 0 * * * /usr/local/bin/mochirii-acme-cron >/dev/null 2>&1' \
           > /var/spool/cron/crontabs/root
@@ -107,10 +156,19 @@
       contents: |
         #!/bin/bash
         set -euo pipefail
+        umask 077
         readonly letsencrypt_dir="/shared/letsencrypt"
         readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        test -d "${letsencrypt_dir}"
+        test ! -L "${letsencrypt_dir}"
+        test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"
         test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
         grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"
+        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          test -f "${private_path}"
+          test ! -L "${private_path}"
+          test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+        done
         /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf
 
         extra_domains() {
@@ -142,8 +200,7 @@
         LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
           --installcert -d "${DISCOURSE_HOSTNAME}" \
           --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}.cer" \
-          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key" \
-          --reloadcmd "sv reload nginx"
+          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"
 
         issue_cert "ec-256" ""
         if ! cert_exists "_ecc"; then
@@ -152,12 +209,17 @@
         LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
           --installcert --ecc -d "${DISCOURSE_HOSTNAME}" \
           --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.cer" \
-          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key" \
-          --reloadcmd "sv reload nginx"
+          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key"
+        /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload
 
         if cert_exists "" || cert_exists "_ecc"; then
           grep -q 'force_https' /var/www/discourse/config/discourse.conf || \
             echo "force_https = 'true'" >> /var/www/discourse/config/discourse.conf
         fi
+        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          test -f "${private_path}"
+          test ! -L "${private_path}"
+          test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+        done
         /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s stop
 # MOCHIRII TLS RUN END
