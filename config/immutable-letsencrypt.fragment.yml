@@ -159,6 +159,9 @@
         umask 077
         readonly letsencrypt_dir="/shared/letsencrypt"
         readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        readonly public_webroot="/var/www/discourse/public"
+        readonly challenge_parent="${public_webroot}/.well-known"
+        readonly challenge_root="${challenge_parent}/acme-challenge"
         test -d "${letsencrypt_dir}"
         test ! -L "${letsencrypt_dir}"
         test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"
@@ -168,6 +171,19 @@
           test -f "${private_path}"
           test ! -L "${private_path}"
           test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+        done
+        test -d "${public_webroot}"
+        test ! -L "${public_webroot}"
+        for challenge_directory in "${challenge_parent}" "${challenge_root}"; do
+          if test -e "${challenge_directory}" || test -L "${challenge_directory}"; then
+            test -d "${challenge_directory}"
+            test ! -L "${challenge_directory}"
+          else
+            install -d -m 0755 -o root -g root -- "${challenge_directory}"
+          fi
+          test -d "${challenge_directory}"
+          test ! -L "${challenge_directory}"
+          test "$(stat -c '%U:%G %a' -- "${challenge_directory}")" = "root:root 755"
         done
         /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf
 
