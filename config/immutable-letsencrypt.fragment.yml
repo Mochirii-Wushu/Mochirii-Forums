@@ -162,6 +162,34 @@
         readonly public_webroot="/var/www/discourse/public"
         readonly challenge_parent="${public_webroot}/.well-known"
         readonly challenge_root="${challenge_parent}/acme-challenge"
+        readonly certificate_minimum_lifetime_seconds="604800"
+        readonly openssl_bin="/usr/bin/openssl"
+        readonly stat_bin="/usr/bin/stat"
+        readonly cat_bin="/usr/bin/cat"
+        readonly cmp_bin="/usr/bin/cmp"
+        readonly awk_bin="/usr/bin/awk"
+        readonly mktemp_bin="/usr/bin/mktemp"
+        readonly rm_bin="/usr/bin/rm"
+        readonly rmdir_bin="/usr/bin/rmdir"
+        for validator_tool in \
+          "${openssl_bin}" \
+          "${stat_bin}" \
+          "${cat_bin}" \
+          "${cmp_bin}" \
+          "${awk_bin}" \
+          "${mktemp_bin}" \
+          "${rm_bin}" \
+          "${rmdir_bin}"; do
+          if ! test -x "${validator_tool}"; then
+            printf '%s\n' 'FORUMS_ACME_VALIDATOR_PREFLIGHT_FAILED' >&2
+            exit 1
+          fi
+        done
+        if [ "${DISCOURSE_HOSTNAME:-}" != "forums.mochirii.com" ] || \
+          [ -n "${DISCOURSE_HOSTNAME_ALIASES:-}" ]; then
+          printf '%s\n' 'FORUMS_ACME_HOSTNAME_CONTRACT_FAILED' >&2
+          exit 1
+        fi
         test -d "${letsencrypt_dir}"
         test ! -L "${letsencrypt_dir}"
         test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"
@@ -187,51 +215,311 @@
         done
         /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf
 
-        extra_domains() {
-          if [ -n "${DISCOURSE_HOSTNAME_ALIASES:-}" ]; then
-            domains=$(echo "${DISCOURSE_HOSTNAME_ALIASES}" | sed "s/,/ -d /g")
-            echo "-d ${domains}"
+        issue_certificate() {
+          local keylength="$1"
+          local issuance_status
+          case "${keylength}" in
+            4096|ec-256) ;;
+            *)
+              printf '%s\n' 'FORUMS_ACME_ISSUANCE_CONTRACT_FAILED' >&2
+              return 1
+              ;;
+          esac
+          if LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+            --issue -d "${DISCOURSE_HOSTNAME}" --keylength "${keylength}" \
+            -w "${public_webroot}" >/dev/null 2>&1; then
+            issuance_status=0
+          else
+            issuance_status=$?
+          fi
+          case "${issuance_status}" in
+            0|2) return 0 ;;
+            *)
+              printf '%s\n' 'FORUMS_ACME_ISSUANCE_FAILED' >&2
+              return 1
+              ;;
+          esac
+        }
+
+        install_certificate() {
+          local certificate_suffix="$1"
+          local ecc_option=()
+          case "${certificate_suffix}:$2" in
+            :) ;;
+            _ecc:--ecc) ecc_option=("--ecc") ;;
+            *)
+              printf '%s\n' 'FORUMS_ACME_INSTALL_CONTRACT_FAILED' >&2
+              return 1
+              ;;
+          esac
+          if ! LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+            --installcert "${ecc_option[@]}" -d "${DISCOURSE_HOSTNAME}" \
+            --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.cer" \
+            --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.key" \
+            >/dev/null 2>&1; then
+            printf '%s\n' 'FORUMS_ACME_INSTALL_FAILED' >&2
+            return 1
           fi
         }
 
-        issue_cert() {
-          local force=()
-          if [ -n "$2" ]; then
-            force=("$2")
+        # MOCHIRII CERTIFICATE MATERIAL VALIDATOR BEGIN
+        validate_certificate_material() (
+          local certificate_suffix="$1"
+          local expected_algorithm="$2"
+          local expected_owner="$3"
+          local certificate_directory
+          local leaf_path
+          local key_path
+          local ca_path
+          local fullchain_path
+          local validation_root
+          local canonical_leaf_path
+          local expected_fullchain_path
+          local leaf_public_path
+          local key_public_path
+          local leaf_der_path
+          local untrusted_path
+          local terminal_ca_path
+          local san_output
+          local leaf_public_algorithm
+          local key_details
+          local ca_count
+          local ca_index
+          local comparison_index
+          local next_ca_index
+          local ca_certificate_path
+          local canonical_ca_path
+          local ca_der_path
+          local ca_purpose
+          local file_size
+          local validation_files=()
+
+          case "${certificate_suffix}:${expected_algorithm}" in
+            :rsa|_ecc:ecc) ;;
+            *) return 1 ;;
+          esac
+          [[ "${expected_owner}" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+          certificate_directory="${letsencrypt_dir}/${DISCOURSE_HOSTNAME}${certificate_suffix}"
+          test -d "${certificate_directory}" || return 1
+          test ! -L "${certificate_directory}" || return 1
+          test "$("${stat_bin}" -c '%u:%g %a' -- "${certificate_directory}" 2>/dev/null)" = \
+            "${expected_owner} 700" || return 1
+          leaf_path="${certificate_directory}/${DISCOURSE_HOSTNAME}.cer"
+          key_path="${certificate_directory}/${DISCOURSE_HOSTNAME}.key"
+          ca_path="${certificate_directory}/ca.cer"
+          fullchain_path="${certificate_directory}/fullchain.cer"
+
+          bounded_private_file() {
+            local private_file="$1"
+            local maximum_bytes="$2"
+            test -f "${private_file}" || return 1
+            test ! -L "${private_file}" || return 1
+            test "$("${stat_bin}" -c '%u:%g %a %h' -- "${private_file}" 2>/dev/null)" = \
+              "${expected_owner} 600 1" || return 1
+            file_size="$("${stat_bin}" -c '%s' -- "${private_file}" 2>/dev/null)" || return 1
+            [[ "${file_size}" =~ ^[0-9]+$ ]] || return 1
+            (( file_size > 0 && file_size <= maximum_bytes )) || return 1
+          }
+
+          bounded_private_file "${leaf_path}" 65536 || return 1
+          bounded_private_file "${key_path}" 65536 || return 1
+          bounded_private_file "${ca_path}" 262144 || return 1
+          bounded_private_file "${fullchain_path}" 327680 || return 1
+
+          validation_root="$("${mktemp_bin}" -d \
+            "${letsencrypt_dir}/.mochirii-acme-validate.XXXXXXXXXX" 2>/dev/null)" || return 1
+          test -d "${validation_root}" || return 1
+          test ! -L "${validation_root}" || return 1
+          test "$("${stat_bin}" -c '%u:%g %a' -- "${validation_root}" 2>/dev/null)" = \
+            "${expected_owner} 700" || return 1
+          canonical_leaf_path="${validation_root}/leaf.pem"
+          expected_fullchain_path="${validation_root}/fullchain.pem"
+          leaf_public_path="${validation_root}/leaf-public.der"
+          key_public_path="${validation_root}/key-public.der"
+          leaf_der_path="${validation_root}/leaf.der"
+          validation_files=(
+            "${canonical_leaf_path}"
+            "${expected_fullchain_path}"
+            "${leaf_public_path}"
+            "${key_public_path}"
+            "${leaf_der_path}"
+            "${validation_root}/untrusted.pem"
+          )
+          for ((ca_index=1; ca_index<=8; ca_index++)); do
+            validation_files+=(
+              "${validation_root}/ca-${ca_index}.pem"
+              "${validation_root}/ca-${ca_index}-canonical.pem"
+              "${validation_root}/ca-${ca_index}.der"
+            )
+          done
+          cleanup_validation_root() {
+            "${rm_bin}" -f -- "${validation_files[@]}" >/dev/null 2>&1 || :
+            "${rmdir_bin}" -- "${validation_root}" >/dev/null 2>&1 || :
+          }
+          trap cleanup_validation_root EXIT
+
+          "${openssl_bin}" x509 -in "${leaf_path}" -outform PEM \
+            -out "${canonical_leaf_path}" >/dev/null 2>&1 || return 1
+          "${cmp_bin}" -s -- "${leaf_path}" "${canonical_leaf_path}" || return 1
+          "${openssl_bin}" x509 -in "${leaf_path}" -outform DER \
+            -out "${leaf_der_path}" >/dev/null 2>&1 || return 1
+          "${openssl_bin}" pkey -in "${key_path}" -noout -check >/dev/null 2>&1 || return 1
+          ca_count="$("${awk_bin}" -v output_prefix="${validation_root}/ca-" '
+            BEGIN { count=0; inside=0; failed=0 }
+            function reject() { failed=1; exit 2 }
+            $0 == "-----BEGIN CERTIFICATE-----" {
+              if (inside || count >= 8) reject()
+              inside=1
+              count++
+              target=output_prefix count ".pem"
+              print $0 > target
+              next
+            }
+            inside {
+              print $0 > target
+              if ($0 == "-----END CERTIFICATE-----") {
+                close(target)
+                inside=0
+              }
+              next
+            }
+            { reject() }
+            END {
+              if (failed || inside || count < 1) exit 2
+              print count
+            }
+          ' "${ca_path}" 2>/dev/null)" || return 1
+          [[ "${ca_count}" =~ ^[1-8]$ ]] || return 1
+          for ((ca_index=1; ca_index<=ca_count; ca_index++)); do
+            ca_certificate_path="${validation_root}/ca-${ca_index}.pem"
+            canonical_ca_path="${validation_root}/ca-${ca_index}-canonical.pem"
+            ca_der_path="${validation_root}/ca-${ca_index}.der"
+            "${openssl_bin}" x509 -in "${ca_certificate_path}" -outform PEM \
+              -out "${canonical_ca_path}" >/dev/null 2>&1 || return 1
+            "${cmp_bin}" -s -- "${ca_certificate_path}" "${canonical_ca_path}" || return 1
+            "${openssl_bin}" x509 -in "${ca_certificate_path}" -outform DER \
+              -out "${ca_der_path}" >/dev/null 2>&1 || return 1
+            if "${cmp_bin}" -s -- "${leaf_der_path}" "${ca_der_path}"; then
+              return 1
+            fi
+            for ((comparison_index=1; comparison_index<ca_index; comparison_index++)); do
+              if "${cmp_bin}" -s -- "${validation_root}/ca-${comparison_index}.der" \
+                "${ca_der_path}"; then
+                return 1
+              fi
+            done
+            ca_purpose="$("${openssl_bin}" x509 -in "${ca_certificate_path}" \
+              -purpose -noout 2>/dev/null)" || return 1
+            case $'\n'"${ca_purpose}"$'\n' in
+              *$'\nSSL server CA : Yes\n'*) ;;
+              *) return 1 ;;
+            esac
+            "${openssl_bin}" x509 -in "${ca_certificate_path}" -checkend \
+              "${certificate_minimum_lifetime_seconds}" -noout >/dev/null 2>&1 || return 1
+          done
+          "${openssl_bin}" verify -partial_chain -x509_strict -purpose sslserver \
+            -no-CAfile -no-CApath -no-CAstore \
+            -verify_hostname "${DISCOURSE_HOSTNAME}" \
+            -CAfile "${validation_root}/ca-1.pem" \
+            "${leaf_path}" >/dev/null 2>&1 || return 1
+          for ((ca_index=1; ca_index<ca_count; ca_index++)); do
+            next_ca_index=$((ca_index + 1))
+            "${openssl_bin}" verify -partial_chain -x509_strict -purpose any \
+              -no-CAfile -no-CApath -no-CAstore \
+              -CAfile "${validation_root}/ca-${next_ca_index}.pem" \
+              "${validation_root}/ca-${ca_index}.pem" >/dev/null 2>&1 || return 1
+          done
+          terminal_ca_path="${validation_root}/ca-${ca_count}.pem"
+          if (( ca_count > 1 )); then
+            untrusted_path="${validation_root}/untrusted.pem"
+            : 2>/dev/null >"${untrusted_path}" || return 1
+            for ((ca_index=1; ca_index<ca_count; ca_index++)); do
+              "${cat_bin}" -- "${validation_root}/ca-${ca_index}.pem" \
+                2>/dev/null >>"${untrusted_path}" || return 1
+            done
+            bounded_private_file "${untrusted_path}" 262144 || return 1
+            "${openssl_bin}" verify -partial_chain -x509_strict -purpose sslserver \
+              -no-CAfile -no-CApath -no-CAstore \
+              -verify_hostname "${DISCOURSE_HOSTNAME}" \
+              -untrusted "${untrusted_path}" -CAfile "${terminal_ca_path}" \
+              "${leaf_path}" >/dev/null 2>&1 || return 1
+          else
+            "${openssl_bin}" verify -partial_chain -x509_strict -purpose sslserver \
+              -no-CAfile -no-CApath -no-CAstore \
+              -verify_hostname "${DISCOURSE_HOSTNAME}" \
+              -CAfile "${terminal_ca_path}" \
+              "${leaf_path}" >/dev/null 2>&1 || return 1
           fi
-          LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
-            --issue "${force[@]}" -d "${DISCOURSE_HOSTNAME}" $(extra_domains) \
-            --keylength "$1" -w /var/www/discourse/public
-        }
+          "${openssl_bin}" crl2pkcs7 -nocrl -certfile "${ca_path}" 2>/dev/null | \
+            "${openssl_bin}" pkcs7 -print_certs -noout >/dev/null 2>&1 || return 1
+          "${openssl_bin}" crl2pkcs7 -nocrl -certfile "${fullchain_path}" 2>/dev/null | \
+            "${openssl_bin}" pkcs7 -print_certs -noout >/dev/null 2>&1 || return 1
+          "${cat_bin}" -- "${leaf_path}" "${ca_path}" 2>/dev/null >"${expected_fullchain_path}" || return 1
+          "${cmp_bin}" -s -- "${fullchain_path}" "${expected_fullchain_path}" || return 1
+          "${openssl_bin}" x509 -in "${leaf_path}" -pubkey -noout 2>/dev/null | \
+            "${openssl_bin}" pkey -pubin -outform DER 2>/dev/null >"${leaf_public_path}" || return 1
+          "${openssl_bin}" pkey -in "${key_path}" -pubout -outform DER \
+            2>/dev/null >"${key_public_path}" || return 1
+          "${cmp_bin}" -s -- "${leaf_public_path}" "${key_public_path}" || return 1
+          "${openssl_bin}" x509 -in "${leaf_path}" -checkend \
+            "${certificate_minimum_lifetime_seconds}" -noout >/dev/null 2>&1 || return 1
+          san_output="$("${openssl_bin}" x509 -in "${leaf_path}" -noout \
+            -ext subjectAltName 2>/dev/null)" || return 1
+          case "${san_output}" in
+            $'X509v3 Subject Alternative Name:\n    DNS:forums.mochirii.com'|\
+              $'X509v3 Subject Alternative Name: \n    DNS:forums.mochirii.com') ;;
+            *) return 1 ;;
+          esac
+          leaf_public_algorithm="$("${openssl_bin}" x509 -in "${leaf_path}" -noout \
+            -text 2>/dev/null | "${awk_bin}" '
+              BEGIN { count=0 }
+              /^[[:space:]]*Public Key Algorithm: / {
+                count++
+                line=$0
+                sub(/^[[:space:]]*Public Key Algorithm: /, "", line)
+                value=line
+              }
+              END {
+                if (count != 1) exit 2
+                print value
+              }
+            ' 2>/dev/null)" || return 1
+          key_details="$("${openssl_bin}" pkey -in "${key_path}" -text_pub -noout 2>/dev/null)" || return 1
+          if [ "${expected_algorithm}" = "rsa" ]; then
+            [ "${leaf_public_algorithm}" = "rsaEncryption" ] || return 1
+            [[ "${key_details}" = 'Public-Key: (4096 bit)'$'\n'* ]] || return 1
+            [[ "${key_details}" != *$'\nASN1 OID:'* ]] || return 1
+          else
+            [ "${leaf_public_algorithm}" = "id-ecPublicKey" ] || return 1
+            [[ "${key_details}" = 'Public-Key: (256 bit)'$'\n'* ]] || return 1
+            [[ "${key_details}" = *$'\nASN1 OID: prime256v1\nNIST CURVE: P-256' ]] || return 1
+          fi
 
-        cert_exists() {
-          [[ "$(cd "${letsencrypt_dir}/${DISCOURSE_HOSTNAME}$1" && \
-            openssl verify -CAfile <(openssl x509 -in ca.cer) fullchain.cer | grep "OK")" ]]
-        }
+          trap - EXIT
+          "${rm_bin}" -f -- "${validation_files[@]}" >/dev/null 2>&1 || return 1
+          "${rmdir_bin}" -- "${validation_root}" >/dev/null 2>&1 || return 1
+        )
+        # MOCHIRII CERTIFICATE MATERIAL VALIDATOR END
 
-        issue_cert "4096" ""
-        if ! cert_exists ""; then
-          issue_cert "4096" "--force"
+        # MOCHIRII ACME ORDER BEGIN
+        issue_certificate "4096"
+        if ! validate_certificate_material "" "rsa" "0:0"; then
+          printf '%s\n' 'FORUMS_ACME_RSA_MATERIAL_INVALID' >&2
+          exit 1
         fi
-        LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
-          --installcert -d "${DISCOURSE_HOSTNAME}" \
-          --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}.cer" \
-          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"
+        install_certificate "" ""
 
-        issue_cert "ec-256" ""
-        if ! cert_exists "_ecc"; then
-          issue_cert "ec-256" "--force"
+        issue_certificate "ec-256"
+        if ! validate_certificate_material "_ecc" "ecc" "0:0"; then
+          printf '%s\n' 'FORUMS_ACME_ECC_MATERIAL_INVALID' >&2
+          exit 1
         fi
-        LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
-          --installcert --ecc -d "${DISCOURSE_HOSTNAME}" \
-          --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.cer" \
-          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key"
+        install_certificate "_ecc" "--ecc"
         /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload
+        # MOCHIRII ACME ORDER END
 
-        if cert_exists "" || cert_exists "_ecc"; then
-          grep -q 'force_https' /var/www/discourse/config/discourse.conf || \
-            echo "force_https = 'true'" >> /var/www/discourse/config/discourse.conf
-        fi
+        grep -q 'force_https' /var/www/discourse/config/discourse.conf || \
+          echo "force_https = 'true'" >> /var/www/discourse/config/discourse.conf
         for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
           test -f "${private_path}"
           test ! -L "${private_path}"
