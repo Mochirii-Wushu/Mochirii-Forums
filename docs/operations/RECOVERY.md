@@ -620,19 +620,25 @@ canonical main.
 
 A fifth exact bootstrap-only exception covers the fae ACME reload/private-state
 boundary. Failed release `fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d`,
-reviewed repair `f51c2e8deaf39293c9b97f3aab797b882c3dc628`, and one
-canonical-main recovery child must form an exact sole-parent chain. The
-cumulative changed paths from the failed release are only
+reviewed repair `f51c2e8deaf39293c9b97f3aab797b882c3dc628`, exact recovery
+child `591d96484369ae29a8fa4e61219b325997f4b679`, exact launcher-settlement
+child `a71bbe8070ca6dadeff3c4966e81bd97fee83cf7`, and one canonical-main
+control/quarantine child must form an exact sole-parent chain. The cumulative
+changed paths from the failed release are only
 `config/immutable-letsencrypt.fragment.yml`,
 `docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/disposable-launcher-guard.py`,
 `scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
-`scripts/upgrade-host-control.sh`, `scripts/validate-repository.py`, and
-`scripts/verify-host.sh`. Selection by exact failed commit keeps this lineage
-separate from all earlier exceptions. The reviewed repair corrects the proved
-ACME reload and private-state metadata boundaries without authorizing an
-identical-byte retry or claiming an additional retained-runtime cause. It uses
-the same root-only, evidence-preserving quarantine and requires the next clean
-bootstrap to target the then-current canonical main.
+`scripts/test-disposable-launcher-guard.py`, `scripts/upgrade-host-control.sh`,
+`scripts/validate-repository.py`, and `scripts/verify-host.sh`. Selection by
+exact failed commit keeps this lineage separate from all earlier exceptions;
+the final child cannot be replaced by another descendant or merge commit. The
+reviewed repair corrects the proved ACME reload and private-state metadata
+boundaries, and the launcher settlement corrects only the proved post-restore
+named-application transition. Neither authorizes an identical-byte retry or
+claims an additional retained-runtime cause. The exception uses the same
+root-only, evidence-preserving quarantine and requires the next clean bootstrap
+to target the then-current canonical main.
 
 ## Primary references
 

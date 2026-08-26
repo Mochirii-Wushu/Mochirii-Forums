@@ -725,19 +725,25 @@ sole-parent current-main control/quarantine lineage binding before the retained
 That fae bootstrap incident has a fifth, non-interchangeable recovery chain.
 Failed bootstrap commit `fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d` is the
 sole parent of reviewed ACME reload/private-state repair commit
-`f51c2e8deaf39293c9b97f3aab797b882c3dc628`; the recovery source must be one
-exact sole-parent child of that repair and the current canonical `main`. Its
-cumulative diff from the failed release is exactly
+`f51c2e8deaf39293c9b97f3aab797b882c3dc628`. Exact recovery child
+`591d96484369ae29a8fa4e61219b325997f4b679` is its sole-parent child, exact
+launcher-settlement child `a71bbe8070ca6dadeff3c4966e81bd97fee83cf7` is
+the recovery child's sole-parent child, and the recovery source must be one
+exact sole-parent child of that launcher-settlement commit and the current
+canonical `main`. Its cumulative diff from the failed release is exactly
 `config/immutable-letsencrypt.fragment.yml`, `docs/operations/DEPLOYMENT.md`,
-`docs/operations/RECOVERY.md`, `scripts/quarantine-failed-bootstrap.sh`,
-`scripts/test-contracts.py`, `scripts/upgrade-host-control.sh`,
-`scripts/validate-repository.py`, and `scripts/verify-host.sh`. Selection
-remains by exact failed commit, so this exception cannot substitute for an
-earlier lineage or authorize another path set. The reviewed repair corrects
-the proved ACME reload and private-state metadata boundaries; it does not
-authorize an identical-byte retry or identify any additional retained-runtime
-cause. The same retained-journal/runtime, stopped/absent publication,
-root-owned-state, and unrelated-journal exclusion rules apply.
+`docs/operations/RECOVERY.md`, `scripts/disposable-launcher-guard.py`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/test-disposable-launcher-guard.py`, `scripts/upgrade-host-control.sh`,
+`scripts/validate-repository.py`, and `scripts/verify-host.sh`. Selection remains
+by exact failed commit, so this exception cannot substitute for an earlier
+lineage, admit another descendant, or authorize another path set. The reviewed
+repair corrects the proved ACME reload and private-state metadata boundaries;
+the launcher settlement corrects only the proved post-restore named-application
+transition. Neither authorizes an identical-byte retry or identifies any
+additional retained-runtime cause. The same retained-journal/runtime,
+stopped/absent publication, root-owned-state, and unrelated-journal exclusion
+rules apply.
 
 After that exact upgrade, use the separately authenticated operator session:
 

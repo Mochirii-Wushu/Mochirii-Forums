@@ -31,9 +31,11 @@ readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d
 readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"
 readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d"
 readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"
+readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"
+readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"
 
 validate_source_lineage() {
-  local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit
+  local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit current_parent_commit
   local -ar legacy_expected_paths=(
     .github/workflows/deploy-forums.yml
     config/host-control-manifest.v1.json
@@ -74,8 +76,10 @@ validate_source_lineage() {
     config/immutable-letsencrypt.fragment.yml
     docs/operations/DEPLOYMENT.md
     docs/operations/RECOVERY.md
+    scripts/disposable-launcher-guard.py
     scripts/quarantine-failed-bootstrap.sh
     scripts/test-contracts.py
+    scripts/test-disposable-launcher-guard.py
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
     scripts/verify-host.sh
@@ -84,22 +88,27 @@ validate_source_lineage() {
   case "${failed}" in
     "${reviewed_legacy_failed_bootstrap_commit}")
       reviewed_recovery_commit="${reviewed_failed_bootstrap_recovery_commit}"
+      current_parent_commit="${reviewed_recovery_commit}"
       expected_paths=("${legacy_expected_paths[@]}")
       ;;
     "${reviewed_active_swap_failed_bootstrap_commit}")
       reviewed_recovery_commit="${reviewed_active_swap_recovery_commit}"
+      current_parent_commit="${reviewed_recovery_commit}"
       expected_paths=("${active_swap_expected_paths[@]}")
       ;;
     "${reviewed_acme_failed_bootstrap_commit}")
       reviewed_recovery_commit="${reviewed_acme_recovery_commit}"
+      current_parent_commit="${reviewed_recovery_commit}"
       expected_paths=("${acme_expected_paths[@]}")
       ;;
     "${reviewed_quarantine_output_failed_bootstrap_commit}")
       reviewed_recovery_commit="${reviewed_quarantine_output_recovery_commit}"
+      current_parent_commit="${reviewed_recovery_commit}"
       expected_paths=("${quarantine_output_expected_paths[@]}")
       ;;
     "${reviewed_acme_reload_privacy_failed_bootstrap_commit}")
       reviewed_recovery_commit="${reviewed_acme_reload_privacy_recovery_commit}"
+      current_parent_commit="${reviewed_acme_reload_privacy_launcher_child_commit}"
       expected_paths=("${acme_reload_privacy_expected_paths[@]}")
       ;;
     *) return 1 ;;
@@ -107,8 +116,14 @@ validate_source_lineage() {
   [[ -d ${source_root}/.git && ! -L ${source_root}/.git ]] || return 1
   [[ "$(git -C "${source_root}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${current}" ]] || return 1
   [[ "$(git -C "${source_root}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
-  [[ "$(git -C "${source_root}" rev-parse --verify "${current}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
-  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${current}" 2>/dev/null)" == "${current} ${reviewed_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-parse --verify "${current}^1" 2>/dev/null)" == "${current_parent_commit}" ]] || return 1
+  [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${current}" 2>/dev/null)" == "${current} ${current_parent_commit}" ]] || return 1
+  if [[ ${failed} == "${reviewed_acme_reload_privacy_failed_bootstrap_commit}" ]]; then
+    [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
+    [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_launcher_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_launcher_child_commit} ${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
+    [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit} ${reviewed_recovery_commit}" ]] || return 1
+  fi
   [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${failed}" ]] || return 1
   [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${failed}" ]] || return 1
   status_output="$(git -c core.fsmonitor=false -C "${source_root}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || return 1
