@@ -410,6 +410,321 @@ def test_renderer() -> None:
 def test_acme_install_byte_stability() -> None:
     tls = (ROOT / "config/immutable-letsencrypt.fragment.yml").read_text(encoding="utf-8")
     VALIDATOR.validate_immutable_acme_install_contract(tls)
+    host_verifier = (ROOT / "scripts/verify-host.sh").read_text(encoding="utf-8")
+    VALIDATOR.validate_acme_host_private_state_contract(host_verifier)
+
+    def reject_resealed_tls(hostile: str, label: str) -> None:
+        if hostile == tls:
+            raise RuntimeError(f"{label} hostile did not change the production fragment.")
+        original_fragment_sha = VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256
+        original_configure_sha = VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256
+        VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = hashlib.sha256(hostile.encode("utf-8")).hexdigest()
+        configure = VALIDATOR.yaml_executable_file_contents(hostile, "/usr/local/bin/configure-letsencrypt")
+        VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256 = hashlib.sha256(configure.encode("utf-8")).hexdigest()
+        try:
+            VALIDATOR.validate_immutable_acme_install_contract(hostile)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(f"Actual validator accepted the resealed {label} hostile.")
+        finally:
+            VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = original_fragment_sha
+            VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256 = original_configure_sha
+
+    exact_reload = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload"
+    cron = VALIDATOR.yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-cron")
+    letsencrypt = VALIDATOR.yaml_executable_file_contents(
+        tls,
+        "/usr/local/bin/letsencrypt",
+        "# MOCHIRII TLS RUN END\n",
+    )
+    cron_call = '''env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \\
+  "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"'''
+    rsa_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
+  --installcert -d "${DISCOURSE_HOSTNAME}" \\
+  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}.cer" \\
+  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"'''
+    ecc_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
+  --installcert --ecc -d "${DISCOURSE_HOSTNAME}" \\
+  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.cer" \\
+  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key"'''
+    directory_verification = '''test -d "${letsencrypt_dir}"
+test ! -L "${letsencrypt_dir}"
+test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
+    directory_normalization = '''if test -e "${letsencrypt_dir}" || test -L "${letsencrypt_dir}"; then
+  test -d "${letsencrypt_dir}"
+  test ! -L "${letsencrypt_dir}"
+  chown root:root -- "${letsencrypt_dir}"
+  chmod 0755 -- "${letsencrypt_dir}"
+else
+  install -d -m 0755 -g root -o root "${letsencrypt_dir}"
+fi
+test -d "${letsencrypt_dir}"
+test ! -L "${letsencrypt_dir}"
+test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
+    private_verification = '''for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+  test -f "${private_path}"
+  test ! -L "${private_path}"
+  test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+done'''
+    preflight = '''        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+          if test -e "${private_path}" || test -L "${private_path}"; then
+            test -f "${private_path}"
+            test ! -L "${private_path}"
+            test "$(stat -c '%h' -- "${private_path}")" = "1"
+            chown root:root -- "${private_path}"
+            chmod 0600 -- "${private_path}"
+            test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+          fi
+        done
+'''
+    exact_install = '''        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
+          --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0
+'''
+    if tls.count(preflight) != 1 or tls.count(exact_install) != 1:
+        raise RuntimeError("Private ACME preflight fixture differs from production source.")
+    without_preflight = tls.replace(preflight, "", 1)
+    post_install_preflight = without_preflight.replace(exact_install, exact_install + preflight, 1)
+    resealed_hostiles = (
+        (tls.replace(exact_reload, "sv reload nginx", 1), "runit reload"),
+        (tls.replace(exact_reload, exact_reload + " || true", 1), "masked reload failure"),
+        (tls.replace(f"        {exact_reload}\n", "", 1), "missing caller-owned reload"),
+        (
+            tls.replace(
+                '        test ! -L "${letsencrypt_dir}"',
+                "        true # linked ACME directory accepted",
+                1,
+            ),
+            "linked runtime ACME directory",
+        ),
+        (
+            tls.replace(
+                '          test ! -L "${letsencrypt_dir}"',
+                "          true # linked ACME directory accepted",
+                1,
+            ),
+            "linked configure ACME directory",
+        ),
+        (
+            tls.replace(
+                '          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"',
+                '          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key" \\\n+          --reloadcmd "true"',
+                1,
+            ),
+            "ignored internal reload failure",
+        ),
+        (tls.replace("umask 077", "umask 022", 1), "permissive umask"),
+        (post_install_preflight, "post-install private-state preflight"),
+        (
+            tls.replace(
+                'if test -e "${private_path}" || test -L "${private_path}"; then',
+                'if test -f "${private_path}"; then',
+                1,
+            ),
+            "preflight linked private state",
+        ),
+        (
+            tls.replace(
+                '''test "$(stat -c '%h' -- "${private_path}")" = "1"''',
+                "true # no preflight hard-link guard",
+                1,
+            ),
+            "preflight hard-linked private state",
+        ),
+        (
+            tls.replace(
+                '          test -f "${private_path}"\n          test ! -L "${private_path}"',
+                '          test -f "${private_path}" && test ! -L "${private_path}"',
+                1,
+            ),
+            "errexit-exempt nonregular private state",
+        ),
+        (tls.replace('test ! -L "${private_path}"', 'test -e "${private_path}"', 1), "linked private state"),
+        (tls.replace('chmod 0600 -- "${private_path}"', 'chmod 0644 -- "${private_path}"', 1), "public private-state mode"),
+        (tls.replace('"root:root 600 1"', '"root:root 644 1"', 1), "permissive metadata assertion"),
+    )
+    for hostile, label in resealed_hostiles:
+        reject_resealed_tls(hostile, label)
+
+    host_private_block = '''private_acme_directory=/var/discourse/shared/standalone/letsencrypt
+[[ -d ${private_acme_directory} && ! -L ${private_acme_directory} ]] || fail "Private ACME runtime directory is absent or linked."
+[[ "$(stat -c '%U:%G %a' -- "${private_acme_directory}")" == "root:root 755" ]] || fail "Private ACME runtime directory metadata differs."
+for private_acme_path in \\
+  /var/discourse/shared/standalone/letsencrypt/account.conf \\
+  /var/discourse/shared/standalone/letsencrypt/acme.sh.log; do
+  [[ -f ${private_acme_path} && ! -L ${private_acme_path} ]] || fail "Private ACME runtime state is absent or linked."
+  [[ "$(stat -c '%U:%G %a %h' -- "${private_acme_path}")" == "root:root 600 1" ]] || fail "Private ACME runtime state metadata differs."
+done'''
+    if host_verifier.count(host_private_block) != 1:
+        raise RuntimeError("Host-private ACME runtime block differs from production source.")
+
+    bash = shutil.which("bash")
+    if os.name == "nt":
+        git = shutil.which("git")
+        git_bash = Path(git).resolve().parent.parent / "bin" / "bash.exe" if git else None
+        bash = str(git_bash) if git_bash is not None and git_bash.is_file() else None
+    if bash is None:
+        raise RuntimeError("Bash is required for ACME private-state and reload failure fixtures.")
+
+    nonregular_harness = '''set -euo pipefail
+private_path=.
+test -f "${private_path}"
+test ! -L "${private_path}"
+printf leaked-success
+'''
+    nonregular_result = subprocess.run(
+        [bash, "-c", nonregular_harness],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+        check=False,
+    )
+    if nonregular_result.returncode == 0 or nonregular_result.stdout or nonregular_result.stderr:
+        raise RuntimeError("Separate private-state tests did not reject a nonregular directory categorically.")
+    if os.name == "posix":
+        with tempfile.TemporaryDirectory(prefix="mochirii-acme-fifo-") as directory:
+            fifo = Path(directory) / "fifo"
+            os.mkfifo(fifo, 0o600)
+            fifo_harness = nonregular_harness.replace("private_path=.", 'private_path="$1"', 1)
+            fifo_result = subprocess.run(
+                [bash, "-c", fifo_harness, "bash", str(fifo)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            if fifo_result.returncode == 0 or fifo_result.stdout or fifo_result.stderr:
+                raise RuntimeError("Separate private-state tests did not reject a FIFO categorically.")
+        with tempfile.TemporaryDirectory(prefix="mochirii-acme-linked-parent-") as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.mkdir(mode=0o755)
+            for name in ("account.conf", "acme.sh.log"):
+                private_file = target / name
+                private_file.write_text("fixture\n", encoding="utf-8", newline="\n")
+                private_file.chmod(0o600)
+            linked = root / "letsencrypt"
+            linked.symlink_to(target, target_is_directory=True)
+            runtime_seam = (
+                directory_verification.replace('"root:root 755"', '"${expected_directory_metadata}"')
+                + "\n"
+                + private_verification.replace('"root:root 600 1"', '"${expected_private_metadata}"')
+            )
+            runtime_harness = (
+                "set -euo pipefail\n"
+                'letsencrypt_dir="$1"\n'
+                'expected_directory_metadata="$(stat -c \'%U:%G %a\' -- \"$2\")"\n'
+                'expected_private_metadata="$(stat -c \'%U:%G %a %h\' -- \"$2/account.conf\")"\n'
+                + runtime_seam
+                + "\nprintf leaked-success\n"
+            )
+            runtime_result = subprocess.run(
+                [bash, "-c", runtime_harness, "bash", str(linked), str(target)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            if runtime_result.returncode == 0 or runtime_result.stdout or runtime_result.stderr:
+                raise RuntimeError("Generated ACME runtime checks accepted a linked parent directory.")
+            host_seam = (
+                host_private_block.replace(
+                    "private_acme_directory=/var/discourse/shared/standalone/letsencrypt",
+                    'private_acme_directory="$1"',
+                    1,
+                )
+                .replace(
+                    "/var/discourse/shared/standalone/letsencrypt/account.conf",
+                    '"${private_acme_directory}/account.conf"',
+                    1,
+                )
+                .replace(
+                    "/var/discourse/shared/standalone/letsencrypt/acme.sh.log",
+                    '"${private_acme_directory}/acme.sh.log"',
+                    1,
+                )
+                .replace('"root:root 755"', '"${expected_directory_metadata}"')
+                .replace('"root:root 600 1"', '"${expected_private_metadata}"')
+            )
+            host_harness = (
+                "set -euo pipefail\n"
+                "fail() { return 1; }\n"
+                'expected_directory_metadata="$(stat -c \'%U:%G %a\' -- \"$2\")"\n'
+                'expected_private_metadata="$(stat -c \'%U:%G %a %h\' -- \"$2/account.conf\")"\n'
+                + host_seam
+                + "\nprintf leaked-success\n"
+            )
+            host_result = subprocess.run(
+                [bash, "-c", host_harness, "bash", str(linked), str(target)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            if host_result.returncode == 0 or host_result.stdout or host_result.stderr:
+                raise RuntimeError("Host ACME verification accepted a linked parent directory.")
+
+    def require_reload_failure(seam: str, label: str) -> None:
+        harness = (
+            "set -euo pipefail\n"
+            "letsencrypt_dir=/unused\n"
+            "DISCOURSE_HOSTNAME=forums.invalid\n"
+            "reload_stub() { return 47; }\n"
+            + seam.replace('"${letsencrypt_dir}/acme.sh"', "/bin/true").replace(
+                exact_reload,
+                "reload_stub",
+            )
+            + "\nprintf leaked-success\n"
+        )
+        result = subprocess.run(
+            [bash, "-c", harness],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode == 0 or result.stdout or result.stderr:
+            raise RuntimeError(f"{label} accepted a caller-owned reload failure.")
+
+    if cron.count(cron_call + "\n" + exact_reload) != 1:
+        raise RuntimeError("Production cron caller-owned reload seam differs.")
+    require_reload_failure(cron_call + "\n" + exact_reload, "ACME cron")
+    if (
+        letsencrypt.count(rsa_install) != 1
+        or letsencrypt.count(ecc_install) != 1
+        or letsencrypt.index(rsa_install) >= letsencrypt.index(ecc_install)
+        or letsencrypt.index(ecc_install) >= letsencrypt.index(exact_reload)
+    ):
+        raise RuntimeError("Production initial certificate reload seam differs.")
+    require_reload_failure(
+        rsa_install + "\n" + ecc_install + "\n" + exact_reload,
+        "initial certificate installation",
+    )
+
+    host_hostiles = (
+        host_verifier.replace(
+            '[[ -d ${private_acme_directory} && ! -L ${private_acme_directory} ]]',
+            '[[ -d ${private_acme_directory} ]]',
+            1,
+        ),
+        host_verifier.replace('[[ -f ${private_acme_path} && ! -L ${private_acme_path} ]]', '[[ -f ${private_acme_path} ]]', 1),
+        host_verifier.replace('"root:root 600 1"', '"root:root 644 1"', 1),
+        host_verifier.replace('/var/discourse/shared/standalone/letsencrypt/acme.sh.log', '/tmp/acme.sh.log', 1),
+    )
+    for hostile in host_hostiles:
+        if hostile == host_verifier:
+            raise RuntimeError("Host-private ACME hostile did not change the production verifier.")
+        try:
+            VALIDATOR.validate_acme_host_private_state_contract(hostile)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Actual validator accepted a weakened host-private ACME contract.")
 
     controlled_install = '''        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
           --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0\n'''

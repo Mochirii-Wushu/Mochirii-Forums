@@ -834,6 +834,16 @@ swap_bytes="$(timeout --signal=TERM --kill-after=5s 15s swapon --show=SIZE --byt
 page_size="$(timeout --signal=TERM --kill-after=5s 15s getconf PAGESIZE)" || fail "Host page-size readback failed or timed out."
 active_swap_capacity_is_sufficient "${swap_bytes}" "${page_size}" || fail "Host has less than the reviewed 2 GiB nominal swap capacity."
 
+private_acme_directory=/var/discourse/shared/standalone/letsencrypt
+[[ -d ${private_acme_directory} && ! -L ${private_acme_directory} ]] || fail "Private ACME runtime directory is absent or linked."
+[[ "$(stat -c '%U:%G %a' -- "${private_acme_directory}")" == "root:root 755" ]] || fail "Private ACME runtime directory metadata differs."
+for private_acme_path in \
+  /var/discourse/shared/standalone/letsencrypt/account.conf \
+  /var/discourse/shared/standalone/letsencrypt/acme.sh.log; do
+  [[ -f ${private_acme_path} && ! -L ${private_acme_path} ]] || fail "Private ACME runtime state is absent or linked."
+  [[ "$(stat -c '%U:%G %a %h' -- "${private_acme_path}")" == "root:root 600 1" ]] || fail "Private ACME runtime state metadata differs."
+done
+
 [[ "$(timeout --signal=TERM --kill-after=5s 30s docker inspect --format '{{.State.Running}}' app)" == true ]] || fail "Application container is not running."
 [[ "$(timeout --signal=TERM --kill-after=5s 30s docker inspect --format '{{.State.Status}}' app)" == running ]] || fail "Application container state is not healthy-running."
 [[ "$(timeout --signal=TERM --kill-after=5s 30s docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' app)" == always ]] || fail "Application restart policy changed."

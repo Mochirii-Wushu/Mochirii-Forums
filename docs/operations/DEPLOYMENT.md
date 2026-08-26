@@ -707,6 +707,21 @@ identify or correct the retained c2f launcher/bootstrap cause. The same
 retained-journal/runtime, stopped/absent publication, root-owned-state, and
 unrelated-journal exclusion rules apply.
 
+The later bootstrap at exact release
+`fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d` is retained as a separate failed
+runtime and must not be retried with identical bytes. Bounded dual-lock evidence
+proved that RSA issuance and installation completed, the configured runit
+`nginx` reload failed while bootstrap had only the directly started ACME nginx
+master, and ECC issuance never began. The source repair uses the same absolute
+`nginx -c /etc/nginx/letsencrypt.conf -s reload` signal path for initial
+issuance and later renewal, instead of addressing a not-yet-running runit
+service. It also creates and retains the ACME account and log as root-owned
+mode-`0600` ordinary single-link files and makes terminal host verification
+fail closed on metadata drift. The repair itself does not authorize a replay:
+its exact commit must first be protected-merged and followed by a separate
+sole-parent current-main control/quarantine lineage binding before the retained
+`fae3770f...` runtime can be quarantined and a changed-byte bootstrap considered.
+
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh

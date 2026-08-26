@@ -27,8 +27,8 @@ BASE_DIGEST = "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759
 ACME_REVISION = "b7caf7a0165d80dd1556b16057a06bb32025066d"
 ACME_SOURCE_SHA256 = "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
 ACME_COMPRESSED_SHA256 = "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
-CONFIGURE_LETSENCRYPT_SHA256 = "6bc09ec78a82d5b3e1cc6046517bec6a537b2aea50bc2be00f08d889cd65af8d"
-IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "cb4c6646bcf57fb57a92b0c67f17fbc13679930f16b1a553b288f1571b8125bb"
+CONFIGURE_LETSENCRYPT_SHA256 = "069d53abb70100354d0b44bd0d3b132c9d764a952f8abc91f5e7b6d12775cfde"
+IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "1806f1aa5c9e3cc3741a422a8ea82d4dcba7137c60707ef1c186974b0685524e"
 OBSERVED_MAIN_REVISION = "00595119c368c0aef7d7019ec66ffc8fa51cce79"
 OBSERVED_MAIN_TREE = "d5b846bf4e59784c5220c48839d7eb1b45671aae"
 OBSERVED_RANGE = [
@@ -222,9 +222,9 @@ SENSITIVE_LOG_EXECUTABLE_SHA256 = "3e9ca44f8d9f4e2f89463fca323ba63388f2c059664cc
 DISCOURSE_CONNECT_VERIFIER_SHA256 = "f12739d6baba4eb4267509fd35b5e6f9ce79be19e5ec63b07e2134140041a360"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "b7356abad4a80964825cf3a8cf1290ccd7c33d65fe0095c2dd47328f046ce9d9"
-HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "a94f8b54880d6b1b9d0079c8c8a36a8199b742ce08f7ffe6d09e25fbb8d3d42a"
+HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "363ca993d78a0c3578c8118c3026f2d3410f8ecb876c1f9a12a1b684cca6d74b"
 HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "cefc6ba11ee9810f228a9f47048c95d5d441e6de854a60d0a3629de7e6d3a0e7"
-HOST_VERIFY_SOURCE_SHA256 = "f87b4d47432b9a47cfbf6a8c6f551aae57905d9999fb5d1e60f3983bdc63b5cd"
+HOST_VERIFY_SOURCE_SHA256 = "92e5ef74b22abd395c0c0a80d41d73dee46114c048e21a7cc9978b340b9c193f"
 DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "9aa1279010aac1a5b7c65b6634053792d15c17f788090456660f1a575aa9b98e"
 DISPOSABLE_NGINX_OUTLET_EXTRACTOR_RUBY = r"""
 require "yaml"
@@ -1612,7 +1612,11 @@ def require_text(text: str, snippets: list[str], label: str) -> None:
             fail(f"Missing reviewed {label} value: {snippet}")
 
 
-def yaml_executable_file_contents(text: str, path: str) -> str:
+def yaml_executable_file_contents(
+    text: str,
+    path: str,
+    boundary: str = "  - file:\n",
+) -> str:
     marker = (
         "  - file:\n"
         f"      path: {path}\n"
@@ -1622,7 +1626,6 @@ def yaml_executable_file_contents(text: str, path: str) -> str:
     if text.count(marker) != 1:
         fail("Immutable TLS executable file boundary differs.")
     remainder = text.split(marker, 1)[1]
-    boundary = "  - file:\n"
     if boundary not in remainder:
         fail("Immutable TLS executable file has no exact terminal boundary.")
     block, _ = remainder.split(boundary, 1)
@@ -1643,21 +1646,145 @@ def validate_immutable_acme_install_contract(tls: str) -> None:
     if hashlib.sha256(tls.encode("utf-8")).hexdigest() != IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256:
         fail("Immutable TLS fragment differs from the exact active reviewed structure.")
     configure = yaml_executable_file_contents(tls, "/usr/local/bin/configure-letsencrypt")
+    cron = yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-cron")
+    letsencrypt = yaml_executable_file_contents(
+        tls,
+        "/usr/local/bin/letsencrypt",
+        "# MOCHIRII TLS RUN END\n",
+    )
     if hashlib.sha256(configure.encode("utf-8")).hexdigest() != CONFIGURE_LETSENCRYPT_SHA256:
         fail("Immutable ACME configuration executable differs from the exact reviewed source.")
     exact_install = '''AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
   --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0'''
+    exact_reload = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload"
+    cron_call = '''env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \\
+  "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"'''
+    rsa_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
+  --installcert -d "${DISCOURSE_HOSTNAME}" \\
+  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}.cer" \\
+  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"'''
+    ecc_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
+  --installcert --ecc -d "${DISCOURSE_HOSTNAME}" \\
+  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.cer" \\
+  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key"'''
+    private_directory_verification = '''test -d "${letsencrypt_dir}"
+test ! -L "${letsencrypt_dir}"
+test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
+    private_directory_normalization = '''if test -e "${letsencrypt_dir}" || test -L "${letsencrypt_dir}"; then
+  test -d "${letsencrypt_dir}"
+  test ! -L "${letsencrypt_dir}"
+  chown root:root -- "${letsencrypt_dir}"
+  chmod 0755 -- "${letsencrypt_dir}"
+else
+  install -d -m 0755 -g root -o root "${letsencrypt_dir}"
+fi
+test -d "${letsencrypt_dir}"
+test ! -L "${letsencrypt_dir}"
+test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
+    private_loop = 'for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do'
+    private_regular = 'test -f "${private_path}"'
+    private_nonlink = 'test ! -L "${private_path}"'
+    private_combined = f"{private_regular} && {private_nonlink}"
+    private_single_link = '''test "$(stat -c '%h' -- "${private_path}")" = "1"'''
+    private_metadata = '''test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"'''
+    private_preflight = '''for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+  if test -e "${private_path}" || test -L "${private_path}"; then
+    test -f "${private_path}"
+    test ! -L "${private_path}"
+    test "$(stat -c '%h' -- "${private_path}")" = "1"
+    chown root:root -- "${private_path}"
+    chmod 0600 -- "${private_path}"
+    test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+  fi
+done'''
+    private_post_install = '''for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+  test -f "${private_path}"
+  test ! -L "${private_path}"
+  test "$(stat -c '%h' -- "${private_path}")" = "1"
+  chown root:root -- "${private_path}"
+  chmod 0600 -- "${private_path}"
+  test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+done'''
+    private_verification = '''for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
+  test -f "${private_path}"
+  test ! -L "${private_path}"
+  test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
+done'''
     terminal = "exec /usr/local/bin/letsencrypt\n"
+    initial_stop = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s stop"
     if (
         configure.count(exact_install) != 1
         or configure.count("./acme.sh") != 1
         or configure.count("--install") != 1
         or configure.count("NO_DETECT_SH") != 1
         or tls.count("NO_DETECT_SH") != 1
+        or tls.count("umask 077") != 3
+        or tls.count(private_loop) != 7
+        or tls.count(private_regular) != 7
+        or tls.count(private_nonlink) != 7
+        or private_combined in tls
+        or tls.count(private_single_link) != 2
+        or tls.count(private_metadata) != 7
+        or configure.count(private_directory_normalization) != 1
+        or configure.count(private_directory_verification) != 1
+        or cron.count(private_directory_verification) != 1
+        or letsencrypt.count(private_directory_verification) != 1
+        or configure.count(private_preflight) != 1
+        or configure.count(private_post_install) != 1
+        or configure.count(private_verification) != 1
+        or cron.count(private_verification) != 2
+        or letsencrypt.count(private_verification) != 2
+        or tls.count('chown root:root -- "${private_path}"') != 2
+        or tls.count('chmod 0600 -- "${private_path}"') != 2
+        or cron.count(cron_call) != 1
+        or cron.count(exact_reload) != 1
+        or cron.count(f"\n{exact_reload}\n") != 1
+        or cron.count("set -euo pipefail") != 1
+        or "exec env" in cron
+        or letsencrypt.count(rsa_install) != 1
+        or letsencrypt.count(ecc_install) != 1
+        or letsencrypt.count("--installcert") != 2
+        or letsencrypt.count(exact_reload) != 1
+        or letsencrypt.count(f"\n{exact_reload}\n") != 1
+        or letsencrypt.count(initial_stop) != 1
+        or letsencrypt.count("set -euo pipefail") != 1
+        or tls.count(exact_reload) != 2
+        or "sv reload nginx" in tls
+        or "--reloadcmd" in tls
+        or configure.index("umask 077") >= configure.index(private_directory_normalization)
+        or configure.index(private_directory_normalization) >= configure.index(private_preflight)
+        or configure.index(private_preflight) >= configure.index(exact_install)
+        or configure.index(exact_install) >= configure.index(private_post_install)
+        or configure.index(private_post_install) >= configure.index(private_verification)
+        or cron.index(private_directory_verification) >= cron.index(private_verification)
+        or cron.index(private_verification) >= cron.index(cron_call)
+        or cron.index(cron_call) >= cron.index(exact_reload)
+        or cron.index(exact_reload) >= cron.rindex(private_verification)
+        or not cron.endswith(private_verification + "\n")
+        or letsencrypt.index(private_directory_verification) >= letsencrypt.index(private_verification)
+        or letsencrypt.index(private_verification) >= letsencrypt.index(rsa_install)
+        or letsencrypt.index(rsa_install) >= letsencrypt.index(ecc_install)
+        or letsencrypt.index(ecc_install) >= letsencrypt.index(exact_reload)
+        or letsencrypt.index(exact_reload) >= letsencrypt.rindex(private_verification)
+        or letsencrypt.rindex(private_verification) >= letsencrypt.index(initial_stop)
         or not configure.endswith(terminal)
         or configure.index(exact_install) >= configure.index(terminal)
     ):
-        fail("Immutable ACME installation is not the sole reachable byte-stable invocation.")
+        fail("Immutable ACME installation, reload, or private-state contract differs.")
+
+
+def validate_acme_host_private_state_contract(host_verifier: str) -> None:
+    expected = '''private_acme_directory=/var/discourse/shared/standalone/letsencrypt
+[[ -d ${private_acme_directory} && ! -L ${private_acme_directory} ]] || fail "Private ACME runtime directory is absent or linked."
+[[ "$(stat -c '%U:%G %a' -- "${private_acme_directory}")" == "root:root 755" ]] || fail "Private ACME runtime directory metadata differs."
+for private_acme_path in \\
+  /var/discourse/shared/standalone/letsencrypt/account.conf \\
+  /var/discourse/shared/standalone/letsencrypt/acme.sh.log; do
+  [[ -f ${private_acme_path} && ! -L ${private_acme_path} ]] || fail "Private ACME runtime state is absent or linked."
+  [[ "$(stat -c '%U:%G %a %h' -- "${private_acme_path}")" == "root:root 600 1" ]] || fail "Private ACME runtime state metadata differs."
+done'''
+    if host_verifier.count(expected) != 1:
+        fail("Host verification does not bind exact root-private ACME runtime state.")
 
 
 def validate_stage4_pull_request_template(text: str) -> None:
@@ -5795,6 +5922,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     operator_sudoers = read("config/sudoers-forums-operator")
     host_security = read("scripts/verify-host-security.sh")
     host_verify = read("scripts/verify-host.sh")
+    validate_acme_host_private_state_contract(host_verify)
     deployment_checkout = read("scripts/verify-discourse-docker-checkout.sh")
     control_upgrade = read("scripts/upgrade-host-control.sh")
     failed_bootstrap_quarantine = read("scripts/quarantine-failed-bootstrap.sh")
