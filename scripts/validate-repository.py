@@ -28,9 +28,9 @@ ACME_REVISION = "b7caf7a0165d80dd1556b16057a06bb32025066d"
 ACME_SOURCE_SHA256 = "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
 ACME_COMPRESSED_SHA256 = "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
 CONFIGURE_LETSENCRYPT_SHA256 = "069d53abb70100354d0b44bd0d3b132c9d764a952f8abc91f5e7b6d12775cfde"
-IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "1aa59ab6147e4ff644b2ce9b7f42c846b10f7a2ca63502e2d007cc75e6e816c0"
-IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = "0c321d18361dbdf00ee0701df44ae53fe8eabf695b668dc1a7fba63d691784f2"
-IMMUTABLE_LETSENCRYPT_RUN_SHA256 = "d0692546160ea806aaa8325a3e89a386f80515b2a5540a39bf991495f65cd6f1"
+IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "f6af33a3fe39e8a06f493636a2c954bf34951000f08b96e2956644b6de3eb1ea"
+IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = "2a9ce4ff49e892ba470cdbaf27caedcbf3a54e193137896b662b30554878782f"
+IMMUTABLE_LETSENCRYPT_RUN_SHA256 = "5740ab22630f53ece56f453bef500dba614513ca27057363b80027b450f25a45"
 OBSERVED_MAIN_REVISION = "00595119c368c0aef7d7019ec66ffc8fa51cce79"
 OBSERVED_MAIN_TREE = "d5b846bf4e59784c5220c48839d7eb1b45671aae"
 OBSERVED_RANGE = [
@@ -1674,14 +1674,170 @@ def validate_immutable_acme_install_contract(tls: str) -> None:
     exact_reload = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload"
     cron_call = '''env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \\
   "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"'''
-    rsa_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
-  --installcert -d "${DISCOURSE_HOSTNAME}" \\
-  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}.cer" \\
-  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"'''
-    ecc_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
-  --installcert --ecc -d "${DISCOURSE_HOSTNAME}" \\
-  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.cer" \\
-  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key"'''
+    validator_tool_preflight = '''readonly certificate_minimum_lifetime_seconds="604800"
+readonly openssl_bin="/usr/bin/openssl"
+readonly stat_bin="/usr/bin/stat"
+readonly cat_bin="/usr/bin/cat"
+readonly cmp_bin="/usr/bin/cmp"
+readonly awk_bin="/usr/bin/awk"
+readonly mktemp_bin="/usr/bin/mktemp"
+readonly rm_bin="/usr/bin/rm"
+readonly rmdir_bin="/usr/bin/rmdir"
+for validator_tool in \\
+  "${openssl_bin}" \\
+  "${stat_bin}" \\
+  "${cat_bin}" \\
+  "${cmp_bin}" \\
+  "${awk_bin}" \\
+  "${mktemp_bin}" \\
+  "${rm_bin}" \\
+  "${rmdir_bin}"; do
+  if ! test -x "${validator_tool}"; then
+    printf '%s\\n' 'FORUMS_ACME_VALIDATOR_PREFLIGHT_FAILED' >&2
+    exit 1
+  fi
+done'''
+    hostname_contract = '''if [ "${DISCOURSE_HOSTNAME:-}" != "forums.mochirii.com" ] || \\
+  [ -n "${DISCOURSE_HOSTNAME_ALIASES:-}" ]; then
+  printf '%s\\n' 'FORUMS_ACME_HOSTNAME_CONTRACT_FAILED' >&2
+  exit 1
+fi'''
+    issue_call = '''  if LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
+    --issue -d "${DISCOURSE_HOSTNAME}" --keylength "${keylength}" \\
+    -w "${public_webroot}" >/dev/null 2>&1; then'''
+    install_call = '''  if ! LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
+    --installcert "${ecc_option[@]}" -d "${DISCOURSE_HOSTNAME}" \\
+    --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.cer" \\
+    --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.key" \\
+    >/dev/null 2>&1; then'''
+    helper_argument_contracts = (
+        '''case "${keylength}" in
+    4096|ec-256) ;;
+    *)
+      printf '%s\\n' 'FORUMS_ACME_ISSUANCE_CONTRACT_FAILED' >&2
+      return 1
+      ;;
+  esac''',
+        '''case "${certificate_suffix}:$2" in
+    :) ;;
+    _ecc:--ecc) ecc_option=("--ecc") ;;
+    *)
+      printf '%s\\n' 'FORUMS_ACME_INSTALL_CONTRACT_FAILED' >&2
+      return 1
+      ;;
+  esac''',
+    )
+    certificate_validator_begin = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR BEGIN\n"
+    certificate_validator_end = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR END\n"
+    certificate_validation_fragments = (
+        '[[ "${expected_owner}" =~ ^[0-9]+:[0-9]+$ ]] || return 1',
+        '''test "$("${stat_bin}" -c '%u:%g %a' -- "${certificate_directory}" 2>/dev/null)" = \\
+    "${expected_owner} 700" || return 1''',
+        '''test "$("${stat_bin}" -c '%u:%g %a %h' -- "${private_file}" 2>/dev/null)" = \\
+      "${expected_owner} 600 1" || return 1''',
+        'bounded_private_file "${leaf_path}" 65536 || return 1',
+        'bounded_private_file "${key_path}" 65536 || return 1',
+        'bounded_private_file "${ca_path}" 262144 || return 1',
+        'bounded_private_file "${fullchain_path}" 327680 || return 1',
+        '''ca_count="$("${awk_bin}" -v output_prefix="${validation_root}/ca-" ''',
+        '''[[ "${ca_count}" =~ ^[1-8]$ ]] || return 1''',
+        '''if "${cmp_bin}" -s -- "${leaf_der_path}" "${ca_der_path}"; then
+      return 1
+    fi''',
+        '''for ((comparison_index=1; comparison_index<ca_index; comparison_index++)); do
+      if "${cmp_bin}" -s -- "${validation_root}/ca-${comparison_index}.der" \\
+        "${ca_der_path}"; then
+        return 1
+      fi
+    done''',
+        '''case $'\\n'"${ca_purpose}"$'\\n' in
+      *$'\\nSSL server CA : Yes\\n'*) ;;
+      *) return 1 ;;
+    esac''',
+        '''"${openssl_bin}" verify -partial_chain -x509_strict -purpose sslserver \\
+    -no-CAfile -no-CApath -no-CAstore \\
+    -verify_hostname "${DISCOURSE_HOSTNAME}" \\
+    -CAfile "${validation_root}/ca-1.pem" \\
+    "${leaf_path}" >/dev/null 2>&1 || return 1''',
+        '''for ((ca_index=1; ca_index<ca_count; ca_index++)); do
+    next_ca_index=$((ca_index + 1))
+    "${openssl_bin}" verify -partial_chain -x509_strict -purpose any \\
+      -no-CAfile -no-CApath -no-CAstore \\
+      -CAfile "${validation_root}/ca-${next_ca_index}.pem" \\
+      "${validation_root}/ca-${ca_index}.pem" >/dev/null 2>&1 || return 1
+  done''',
+        '''terminal_ca_path="${validation_root}/ca-${ca_count}.pem"
+  if (( ca_count > 1 )); then
+    untrusted_path="${validation_root}/untrusted.pem"
+    : 2>/dev/null >"${untrusted_path}" || return 1
+    for ((ca_index=1; ca_index<ca_count; ca_index++)); do
+      "${cat_bin}" -- "${validation_root}/ca-${ca_index}.pem" \\
+        2>/dev/null >>"${untrusted_path}" || return 1
+    done
+    bounded_private_file "${untrusted_path}" 262144 || return 1
+    "${openssl_bin}" verify -partial_chain -x509_strict -purpose sslserver \\
+      -no-CAfile -no-CApath -no-CAstore \\
+      -verify_hostname "${DISCOURSE_HOSTNAME}" \\
+      -untrusted "${untrusted_path}" -CAfile "${terminal_ca_path}" \\
+      "${leaf_path}" >/dev/null 2>&1 || return 1
+  else
+    "${openssl_bin}" verify -partial_chain -x509_strict -purpose sslserver \\
+      -no-CAfile -no-CApath -no-CAstore \\
+      -verify_hostname "${DISCOURSE_HOSTNAME}" \\
+      -CAfile "${terminal_ca_path}" \\
+      "${leaf_path}" >/dev/null 2>&1 || return 1
+  fi''',
+        '''"${openssl_bin}" crl2pkcs7 -nocrl -certfile "${ca_path}" 2>/dev/null | \\
+    "${openssl_bin}" pkcs7 -print_certs -noout >/dev/null 2>&1 || return 1''',
+        '''"${cat_bin}" -- "${leaf_path}" "${ca_path}" 2>/dev/null >"${expected_fullchain_path}" || return 1
+  "${cmp_bin}" -s -- "${fullchain_path}" "${expected_fullchain_path}" || return 1''',
+        '''"${openssl_bin}" x509 -in "${leaf_path}" -pubkey -noout 2>/dev/null | \\
+    "${openssl_bin}" pkey -pubin -outform DER 2>/dev/null >"${leaf_public_path}" || return 1''',
+        '''"${openssl_bin}" pkey -in "${key_path}" -pubout -outform DER \\
+    2>/dev/null >"${key_public_path}" || return 1''',
+        '''"${cmp_bin}" -s -- "${leaf_public_path}" "${key_public_path}" || return 1''',
+        '''"${openssl_bin}" x509 -in "${leaf_path}" -checkend \\
+    "${certificate_minimum_lifetime_seconds}" -noout >/dev/null 2>&1 || return 1''',
+        '''case "${san_output}" in
+    $'X509v3 Subject Alternative Name:\\n    DNS:forums.mochirii.com'|\\
+      $'X509v3 Subject Alternative Name: \\n    DNS:forums.mochirii.com') ;;
+    *) return 1 ;;
+  esac''',
+        '''leaf_public_algorithm="$("${openssl_bin}" x509 -in "${leaf_path}" -noout \\
+    -text 2>/dev/null | "${awk_bin}" '
+      BEGIN { count=0 }
+      /^[[:space:]]*Public Key Algorithm: / {
+        count++
+        line=$0
+        sub(/^[[:space:]]*Public Key Algorithm: /, "", line)
+        value=line
+      }
+      END {
+        if (count != 1) exit 2
+        print value
+      }
+    ' 2>/dev/null)" || return 1''',
+        '''[ "${leaf_public_algorithm}" = "rsaEncryption" ] || return 1''',
+        '''[ "${leaf_public_algorithm}" = "id-ecPublicKey" ] || return 1''',
+        '''[[ "${key_details}" = 'Public-Key: (4096 bit)'$'\\n'* ]] || return 1''',
+        '''[[ "${key_details}" = *$'\\nASN1 OID: prime256v1\\nNIST CURVE: P-256' ]] || return 1''',
+    )
+    acme_order = '''# MOCHIRII ACME ORDER BEGIN
+issue_certificate "4096"
+if ! validate_certificate_material "" "rsa" "0:0"; then
+  printf '%s\\n' 'FORUMS_ACME_RSA_MATERIAL_INVALID' >&2
+  exit 1
+fi
+install_certificate "" ""
+
+issue_certificate "ec-256"
+if ! validate_certificate_material "_ecc" "ecc" "0:0"; then
+  printf '%s\\n' 'FORUMS_ACME_ECC_MATERIAL_INVALID' >&2
+  exit 1
+fi
+install_certificate "_ecc" "--ecc"
+/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload
+# MOCHIRII ACME ORDER END'''
     private_directory_verification = '''test -d "${letsencrypt_dir}"
 test ! -L "${letsencrypt_dir}"
 test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
@@ -1768,6 +1924,7 @@ done'''
         or letsencrypt.count(private_verification) != 2
         or letsencrypt.count(challenge_paths) != 1
         or letsencrypt.count(challenge_preparation) != 1
+        or letsencrypt.count(challenge_preparation + "\n" + initial_start) != 1
         or tls.count('chown root:root -- "${private_path}"') != 2
         or tls.count('chmod 0600 -- "${private_path}"') != 2
         or cron.count(cron_call) != 1
@@ -1775,9 +1932,24 @@ done'''
         or cron.count(f"\n{exact_reload}\n") != 1
         or cron.count("set -euo pipefail") != 1
         or "exec env" in cron
-        or letsencrypt.count(rsa_install) != 1
-        or letsencrypt.count(ecc_install) != 1
-        or letsencrypt.count("--installcert") != 2
+        or letsencrypt.count(validator_tool_preflight) != 1
+        or letsencrypt.count(hostname_contract) != 1
+        or letsencrypt.count(issue_call) != 1
+        or letsencrypt.count(install_call) != 1
+        or any(letsencrypt.count(fragment) != 1 for fragment in helper_argument_contracts)
+        or letsencrypt.count(certificate_validator_begin) != 1
+        or letsencrypt.count(certificate_validator_end) != 1
+        or any(letsencrypt.count(fragment) != 1 for fragment in certificate_validation_fragments)
+        or letsencrypt.count(acme_order) != 1
+        or letsencrypt.count("--issue") != 1
+        or letsencrypt.count("--installcert") != 1
+        or letsencrypt.count('issue_certificate "4096"') != 1
+        or letsencrypt.count('issue_certificate "ec-256"') != 1
+        or letsencrypt.count('install_certificate "" ""') != 1
+        or letsencrypt.count('install_certificate "_ecc" "--ecc"') != 1
+        or "--force" in letsencrypt
+        or "cert_exists" in letsencrypt
+        or "extra_domains" in letsencrypt
         or letsencrypt.count(exact_reload) != 1
         or letsencrypt.count(f"\n{exact_reload}\n") != 1
         or letsencrypt.count(f"\n{initial_start}\n") != 1
@@ -1800,9 +1972,14 @@ done'''
         or letsencrypt.index(private_directory_verification) >= letsencrypt.index(private_verification)
         or letsencrypt.index(private_verification) >= letsencrypt.index(challenge_preparation)
         or letsencrypt.index(challenge_preparation) >= letsencrypt.index(f"\n{initial_start}\n")
-        or letsencrypt.index(f"\n{initial_start}\n") >= letsencrypt.index(rsa_install)
-        or letsencrypt.index(rsa_install) >= letsencrypt.index(ecc_install)
-        or letsencrypt.index(ecc_install) >= letsencrypt.index(exact_reload)
+        or letsencrypt.index(validator_tool_preflight) >= letsencrypt.index(hostname_contract)
+        or letsencrypt.index(hostname_contract) >= letsencrypt.index(private_directory_verification)
+        or letsencrypt.index(issue_call) >= letsencrypt.index(install_call)
+        or letsencrypt.index(install_call) >= letsencrypt.index(certificate_validator_begin)
+        or letsencrypt.index(certificate_validator_begin) >= letsencrypt.index(certificate_validator_end)
+        or letsencrypt.index(certificate_validator_end) >= letsencrypt.index(acme_order)
+        or letsencrypt.index(f"\n{initial_start}\n") >= letsencrypt.index(acme_order)
+        or letsencrypt.index(acme_order) >= letsencrypt.rindex(private_verification)
         or letsencrypt.index(exact_reload) >= letsencrypt.rindex(private_verification)
         or letsencrypt.rindex(private_verification) >= letsencrypt.index(initial_stop)
         or not configure.endswith(terminal)

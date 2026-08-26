@@ -418,9 +418,23 @@ def test_acme_install_byte_stability() -> None:
             raise RuntimeError(f"{label} hostile did not change the production fragment.")
         original_fragment_sha = VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256
         original_configure_sha = VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256
+        original_executable_sha = VALIDATOR.IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256
+        original_run_sha = VALIDATOR.IMMUTABLE_LETSENCRYPT_RUN_SHA256
         VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = hashlib.sha256(hostile.encode("utf-8")).hexdigest()
         configure = VALIDATOR.yaml_executable_file_contents(hostile, "/usr/local/bin/configure-letsencrypt")
+        letsencrypt_hostile = VALIDATOR.yaml_executable_file_contents(
+            hostile,
+            "/usr/local/bin/letsencrypt",
+            "# MOCHIRII TLS RUN END\n",
+        )
+        run_begin = "# MOCHIRII TLS RUN BEGIN\n"
+        run_end = "# MOCHIRII TLS RUN END\n"
+        run_section = hostile[hostile.index(run_begin) + len(run_begin) : hostile.index(run_end)]
         VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256 = hashlib.sha256(configure.encode("utf-8")).hexdigest()
+        VALIDATOR.IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = hashlib.sha256(
+            letsencrypt_hostile.encode("utf-8")
+        ).hexdigest()
+        VALIDATOR.IMMUTABLE_LETSENCRYPT_RUN_SHA256 = hashlib.sha256(run_section.encode("utf-8")).hexdigest()
         try:
             VALIDATOR.validate_immutable_acme_install_contract(hostile)
         except RuntimeError:
@@ -430,6 +444,8 @@ def test_acme_install_byte_stability() -> None:
         finally:
             VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = original_fragment_sha
             VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256 = original_configure_sha
+            VALIDATOR.IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = original_executable_sha
+            VALIDATOR.IMMUTABLE_LETSENCRYPT_RUN_SHA256 = original_run_sha
 
     exact_reload = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload"
     cron = VALIDATOR.yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-cron")
@@ -438,16 +454,28 @@ def test_acme_install_byte_stability() -> None:
         "/usr/local/bin/letsencrypt",
         "# MOCHIRII TLS RUN END\n",
     )
+    validator_begin = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR BEGIN\n"
+    validator_end = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR END\n"
+    order_begin = "# MOCHIRII ACME ORDER BEGIN\n"
+    order_end = "# MOCHIRII ACME ORDER END\n"
+    if any(letsencrypt.count(marker) != 1 for marker in (validator_begin, validator_end, order_begin, order_end)):
+        raise RuntimeError("Production certificate validator or ordering boundary differs.")
+    certificate_validator_source = letsencrypt[
+        letsencrypt.index(validator_begin) + len(validator_begin) : letsencrypt.index(validator_end)
+    ]
+    acme_order_source = letsencrypt[
+        letsencrypt.index(order_begin) + len(order_begin) : letsencrypt.index(order_end)
+    ]
+    issue_source = letsencrypt[
+        letsencrypt.index("issue_certificate() {\n") : letsencrypt.index("\n\ninstall_certificate() {\n")
+    ]
+    install_source = letsencrypt[
+        letsencrypt.index("install_certificate() {\n") : letsencrypt.index("\n\n" + validator_begin)
+    ]
     cron_call = '''env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \\
   "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"'''
-    rsa_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
-  --installcert -d "${DISCOURSE_HOSTNAME}" \\
-  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}.cer" \\
-  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"'''
-    ecc_install = '''LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
-  --installcert --ecc -d "${DISCOURSE_HOSTNAME}" \\
-  --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.cer" \\
-  --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}_ecc.key"'''
+    rsa_install = 'install_certificate "" ""'
+    ecc_install = 'install_certificate "_ecc" "--ecc"'
     directory_verification = '''test -d "${letsencrypt_dir}"
 test ! -L "${letsencrypt_dir}"
 test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
@@ -545,6 +573,67 @@ done'''
         (tls.replace(f"        {exact_reload}\n", "", 1), "missing caller-owned reload"),
         (
             tls.replace(
+                '''            for ((comparison_index=1; comparison_index<ca_index; comparison_index++)); do
+              if "${cmp_bin}" -s -- "${validation_root}/ca-${comparison_index}.der" \\
+                "${ca_der_path}"; then
+                return 1
+              fi
+            done
+''',
+                "            true # duplicate CA identities accepted\n",
+                1,
+            ),
+            "duplicate CA identities",
+        ),
+        (
+            tls.replace(
+                '-CAfile "${validation_root}/ca-1.pem"',
+                '-CAfile "${ca_path}"',
+                1,
+            ),
+            "unordered leaf trust bundle",
+        ),
+        (
+            tls.replace(
+                '''          for ((ca_index=1; ca_index<ca_count; ca_index++)); do
+            next_ca_index=$((ca_index + 1))
+            "${openssl_bin}" verify -partial_chain -x509_strict -purpose any \\
+              -no-CAfile -no-CApath -no-CAstore \\
+              -CAfile "${validation_root}/ca-${next_ca_index}.pem" \\
+              "${validation_root}/ca-${ca_index}.pem" >/dev/null 2>&1 || return 1
+          done
+''',
+                "          true # ordered CA issuer edges accepted without verification\n",
+                1,
+            ),
+            "unordered CA issuer edges",
+        ),
+        (
+            tls.replace(
+                '-untrusted "${untrusted_path}" -CAfile "${terminal_ca_path}"',
+                '-CAfile "${terminal_ca_path}"',
+                1,
+            ),
+            "missing cumulative full-path intermediates",
+        ),
+        (
+            tls.replace(
+                '[ "${leaf_public_algorithm}" = "rsaEncryption" ] || return 1',
+                "true # RSA SPKI algorithm identity accepted",
+                1,
+            ),
+            "unbound RSA SPKI algorithm identity",
+        ),
+        (
+            tls.replace(
+                '2>/dev/null >>"${untrusted_path}"',
+                '>>"${untrusted_path}" 2>/dev/null',
+                1,
+            ),
+            "filename-leaking temporary output redirection order",
+        ),
+        (
+            tls.replace(
                 '        test ! -L "${letsencrypt_dir}"',
                 "        true # linked ACME directory accepted",
                 1,
@@ -561,8 +650,8 @@ done'''
         ),
         (
             tls.replace(
-                '          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key"',
-                '          --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}.key" \\\n+          --reloadcmd "true"',
+                '--installcert "${ecc_option[@]}"',
+                '--installcert --reloadcmd true "${ecc_option[@]}"',
                 1,
             ),
             "ignored internal reload failure",
@@ -634,6 +723,176 @@ done'''
         bash = str(git_bash) if git_bash is not None and git_bash.is_file() else None
     if bash is None:
         raise RuntimeError("Bash is required for ACME private-state and reload failure fixtures.")
+
+    if acme_order_source.count(exact_reload) != 1:
+        raise RuntimeError("Production ACME order does not contain one exact reload.")
+    order_harness_source = acme_order_source.replace(exact_reload, 'record "reload"', 1)
+
+    def run_acme_order(failing_algorithm: str) -> tuple[subprocess.CompletedProcess[bytes], bytes]:
+        with tempfile.TemporaryDirectory(prefix="mochirii-acme-order-") as directory:
+            root = Path(directory)
+            events = root / "events.log"
+            harness = (
+                "set -euo pipefail\n"
+                'events="$1"\n'
+                'failing_algorithm="$2"\n'
+                ': >"${events}"\n'
+                "record() { printf '%s\\n' \"$1\" >>\"${events}\"; }\n"
+                'issue_certificate() { record "issue:$1"; }\n'
+                'validate_certificate_material() { record "validate:$2"; [[ "${failing_algorithm}" != "$2" ]]; }\n'
+                'install_certificate() { if [[ -z "$1" ]]; then record "install:rsa"; else record "install:ecc"; fi; }\n'
+                + order_harness_source
+            )
+            result = subprocess.run(
+                [bash, "-c", harness, "bash", "events.log", failing_algorithm],
+                cwd=root,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            return result, events.read_bytes()
+
+    successful_order, successful_events = run_acme_order("")
+    expected_successful_events = (
+        b"issue:4096\nvalidate:rsa\ninstall:rsa\n"
+        b"issue:ec-256\nvalidate:ecc\ninstall:ecc\nreload\n"
+    )
+    if (
+        successful_order.returncode != 0
+        or successful_order.stdout
+        or successful_order.stderr
+        or successful_events != expected_successful_events
+    ):
+        raise RuntimeError("Actual ACME sequence did not preserve issue-validate-install ordering.")
+    rsa_rejection, rsa_events = run_acme_order("rsa")
+    if (
+        rsa_rejection.returncode == 0
+        or rsa_rejection.stdout
+        or rsa_rejection.stderr != b"FORUMS_ACME_RSA_MATERIAL_INVALID\n"
+        or rsa_events != b"issue:4096\nvalidate:rsa\n"
+    ):
+        raise RuntimeError("RSA material rejection retried issuance or reached a downstream action.")
+    ecc_rejection, ecc_events = run_acme_order("ecc")
+    if (
+        ecc_rejection.returncode == 0
+        or ecc_rejection.stdout
+        or ecc_rejection.stderr != b"FORUMS_ACME_ECC_MATERIAL_INVALID\n"
+        or ecc_events
+        != b"issue:4096\nvalidate:rsa\ninstall:rsa\nissue:ec-256\nvalidate:ecc\n"
+    ):
+        raise RuntimeError("ECC material rejection retried issuance or reached a downstream action.")
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-acme-issue-") as directory:
+        root = Path(directory)
+        runtime = root / "runtime"
+        runtime.mkdir()
+        acme_stub = runtime / "acme.sh"
+        acme_stub.write_text(
+            "#!/bin/bash\n"
+            "set -euo pipefail\n"
+            "printf '%s\\n' \"$*\" >>\"$PWD/issue-events.log\"\n"
+            "exit \"${ISSUE_STATUS:?}\"\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        acme_stub.chmod(0o755)
+        issue_harness = (
+            "set -euo pipefail\n"
+            'letsencrypt_dir="$PWD/runtime"\n'
+            'public_webroot="/fixture/public"\n'
+            'DISCOURSE_HOSTNAME="forums.mochirii.com"\n'
+            + issue_source
+            + '\nissue_certificate "$1"\n'
+        )
+        expected_issue = b"--issue -d forums.mochirii.com --keylength 4096 -w /fixture/public\n"
+        for status, should_pass in (("0", True), ("2", True), ("1", False)):
+            events = root / "issue-events.log"
+            if events.exists():
+                events.unlink()
+            child_environment = os.environ.copy()
+            child_environment["ISSUE_STATUS"] = status
+            result = subprocess.run(
+                [bash, "-c", issue_harness, "bash", "4096"],
+                cwd=root,
+                env=child_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            expected_stderr = b"" if should_pass else b"FORUMS_ACME_ISSUANCE_FAILED\n"
+            if (
+                (result.returncode == 0) != should_pass
+                or result.stdout
+                or result.stderr != expected_stderr
+                or not events.is_file()
+                or events.read_bytes() != expected_issue
+            ):
+                raise RuntimeError("Actual ACME issue helper retried, forced, or mishandled a pinned status.")
+
+        events = root / "issue-events.log"
+        if events.exists():
+            events.unlink()
+        invalid_environment = os.environ.copy()
+        invalid_environment["ISSUE_STATUS"] = "0"
+        invalid_issue = subprocess.run(
+            [bash, "-c", issue_harness, "bash", "rsa-4096"],
+            cwd=root,
+            env=invalid_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+        if (
+            invalid_issue.returncode == 0
+            or invalid_issue.stdout
+            or invalid_issue.stderr != b"FORUMS_ACME_ISSUANCE_CONTRACT_FAILED\n"
+            or events.exists()
+        ):
+            raise RuntimeError("Actual ACME issue helper accepted an unreviewed key-length contract.")
+
+        install_harness = (
+            "set -euo pipefail\n"
+            'letsencrypt_dir="$PWD/runtime"\n'
+            'DISCOURSE_HOSTNAME="forums.mochirii.com"\n'
+            + install_source
+            + '\ninstall_certificate "$1" "$2"\n'
+        )
+        install_cases = (
+            ("", "", True, b"--installcert -d forums.mochirii.com --fullchainpath /shared/ssl/forums.mochirii.com.cer --keypath /shared/ssl/forums.mochirii.com.key\n"),
+            ("_ecc", "--ecc", True, b"--installcert --ecc -d forums.mochirii.com --fullchainpath /shared/ssl/forums.mochirii.com_ecc.cer --keypath /shared/ssl/forums.mochirii.com_ecc.key\n"),
+            ("_ecc", "", False, b""),
+            ("_other", "--ecc", False, b""),
+        )
+        for suffix, option, should_pass, expected_event in install_cases:
+            if events.exists():
+                events.unlink()
+            install_environment = os.environ.copy()
+            install_environment["ISSUE_STATUS"] = "0"
+            result = subprocess.run(
+                [bash, "-c", install_harness, "bash", suffix, option],
+                cwd=root,
+                env=install_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            expected_stderr = b"" if should_pass else b"FORUMS_ACME_INSTALL_CONTRACT_FAILED\n"
+            observed_event = events.read_bytes() if events.is_file() else b""
+            if (
+                (result.returncode == 0) != should_pass
+                or result.stdout
+                or result.stderr != expected_stderr
+                or observed_event != expected_event
+            ):
+                raise RuntimeError("Actual ACME install helper accepted an unreviewed suffix or option contract.")
 
     nonregular_harness = '''set -euo pipefail
 private_path=.
@@ -742,6 +1001,7 @@ printf leaked-success
             "set -euo pipefail\n"
             "letsencrypt_dir=/unused\n"
             "DISCOURSE_HOSTNAME=forums.invalid\n"
+            "install_certificate() { return 0; }\n"
             "reload_stub() { return 47; }\n"
             + seam.replace('"${letsencrypt_dir}/acme.sh"', "/bin/true").replace(
                 exact_reload,
@@ -858,6 +1118,636 @@ printf leaked-success
     # Linux CI; Windows still binds the exact rendered command and pinned bytes.
     if os.name == "nt":
         return
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-acme-redirection-") as directory:
+        missing_target = Path(directory) / "missing" / "private-output"
+        redirection_result = subprocess.run(
+            [bash, "-c", ': 2>/dev/null >"$1"', "bash", str(missing_target)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            check=False,
+        )
+        if redirection_result.returncode == 0 or redirection_result.stdout or redirection_result.stderr:
+            raise RuntimeError("Private temporary output-open failure was not categorically suppressed.")
+
+    openssl = Path("/usr/bin/openssl")
+    if not openssl.is_file() or openssl.is_symlink():
+        raise RuntimeError("Exact OpenSSL executable is required for certificate material fixtures.")
+
+    def run_openssl(*arguments: str) -> None:
+        result = subprocess.run(
+            [str(openssl), *arguments],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Hermetic OpenSSL certificate fixture generation failed.")
+
+    def write_extension_file(path: Path, lines: tuple[str, ...]) -> None:
+        path.write_text("\n".join(lines) + "\n", encoding="ascii", newline="\n")
+
+    def make_intermediate(
+        root: Path,
+        name: str,
+        issuer_certificate: Path,
+        issuer_key: Path,
+        serial: int,
+        path_length: int,
+        extra_extensions: tuple[str, ...] = (),
+    ) -> tuple[Path, Path]:
+        key = root / f"{name}.key"
+        request = root / f"{name}.csr"
+        certificate = root / f"{name}.pem"
+        extensions = root / f"{name}.ext"
+        run_openssl(
+            "req",
+            "-new",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(request),
+            "-subj",
+            f"/CN={name}",
+        )
+        write_extension_file(
+            extensions,
+            (
+                f"basicConstraints=critical,CA:TRUE,pathlen:{path_length}",
+                "keyUsage=critical,keyCertSign,cRLSign",
+                "subjectKeyIdentifier=hash",
+                "authorityKeyIdentifier=keyid,issuer",
+            )
+            + extra_extensions,
+        )
+        run_openssl(
+            "x509",
+            "-req",
+            "-in",
+            str(request),
+            "-CA",
+            str(issuer_certificate),
+            "-CAkey",
+            str(issuer_key),
+            "-set_serial",
+            str(serial),
+            "-days",
+            "30",
+            "-sha256",
+            "-extfile",
+            str(extensions),
+            "-out",
+            str(certificate),
+        )
+        return certificate, key
+
+    def make_leaf(
+        root: Path,
+        name: str,
+        algorithm: str,
+        issuer_certificate: Path,
+        issuer_key: Path,
+        serial: int,
+        san: str,
+        days: int,
+        existing_key: Path | None = None,
+    ) -> tuple[Path, Path]:
+        key = existing_key if existing_key is not None else root / f"{name}.key"
+        request = root / f"{name}.csr"
+        certificate = root / f"{name}.pem"
+        extensions = root / f"{name}.ext"
+        if existing_key is None:
+            if algorithm == "rsa":
+                run_openssl(
+                    "genpkey",
+                    "-algorithm",
+                    "RSA",
+                    "-pkeyopt",
+                    "rsa_keygen_bits:4096",
+                    "-out",
+                    str(key),
+                )
+            elif algorithm == "ecc":
+                run_openssl(
+                    "genpkey",
+                    "-algorithm",
+                    "EC",
+                    "-pkeyopt",
+                    "ec_paramgen_curve:prime256v1",
+                    "-out",
+                    str(key),
+                )
+            else:
+                raise RuntimeError("Unknown certificate fixture algorithm.")
+        run_openssl(
+            "req",
+            "-new",
+            "-key",
+            str(key),
+            "-out",
+            str(request),
+            "-subj",
+            "/CN=forums.mochirii.com",
+        )
+        key_usage = "digitalSignature,keyEncipherment" if algorithm == "rsa" else "digitalSignature"
+        write_extension_file(
+            extensions,
+            (
+                "basicConstraints=critical,CA:FALSE",
+                f"keyUsage=critical,{key_usage}",
+                "extendedKeyUsage=serverAuth",
+                f"subjectAltName={san}",
+                "subjectKeyIdentifier=hash",
+                "authorityKeyIdentifier=keyid,issuer",
+            ),
+        )
+        run_openssl(
+            "x509",
+            "-req",
+            "-in",
+            str(request),
+            "-CA",
+            str(issuer_certificate),
+            "-CAkey",
+            str(issuer_key),
+            "-set_serial",
+            str(serial),
+            "-days",
+            str(days),
+            "-sha256",
+            "-extfile",
+            str(extensions),
+            "-out",
+            str(certificate),
+        )
+        return certificate, key
+
+    def install_fixture_material(
+        letsencrypt_root: Path,
+        suffix: str,
+        leaf: Path,
+        key: Path,
+        issuers: tuple[Path, ...],
+    ) -> Path:
+        certificate_directory = letsencrypt_root / f"forums.mochirii.com{suffix}"
+        certificate_directory.mkdir(mode=0o700)
+        certificate_directory.chmod(0o700)
+        leaf_bytes = leaf.read_bytes()
+        ca_bytes = b"".join(path.read_bytes() for path in issuers)
+        material = {
+            "forums.mochirii.com.cer": leaf_bytes,
+            "forums.mochirii.com.key": key.read_bytes(),
+            "ca.cer": ca_bytes,
+            "fullchain.cer": leaf_bytes + ca_bytes,
+        }
+        for filename, content in material.items():
+            target = certificate_directory / filename
+            target.write_bytes(content)
+            target.chmod(0o600)
+        return certificate_directory
+
+    material_harness = (
+        "set -euo pipefail\n"
+        "umask 077\n"
+        'letsencrypt_dir="$1"\n'
+        'certificate_suffix="$2"\n'
+        'expected_algorithm="$3"\n'
+        'expected_owner="$4"\n'
+        'DISCOURSE_HOSTNAME="forums.mochirii.com"\n'
+        'certificate_minimum_lifetime_seconds="604800"\n'
+        'openssl_bin="/usr/bin/openssl"\n'
+        'stat_bin="/usr/bin/stat"\n'
+        'cat_bin="/usr/bin/cat"\n'
+        'cmp_bin="/usr/bin/cmp"\n'
+        'awk_bin="/usr/bin/awk"\n'
+        'mktemp_bin="/usr/bin/mktemp"\n'
+        'rm_bin="/usr/bin/rm"\n'
+        'rmdir_bin="/usr/bin/rmdir"\n'
+        + certificate_validator_source
+        + '\nvalidate_certificate_material "${certificate_suffix}" "${expected_algorithm}" "${expected_owner}"\n'
+    )
+    fixture_owner = f"{os.getuid()}:{os.getgid()}"
+
+    def run_material_validator(
+        letsencrypt_root: Path,
+        suffix: str,
+        algorithm: str,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [bash, "-c", material_harness, "bash", str(letsencrypt_root), suffix, algorithm, fixture_owner],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-acme-material-") as directory:
+        fixture_root = Path(directory)
+        authority_root = fixture_root / "authority"
+        authority_root.mkdir(mode=0o700)
+        root_key = authority_root / "root.key"
+        root_certificate = authority_root / "root.pem"
+        run_openssl(
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(root_key),
+            "-out",
+            str(root_certificate),
+            "-days",
+            "30",
+            "-sha256",
+            "-subj",
+            "/CN=Mochirii Fixture Root",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE,pathlen:2",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+            "-addext",
+            "subjectKeyIdentifier=hash",
+        )
+        unrelated_root_key = authority_root / "unrelated-root.key"
+        unrelated_root_certificate = authority_root / "unrelated-root.pem"
+        run_openssl(
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(unrelated_root_key),
+            "-out",
+            str(unrelated_root_certificate),
+            "-days",
+            "30",
+            "-sha256",
+            "-subj",
+            "/CN=Mochirii Unrelated Fixture Root",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE,pathlen:2",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+            "-addext",
+            "subjectKeyIdentifier=hash",
+        )
+        intermediate_one, intermediate_one_key = make_intermediate(
+            authority_root,
+            "Mochirii Fixture Intermediate One",
+            root_certificate,
+            root_key,
+            101,
+            1,
+        )
+        intermediate_two, intermediate_two_key = make_intermediate(
+            authority_root,
+            "Mochirii Fixture Intermediate Two",
+            intermediate_one,
+            intermediate_one_key,
+            102,
+            0,
+        )
+        rsa_leaf, rsa_key = make_leaf(
+            authority_root,
+            "rsa-leaf",
+            "rsa",
+            intermediate_one,
+            intermediate_one_key,
+            201,
+            "DNS:forums.mochirii.com",
+            30,
+        )
+        ecc_leaf, ecc_key = make_leaf(
+            authority_root,
+            "ecc-leaf",
+            "ecc",
+            intermediate_two,
+            intermediate_two_key,
+            202,
+            "DNS:forums.mochirii.com",
+            30,
+        )
+        rsa_pss_key = authority_root / "rsa-pss.key"
+        run_openssl(
+            "genpkey",
+            "-algorithm",
+            "RSA-PSS",
+            "-pkeyopt",
+            "rsa_keygen_bits:4096",
+            "-out",
+            str(rsa_pss_key),
+        )
+        rsa_pss_leaf, _ = make_leaf(
+            authority_root,
+            "rsa-pss-leaf",
+            "rsa",
+            intermediate_one,
+            intermediate_one_key,
+            208,
+            "DNS:forums.mochirii.com",
+            30,
+            rsa_pss_key,
+        )
+        constrained_intermediate_one, constrained_intermediate_one_key = make_intermediate(
+            authority_root,
+            "Mochirii Constrained Intermediate One",
+            root_certificate,
+            root_key,
+            103,
+            1,
+            ("nameConstraints=critical,permitted;DNS:.allowed.invalid",),
+        )
+        constrained_intermediate_two, constrained_intermediate_two_key = make_intermediate(
+            authority_root,
+            "Mochirii Constrained Intermediate Two",
+            constrained_intermediate_one,
+            constrained_intermediate_one_key,
+            104,
+            0,
+        )
+        constrained_leaf, constrained_key = make_leaf(
+            authority_root,
+            "constrained-leaf",
+            "rsa",
+            constrained_intermediate_two,
+            constrained_intermediate_two_key,
+            206,
+            "DNS:forums.mochirii.com",
+            30,
+        )
+        path_length_intermediate, path_length_intermediate_key = make_intermediate(
+            authority_root,
+            "Mochirii Path Length Intermediate",
+            intermediate_two,
+            intermediate_two_key,
+            105,
+            0,
+        )
+        path_length_leaf, path_length_key = make_leaf(
+            authority_root,
+            "path-length-leaf",
+            "rsa",
+            path_length_intermediate,
+            path_length_intermediate_key,
+            207,
+            "DNS:forums.mochirii.com",
+            30,
+        )
+        letsencrypt_fixture = fixture_root / "letsencrypt"
+        letsencrypt_fixture.mkdir(mode=0o700)
+        letsencrypt_fixture.chmod(0o700)
+        install_fixture_material(letsencrypt_fixture, "", rsa_leaf, rsa_key, (intermediate_one,))
+        install_fixture_material(
+            letsencrypt_fixture,
+            "_ecc",
+            ecc_leaf,
+            ecc_key,
+            (intermediate_two, intermediate_one),
+        )
+        for suffix, algorithm in (("", "rsa"), ("_ecc", "ecc")):
+            result = run_material_validator(letsencrypt_fixture, suffix, algorithm)
+            if result.returncode != 0 or result.stdout or result.stderr:
+                raise RuntimeError(
+                    f"Actual certificate validator rejected the valid {algorithm} single- or multi-intermediate chain."
+                )
+
+        hostile_counter = 0
+
+        def reject_material(
+            label: str,
+            mutation,
+            suffix: str = "",
+            algorithm: str = "rsa",
+        ) -> None:
+            nonlocal hostile_counter
+            hostile_counter += 1
+            hostile_root = fixture_root / f"hostile-{hostile_counter}"
+            shutil.copytree(letsencrypt_fixture, hostile_root)
+            mutation(hostile_root / f"forums.mochirii.com{suffix}")
+            result = run_material_validator(hostile_root, suffix, algorithm)
+            if result.returncode == 0 or result.stdout or result.stderr:
+                raise RuntimeError(f"Actual certificate validator accepted or disclosed the {label} hostile.")
+
+        def rewrite_fullchain(certificate_directory: Path) -> None:
+            (certificate_directory / "fullchain.cer").write_bytes(
+                (certificate_directory / "forums.mochirii.com.cer").read_bytes()
+                + (certificate_directory / "ca.cer").read_bytes()
+            )
+            (certificate_directory / "fullchain.cer").chmod(0o600)
+
+        def replace_material(
+            certificate_directory: Path,
+            leaf: Path,
+            key: Path,
+            issuers: tuple[Path, ...],
+        ) -> None:
+            leaf_bytes = leaf.read_bytes()
+            ca_bytes = b"".join(path.read_bytes() for path in issuers)
+            replacements = {
+                "forums.mochirii.com.cer": leaf_bytes,
+                "forums.mochirii.com.key": key.read_bytes(),
+                "ca.cer": ca_bytes,
+                "fullchain.cer": leaf_bytes + ca_bytes,
+            }
+            for filename, content in replacements.items():
+                target = certificate_directory / filename
+                target.write_bytes(content)
+                target.chmod(0o600)
+
+        def install_rsa_pss_material(certificate_directory: Path) -> None:
+            replace_material(
+                certificate_directory,
+                rsa_pss_leaf,
+                rsa_pss_key,
+                (intermediate_one,),
+            )
+
+        reject_material("RSA-PSS material under the RSA contract", install_rsa_pss_material)
+
+        wrong_san_leaf, _ = make_leaf(
+            authority_root,
+            "wrong-san-leaf",
+            "rsa",
+            intermediate_one,
+            intermediate_one_key,
+            203,
+            "DNS:other.invalid",
+            30,
+            rsa_key,
+        )
+        extra_san_leaf, _ = make_leaf(
+            authority_root,
+            "extra-san-leaf",
+            "rsa",
+            intermediate_one,
+            intermediate_one_key,
+            204,
+            "DNS:forums.mochirii.com,DNS:other.invalid",
+            30,
+            rsa_key,
+        )
+        short_leaf, _ = make_leaf(
+            authority_root,
+            "short-leaf",
+            "rsa",
+            intermediate_one,
+            intermediate_one_key,
+            205,
+            "DNS:forums.mochirii.com",
+            1,
+            rsa_key,
+        )
+        mismatched_key = authority_root / "mismatched.key"
+        run_openssl(
+            "genpkey",
+            "-algorithm",
+            "RSA",
+            "-pkeyopt",
+            "rsa_keygen_bits:4096",
+            "-out",
+            str(mismatched_key),
+        )
+
+        def replace_leaf(certificate: Path):
+            def mutation(certificate_directory: Path) -> None:
+                target = certificate_directory / "forums.mochirii.com.cer"
+                target.write_bytes(certificate.read_bytes())
+                target.chmod(0o600)
+                rewrite_fullchain(certificate_directory)
+
+            return mutation
+
+        reject_material("wrong SAN", replace_leaf(wrong_san_leaf))
+        reject_material("additional SAN", replace_leaf(extra_san_leaf))
+        reject_material("insufficient lifetime", replace_leaf(short_leaf))
+
+        def replace_key(certificate_directory: Path) -> None:
+            target = certificate_directory / "forums.mochirii.com.key"
+            target.write_bytes(mismatched_key.read_bytes())
+            target.chmod(0o600)
+
+        reject_material("mismatched private key", replace_key)
+
+        def replace_chain(certificate_directory: Path) -> None:
+            target = certificate_directory / "ca.cer"
+            target.write_bytes(root_certificate.read_bytes())
+            target.chmod(0o600)
+            rewrite_fullchain(certificate_directory)
+
+        reject_material("unrelated certificate chain", replace_chain)
+
+        def append_unrelated_ca(certificate_directory: Path) -> None:
+            ca = certificate_directory / "ca.cer"
+            ca.write_bytes(ca.read_bytes() + unrelated_root_certificate.read_bytes())
+            ca.chmod(0o600)
+            rewrite_fullchain(certificate_directory)
+
+        reject_material("unused unrelated CA appended to the chain", append_unrelated_ca)
+
+        def reverse_intermediate_order(certificate_directory: Path) -> None:
+            ca = certificate_directory / "ca.cer"
+            ca.write_bytes(intermediate_one.read_bytes() + intermediate_two.read_bytes())
+            ca.chmod(0o600)
+            rewrite_fullchain(certificate_directory)
+
+        reject_material(
+            "reversed multi-intermediate chain",
+            reverse_intermediate_order,
+            suffix="_ecc",
+            algorithm="ecc",
+        )
+
+        def append_duplicate_ca(certificate_directory: Path) -> None:
+            ca = certificate_directory / "ca.cer"
+            ca.write_bytes(ca.read_bytes() + intermediate_one.read_bytes())
+            ca.chmod(0o600)
+            rewrite_fullchain(certificate_directory)
+
+        reject_material("duplicate CA identity", append_duplicate_ca)
+
+        def install_name_constrained_chain(certificate_directory: Path) -> None:
+            replace_material(
+                certificate_directory,
+                constrained_leaf,
+                constrained_key,
+                (constrained_intermediate_two, constrained_intermediate_one),
+            )
+
+        reject_material("cumulative DNS name-constraint violation", install_name_constrained_chain)
+
+        def install_path_length_violating_chain(certificate_directory: Path) -> None:
+            replace_material(
+                certificate_directory,
+                path_length_leaf,
+                path_length_key,
+                (path_length_intermediate, intermediate_two, intermediate_one),
+            )
+
+        reject_material("cumulative CA path-length violation", install_path_length_violating_chain)
+
+        def duplicate_leaf_in_ca(certificate_directory: Path) -> None:
+            ca = certificate_directory / "ca.cer"
+            ca.write_bytes(
+                (certificate_directory / "forums.mochirii.com.cer").read_bytes()
+                + ca.read_bytes()
+            )
+            ca.chmod(0o600)
+            rewrite_fullchain(certificate_directory)
+
+        reject_material("leaf duplicated into CA bundle", duplicate_leaf_in_ca)
+
+        def append_ca_junk(certificate_directory: Path) -> None:
+            ca = certificate_directory / "ca.cer"
+            ca.write_bytes(ca.read_bytes() + b"fixture-junk\n")
+            ca.chmod(0o600)
+            rewrite_fullchain(certificate_directory)
+
+        reject_material("noncertificate CA bundle data", append_ca_junk)
+
+        def drift_fullchain(certificate_directory: Path) -> None:
+            target = certificate_directory / "fullchain.cer"
+            target.write_bytes(target.read_bytes() + b"\n")
+            target.chmod(0o600)
+
+        reject_material("noncanonical fullchain", drift_fullchain)
+
+        def link_leaf(certificate_directory: Path) -> None:
+            target = certificate_directory / "forums.mochirii.com.cer"
+            target.unlink()
+            target.symlink_to("fullchain.cer")
+
+        reject_material("linked leaf", link_leaf)
+
+        def widen_key(certificate_directory: Path) -> None:
+            (certificate_directory / "forums.mochirii.com.key").chmod(0o644)
+
+        reject_material("permissive key mode", widen_key)
+
+        def hardlink_key(certificate_directory: Path) -> None:
+            os.link(
+                certificate_directory / "forums.mochirii.com.key",
+                certificate_directory / "second-key-link",
+            )
+
+        reject_material("hard-linked key", hardlink_key)
+
+        def widen_directory(certificate_directory: Path) -> None:
+            certificate_directory.chmod(0o755)
+
+        reject_material("permissive certificate directory", widen_directory)
+        algorithm_result = run_material_validator(letsencrypt_fixture, "", "ecc")
+        if algorithm_result.returncode == 0 or algorithm_result.stdout or algorithm_result.stderr:
+            raise RuntimeError("Actual certificate validator accepted the wrong key algorithm contract.")
 
     def installed_bytes(*, preserve_shebang: bool) -> bytes:
         with tempfile.TemporaryDirectory(prefix="mochirii-acme-install-") as directory:
