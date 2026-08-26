@@ -14,6 +14,8 @@ readonly reviewed_acme_failed_bootstrap_commit="f564d62a82adf79b8f012a25949826e2
 readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"
 readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306"
 readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"
+readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d"
+readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -173,6 +175,9 @@ select_reviewed_failed_bootstrap_recovery_commit() {
     "${reviewed_quarantine_output_failed_bootstrap_commit}")
       printf '%s\n' "${reviewed_quarantine_output_recovery_commit}"
       ;;
+    "${reviewed_acme_reload_privacy_failed_bootstrap_commit}")
+      printf '%s\n' "${reviewed_acme_reload_privacy_recovery_commit}"
+      ;;
     *) return 1 ;;
   esac
 }
@@ -215,12 +220,23 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
   )
+  local -ar acme_reload_privacy_expected_paths=(
+    config/immutable-letsencrypt.fragment.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host.sh
+  )
   local -a actual_paths expected_paths
   case "${pending_commit}" in
     "${reviewed_legacy_failed_bootstrap_commit}") expected_paths=("${legacy_expected_paths[@]}") ;;
     "${reviewed_active_swap_failed_bootstrap_commit}") expected_paths=("${active_swap_expected_paths[@]}") ;;
     "${reviewed_acme_failed_bootstrap_commit}") expected_paths=("${acme_expected_paths[@]}") ;;
     "${reviewed_quarantine_output_failed_bootstrap_commit}") expected_paths=("${quarantine_output_expected_paths[@]}") ;;
+    "${reviewed_acme_reload_privacy_failed_bootstrap_commit}") expected_paths=("${acme_reload_privacy_expected_paths[@]}") ;;
     *) return 1 ;;
   esac
   mapfile -t actual_paths < <(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}") || return 1
