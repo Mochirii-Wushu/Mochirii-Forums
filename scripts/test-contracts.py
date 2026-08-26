@@ -9546,6 +9546,8 @@ reviewed_quarantine_output_failed_bootstrap_commit=c2f0f37ec2f73c41c7d1f63942a74
 reviewed_quarantine_output_recovery_commit=8eea740795f0536468e48c5e8cda2ded29b1e51e
 reviewed_acme_reload_privacy_failed_bootstrap_commit=fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d
 reviewed_acme_reload_privacy_recovery_commit=f51c2e8deaf39293c9b97f3aab797b882c3dc628
+reviewed_acme_reload_privacy_recovery_child_commit=591d96484369ae29a8fa4e61219b325997f4b679
+reviewed_acme_reload_privacy_launcher_child_commit=a71bbe8070ca6dadeff3c4966e81bd97fee83cf7
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -9555,6 +9557,8 @@ case "${{BINDER_LINEAGE:-legacy}}" in
   unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) return 84 ;;
 esac
+requested_parent="$reviewed"
+[[ ${{BINDER_LINEAGE:-legacy}} != reload_privacy ]] || requested_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
 source_root={source_root.as_posix()}
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 git() {{
@@ -9567,8 +9571,12 @@ git() {{
       [[ ${{BINDER_MUTATION:-none}} != dirty ]] || printf '%s\n' ' M scripts/upgrade-host-control.sh'
       ;;
     "-C ${{source_root}} remote get-url origin") [[ ${{BINDER_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
-    "-C ${{source_root}} rev-parse --verify ${{requested}}^1") [[ ${{BINDER_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{requested}}") [[ ${{BINDER_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$requested" "$reviewed" || printf '%s %s %s\n' "$requested" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{requested}}^1") [[ ${{BINDER_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$requested_parent" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{requested}}") [[ ${{BINDER_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$requested" "$requested_parent" || printf '%s %s %s\n' "$requested" "$requested_parent" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_reload_privacy_launcher_child_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != launcher-child-parent ]] && printf '%s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_launcher_child_commit}}") [[ ${{BINDER_MUTATION:-none}} != launcher-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_reload_privacy_recovery_child_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != recovery-child-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{BINDER_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{BINDER_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$pending" || printf '%s %s %s\n' "$reviewed" "$pending" unrelated ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{BINDER_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$requested" || printf '%s\trefs/heads/main\n' unrelated ;;
@@ -9608,8 +9616,10 @@ git() {{
             config/immutable-letsencrypt.fragment.yml \
             docs/operations/DEPLOYMENT.md \
             docs/operations/RECOVERY.md \
+            scripts/disposable-launcher-guard.py \
             scripts/quarantine-failed-bootstrap.sh \
             scripts/test-contracts.py \
+            scripts/test-disposable-launcher-guard.py \
             scripts/upgrade-host-control.sh \
             scripts/validate-repository.py
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
@@ -9646,6 +9656,13 @@ bind_invoked_canonical_successor "$requested" "$pending"
                 for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy")
                 for mutation, should_pass in mutation_cases
             ]
+            binder_cases.extend(
+                ("reload_privacy", mutation, False)
+                for mutation in (
+                    "launcher-child-parent", "launcher-child-parents",
+                    "recovery-child-parent", "recovery-child-parents",
+                )
+            )
             binder_cases.append(("unknown", "none", False))
             for lineage, mutation, should_pass in binder_cases:
                 completed = subprocess.run(
@@ -10578,6 +10595,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"',
         'readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d"',
         'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
+        'readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"',
+        'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
         'rev-parse --verify "${reviewed_recovery_commit}^1"',
@@ -10645,8 +10664,10 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "config/immutable-letsencrypt.fragment.yml",
         "docs/operations/DEPLOYMENT.md",
         "docs/operations/RECOVERY.md",
+        "scripts/disposable-launcher-guard.py",
         "scripts/quarantine-failed-bootstrap.sh",
         "scripts/test-contracts.py",
+        "scripts/test-disposable-launcher-guard.py",
         "scripts/upgrade-host-control.sh",
         "scripts/validate-repository.py",
         "scripts/verify-host.sh",
@@ -10688,6 +10709,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"',
         'readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d"',
         'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
+        'readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"',
+        'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -10765,6 +10788,8 @@ reviewed_quarantine_output_failed_bootstrap_commit=c2f0f37ec2f73c41c7d1f63942a74
 reviewed_quarantine_output_recovery_commit=8eea740795f0536468e48c5e8cda2ded29b1e51e
 reviewed_acme_reload_privacy_failed_bootstrap_commit=fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d
 reviewed_acme_reload_privacy_recovery_commit=f51c2e8deaf39293c9b97f3aab797b882c3dc628
+reviewed_acme_reload_privacy_recovery_child_commit=591d96484369ae29a8fa4e61219b325997f4b679
+reviewed_acme_reload_privacy_launcher_child_commit=a71bbe8070ca6dadeff3c4966e81bd97fee83cf7
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -10774,13 +10799,19 @@ case "${{LINEAGE_KIND:-legacy}}" in
   unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) exit 84 ;;
 esac
+current_parent="$reviewed"
+[[ ${{LINEAGE_KIND:-legacy}} != reload_privacy ]] || current_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 git() {{
   case "$*" in
     "-C ${{source_root}} rev-parse --verify HEAD^{{commit}}") [[ ${{LINEAGE_MUTATION:-none}} != head ]] && printf '%s\n' "$current" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} symbolic-ref --short -q HEAD") [[ ${{LINEAGE_MUTATION:-none}} != branch ]] && printf '%s\n' main || printf '%s\n' topic ;;
-    "-C ${{source_root}} rev-parse --verify ${{current}}^1") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{current}}") [[ ${{LINEAGE_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$current" "$reviewed" || printf '%s %s %s\n' "$current" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{current}}^1") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parent ]] && printf '%s\n' "$current_parent" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{current}}") [[ ${{LINEAGE_MUTATION:-none}} != current-parents ]] && printf '%s %s\n' "$current" "$current_parent" || printf '%s %s %s\n' "$current" "$current_parent" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_reload_privacy_launcher_child_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != launcher-child-parent ]] && printf '%s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_launcher_child_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != launcher-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_reload_privacy_recovery_child_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != recovery-child-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{LINEAGE_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$failed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$failed" || printf '%s %s %s\n' "$reviewed" "$failed" unrelated ;;
     "-c core.fsmonitor=false -C ${{source_root}} status --porcelain=v1 --untracked-files=all")
@@ -10825,8 +10856,10 @@ git() {{
             config/immutable-letsencrypt.fragment.yml \
             docs/operations/DEPLOYMENT.md \
             docs/operations/RECOVERY.md \
+            scripts/disposable-launcher-guard.py \
             scripts/quarantine-failed-bootstrap.sh \
             scripts/test-contracts.py \
+            scripts/test-disposable-launcher-guard.py \
             scripts/upgrade-host-control.sh \
             scripts/validate-repository.py
           [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
@@ -10862,6 +10895,13 @@ validate_source_lineage "$current" "$failed"
                 for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy")
                 for mutation, should_pass in mutation_cases
             ]
+            lineage_cases.extend(
+                ("reload_privacy", mutation, False)
+                for mutation in (
+                    "launcher-child-parent", "launcher-child-parents",
+                    "recovery-child-parent", "recovery-child-parents",
+                )
+            )
             lineage_cases.append(("unknown", "none", False))
             for lineage, mutation, should_pass in lineage_cases:
                 completed = subprocess.run(
@@ -10880,7 +10920,7 @@ validate_source_lineage "$current" "$failed"
                 )
                 if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
                     raise RuntimeError(
-                        "Executable failed-bootstrap lineage binding accepted drift or rejected a pinned two-commit chain."
+                        "Executable failed-bootstrap lineage binding accepted drift or rejected a pinned recovery chain."
                     )
 
     if source.count("read_mutation_identity() {") != 1 or source.count(

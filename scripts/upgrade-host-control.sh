@@ -16,6 +16,8 @@ readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d
 readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"
 readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d"
 readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"
+readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8fa4e61219b325997f4b679"
+readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -224,8 +226,10 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     config/immutable-letsencrypt.fragment.yml
     docs/operations/DEPLOYMENT.md
     docs/operations/RECOVERY.md
+    scripts/disposable-launcher-guard.py
     scripts/quarantine-failed-bootstrap.sh
     scripts/test-contracts.py
+    scripts/test-disposable-launcher-guard.py
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
     scripts/verify-host.sh
@@ -247,8 +251,12 @@ validate_reviewed_failed_bootstrap_successor_paths() {
 }
 
 bind_invoked_canonical_successor() {
-  local requested_commit="$1" pending_commit="$2" invocation_script invocation_source_root remote_output status_output reviewed_recovery_commit
+  local requested_commit="$1" pending_commit="$2" invocation_script invocation_source_root remote_output status_output reviewed_recovery_commit requested_parent_commit
   reviewed_recovery_commit="$(select_reviewed_failed_bootstrap_recovery_commit "${pending_commit}")" || return 1
+  requested_parent_commit="${reviewed_recovery_commit}"
+  if [[ ${pending_commit} == "${reviewed_acme_reload_privacy_failed_bootstrap_commit}" ]]; then
+    requested_parent_commit="${reviewed_acme_reload_privacy_launcher_child_commit}"
+  fi
   [[ -f $0 && ! -L $0 ]] || return 1
   invocation_script="$(realpath -e -- "$0")" || return 1
   invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
@@ -262,8 +270,14 @@ bind_invoked_canonical_successor() {
   (( ${#status_output} <= 262144 )) || return 1
   [[ -z ${status_output} ]] || return 1
   [[ "$(git -C "${invocation_source_root}" remote get-url origin 2>/dev/null)" == "${canonical_repository}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${requested_commit}" 2>/dev/null)" == "${requested_commit} ${reviewed_recovery_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${requested_parent_commit}" ]] || return 1
+  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${requested_commit}" 2>/dev/null)" == "${requested_commit} ${requested_parent_commit}" ]] || return 1
+  if [[ ${pending_commit} == "${reviewed_acme_reload_privacy_failed_bootstrap_commit}" ]]; then
+    [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
+    [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_launcher_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_launcher_child_commit} ${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
+    [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit} ${reviewed_recovery_commit}" ]] || return 1
+  fi
   [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
   [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${pending_commit}" ]] || return 1
   remote_output="$(bounded 120s git -c credential.helper= -c core.askPass= \
