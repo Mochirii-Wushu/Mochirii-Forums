@@ -38,6 +38,10 @@ MAX_CID_BYTES = 65
 MAX_EVENT_DRAIN_BYTES = 256 * 1024
 EVENT_SETTLE_TIMEOUT = 0.25
 EVENT_STOP_TIMEOUT = 5
+APP_RUNNING_SETTLE_TIMEOUT = 30
+APP_RUNNING_SETTLE_INTERVAL = 0.25
+FIXTURE_APP_RUNNING_SETTLE_TIMEOUT = 0.5
+FIXTURE_APP_RUNNING_SETTLE_INTERVAL = 0.01
 MAX_MEMINFO_BYTES = 65536
 RESOURCE_COMMAND_TIMEOUT = 5
 MAX_PUPS_TRACE_BYTES = 1024
@@ -372,6 +376,10 @@ class GuardError(RuntimeError):
     pass
 
 
+class CommandTimeoutError(GuardError):
+    pass
+
+
 def fail(message: str) -> "NoReturn":
     raise GuardError(message)
 
@@ -684,6 +692,12 @@ class Runtime:
         self.cid = self.discourse / "cids/app_bootstrap.cid"
         self.journal = self.discourse / ".mochirii-disposable-launcher.transaction.json"
         self.launcher = self.discourse / "launcher"
+        self.app_running_settle_timeout = (
+            FIXTURE_APP_RUNNING_SETTLE_TIMEOUT if adapter else APP_RUNNING_SETTLE_TIMEOUT
+        )
+        self.app_running_settle_interval = (
+            FIXTURE_APP_RUNNING_SETTLE_INTERVAL if adapter else APP_RUNNING_SETTLE_INTERVAL
+        )
 
     def trace_paths(self, token: str) -> dict[str, Path]:
         if OPERATION_ID_PATTERN.fullmatch(token) is None:
@@ -806,18 +820,26 @@ class Runtime:
         if operation.exists() or operation.is_symlink() or namespace.exists() or namespace.is_symlink():
             fail("Disposable Pups trace residue survived reconciliation.")
 
-    def run(self, arguments: list[str], *, timeout: int = COMMAND_TIMEOUT, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, arguments: list[str], *, timeout: float = COMMAND_TIMEOUT, check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
         command = ([sys.executable, "-B", str(self.adapter)] if self.adapter else []) + arguments
         try:
             result = subprocess.run(command, text=True, capture_output=True, timeout=timeout, check=False)
         except subprocess.TimeoutExpired as error:
-            raise GuardError("Bounded disposable Docker command timed out.") from error
+            raise CommandTimeoutError("Bounded disposable Docker command timed out.") from error
         if check and result.returncode:
             fail("Bounded disposable Docker command failed.")
         return result
 
-    def docker(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return self.run((["docker"] if self.adapter else ["docker"]) + list(arguments), check=check)
+    def docker(
+        self, *arguments: str, timeout: float = COMMAND_TIMEOUT, check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(
+            (["docker"] if self.adapter else ["docker"]) + list(arguments),
+            timeout=timeout,
+            check=check,
+        )
 
     def container_ids(self) -> set[str]:
         output = self.docker("container", "ls", "--all", "--no-trunc", "--format", "{{.ID}}").stdout.splitlines()
@@ -843,10 +865,14 @@ class Runtime:
             fail("Disposable operation-label inventory is malformed.")
         return values
 
-    def named_app(self) -> tuple[str, bool, str] | None:
-        result = self.docker(
-            "container", "inspect", "--format", "{{.Id}} {{.State.Running}} {{.Image}}", "app", check=False,
-        )
+    def named_app(self, *, timeout: float = COMMAND_TIMEOUT) -> tuple[str, bool, str] | None:
+        try:
+            result = self.docker(
+                "container", "inspect", "--format", "{{.Id}} {{.State.Running}} {{.Image}}", "app", check=False,
+                timeout=timeout,
+            )
+        except CommandTimeoutError as error:
+            raise GuardError("Disposable launcher did not leave the exact named application running.") from error
         if result.returncode:
             return None
         parts = result.stdout.strip().split()
@@ -1314,6 +1340,24 @@ def refresh_created(runtime: Runtime, document: dict[str, object]) -> tuple[set[
     return created_containers, created_images
 
 
+def wait_for_exact_running_app(runtime: Runtime, tagged_image: str) -> tuple[str, bool, str]:
+    deadline = time.monotonic() + runtime.app_running_settle_timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            fail("Disposable launcher did not leave the exact named application running.")
+        named = runtime.named_app(timeout=remaining)
+        if named is not None:
+            if named[2] != tagged_image:
+                fail("Disposable named application image differs from the exact tagged application image.")
+            if named[1]:
+                return named
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            fail("Disposable launcher did not leave the exact named application running.")
+        time.sleep(min(runtime.app_running_settle_interval, remaining))
+
+
 def reconcile(runtime: Runtime, document: dict[str, object], success: bool) -> None:
     token = str(document["operationToken"])
     stop_marked_processes(token)
@@ -1332,13 +1376,9 @@ def reconcile(runtime: Runtime, document: dict[str, object], success: bool) -> N
                 fail("Disposable launcher did not produce the exact application image.")
             allowed_images.add(tagged)
         else:
-            named = runtime.named_app()
             if tagged is None:
                 fail("Disposable launcher did not retain the exact tagged application image.")
-            if named is None or not named[1]:
-                fail("Disposable launcher did not leave the exact named application running.")
-            if named[2] != tagged:
-                fail("Disposable named application image differs from the exact tagged application image.")
+            named = wait_for_exact_running_app(runtime, tagged)
             allowed_containers.add(named[0])
             allowed_images.add(tagged)
 

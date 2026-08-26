@@ -446,12 +446,18 @@ if args and args[0] == "launcher":
         state["tags"]["local_discourse/app"] = "sha256:" + "a" * 64
         save()
         raise SystemExit(0)
-    if scenario == "clean-rebuild":
-        state["containers"]["b" * 64] = {
-            "name": "app", "running": True,
-            "image": "sha256:" + "a" * 64,
-            "labels": {"mochirii.forums.disposable-operation": token},
-        }
+    if scenario in {
+        "clean-rebuild", "rebuild-settles-running", "rebuild-never-running",
+        "rebuild-inspect-error", "rebuild-inspect-timeout", "rebuild-malformed-inspect",
+        "rebuild-missing-app",
+    }:
+        if scenario != "rebuild-missing-app":
+            state["containers"]["b" * 64] = {
+                "name": "app",
+                "running": scenario == "clean-rebuild",
+                "image": "sha256:" + "a" * 64,
+                "labels": {"mochirii.forums.disposable-operation": token},
+            }
         state["images"].append("sha256:" + "a" * 64)
         state["images"] = sorted(set(state["images"]))
         state["tags"]["local_discourse/app"] = "sha256:" + "a" * 64
@@ -495,11 +501,26 @@ elif args[:2] == ["container", "ls"]:
 elif args[:2] == ["image", "ls"]:
     print("\n".join(sorted(state["images"])))
 elif args[:2] == ["container", "inspect"]:
+    state["namedAppInspects"] += 1
+    save()
+    if state["scenario"] == "rebuild-inspect-error":
+        print("sentinel-launcher-secret-never-emit-7d3f1a", file=sys.stderr)
+        raise SystemExit(2)
+    if state["scenario"] == "rebuild-inspect-timeout":
+        print("sentinel-launcher-secret-never-emit-7d3f1a", file=sys.stderr, flush=True)
+        time.sleep(2)
+        raise SystemExit(3)
+    if state["scenario"] == "rebuild-malformed-inspect":
+        print("sentinel-launcher-secret-never-emit-7d3f1a malformed identity")
+        raise SystemExit(0)
     name = args[-1]
     matched = [(identity, item) for identity, item in state["containers"].items() if item["name"] == name]
     if not matched:
         raise SystemExit(1)
     identity, item = matched[0]
+    if state["scenario"] == "rebuild-settles-running" and state["namedAppInspects"] >= 3:
+        item["running"] = True
+        save()
     print(f"{identity} {'true' if item['running'] else 'false'} {item['image']}")
 elif args[:2] == ["image", "inspect"]:
     value = state["tags"].get(args[-1])
@@ -542,6 +563,7 @@ def setup(root: Path, scenario: str) -> dict[str, str]:
         ),
         "cidUnlinked": False,
         "finalRmFailed": False,
+        "namedAppInspects": 0,
     }
     write_file(root / "state.json", json.dumps(state, sort_keys=True) + "\n", 0o600)
     return {
@@ -683,6 +705,64 @@ def rebuild_terminal_image_fixture() -> None:
             if "named application image differs from the exact tagged application image" not in result.stderr:
                 raise RuntimeError(f"Mismatched rebuild failed for the wrong reason: {scenario}")
             assert_no_transaction(root)
+
+    for scenario, expected_message, minimum_inspects in (
+        (
+            "rebuild-never-running",
+            "did not leave the exact named application running",
+            2,
+        ),
+        (
+            "rebuild-missing-app",
+            "did not leave the exact named application running",
+            2,
+        ),
+        (
+            "rebuild-inspect-error",
+            "did not leave the exact named application running",
+            2,
+        ),
+        (
+            "rebuild-inspect-timeout",
+            "did not leave the exact named application running",
+            1,
+        ),
+        (
+            "rebuild-malformed-inspect",
+            "named application identity is malformed",
+            1,
+        ),
+    ):
+        with tempfile.TemporaryDirectory(prefix=f"mochirii-disposable-{scenario}-") as temporary:
+            root = Path(temporary).resolve()
+            environment = setup(root, scenario)
+            started = time.monotonic()
+            result = invoke(root, environment, operation="restart", passed=False)
+            elapsed = time.monotonic() - started
+            current = state(root)
+            if current["containers"] or current["images"] != [PREEXISTING_IMAGE] or current["tags"]:
+                raise RuntimeError(f"Unsettled named application survived containment: {scenario}")
+            if current["namedAppInspects"] < minimum_inspects or elapsed >= 5:
+                raise RuntimeError(f"Named application settlement was not bounded: {scenario}")
+            if expected_message not in result.stderr or result.stdout or FORBIDDEN_SENTINEL in result.stderr:
+                raise RuntimeError(f"Named application settlement failed outside its fixed category: {scenario}")
+            assert_no_transaction(root)
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-disposable-settled-rebuild-") as temporary:
+        root = Path(temporary).resolve()
+        environment = setup(root, "rebuild-settles-running")
+        result = invoke(root, environment, operation="restart", passed=True)
+        current = state(root)
+        if result.stdout or result.stderr:
+            raise RuntimeError("Settled named application emitted output.")
+        if (
+            set(current["containers"]) != {CREATED_CONTAINER}
+            or current["images"] != [CREATED_IMAGE, PREEXISTING_IMAGE]
+            or current["tags"] != {"local_discourse/app": CREATED_IMAGE}
+            or current["namedAppInspects"] != 3
+        ):
+            raise RuntimeError("Bounded settlement did not adopt the exact running named application.")
+        assert_no_transaction(root)
 
     with tempfile.TemporaryDirectory(prefix="mochirii-disposable-clean-rebuild-") as temporary:
         root = Path(temporary).resolve()
