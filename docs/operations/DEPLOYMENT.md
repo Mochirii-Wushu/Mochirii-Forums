@@ -722,6 +722,23 @@ its exact commit must first be protected-merged and followed by a separate
 sole-parent current-main control/quarantine lineage binding before the retained
 `fae3770f...` runtime can be quarantined and a changed-byte bootstrap considered.
 
+That fae bootstrap incident has a fifth, non-interchangeable recovery chain.
+Failed bootstrap commit `fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d` is the
+sole parent of reviewed ACME reload/private-state repair commit
+`f51c2e8deaf39293c9b97f3aab797b882c3dc628`; the recovery source must be one
+exact sole-parent child of that repair and the current canonical `main`. Its
+cumulative diff from the failed release is exactly
+`config/immutable-letsencrypt.fragment.yml`, `docs/operations/DEPLOYMENT.md`,
+`docs/operations/RECOVERY.md`, `scripts/quarantine-failed-bootstrap.sh`,
+`scripts/test-contracts.py`, `scripts/upgrade-host-control.sh`,
+`scripts/validate-repository.py`, and `scripts/verify-host.sh`. Selection
+remains by exact failed commit, so this exception cannot substitute for an
+earlier lineage or authorize another path set. The reviewed repair corrects
+the proved ACME reload and private-state metadata boundaries; it does not
+authorize an identical-byte retry or identify any additional retained-runtime
+cause. The same retained-journal/runtime, stopped/absent publication,
+root-owned-state, and unrelated-journal exclusion rules apply.
+
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh

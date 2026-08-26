@@ -618,6 +618,22 @@ launcher/bootstrap cause. It uses the same root-only, evidence-preserving
 quarantine and requires the next clean bootstrap to target the then-current
 canonical main.
 
+A fifth exact bootstrap-only exception covers the fae ACME reload/private-state
+boundary. Failed release `fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d`,
+reviewed repair `f51c2e8deaf39293c9b97f3aab797b882c3dc628`, and one
+canonical-main recovery child must form an exact sole-parent chain. The
+cumulative changed paths from the failed release are only
+`config/immutable-letsencrypt.fragment.yml`,
+`docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/upgrade-host-control.sh`, `scripts/validate-repository.py`, and
+`scripts/verify-host.sh`. Selection by exact failed commit keeps this lineage
+separate from all earlier exceptions. The reviewed repair corrects the proved
+ACME reload and private-state metadata boundaries without authorizing an
+identical-byte retry or claiming an additional retained-runtime cause. It uses
+the same root-only, evidence-preserving quarantine and requires the next clean
+bootstrap to target the then-current canonical main.
+
 ## Primary references
 
 - [Official Discourse backup and restore guidance](https://meta.discourse.org/t/create-download-and-restore-a-backup-of-your-discourse-database/122710)

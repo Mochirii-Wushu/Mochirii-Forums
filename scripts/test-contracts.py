@@ -9544,11 +9544,14 @@ reviewed_acme_failed_bootstrap_commit=f564d62a82adf79b8f012a25949826e2b447681d
 reviewed_acme_recovery_commit=85e12f1ce27e1462e7c82e59e1dbf01c190327b9
 reviewed_quarantine_output_failed_bootstrap_commit=c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306
 reviewed_quarantine_output_recovery_commit=8eea740795f0536468e48c5e8cda2ded29b1e51e
+reviewed_acme_reload_privacy_failed_bootstrap_commit=fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d
+reviewed_acme_reload_privacy_recovery_commit=f51c2e8deaf39293c9b97f3aab797b882c3dc628
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
   acme) pending="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
   quarantine) pending="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
+  reload_privacy) pending="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
   unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) return 84 ;;
 esac
@@ -9600,6 +9603,17 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        reload_privacy)
+          printf '%s\n' \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh \
+            scripts/validate-repository.py
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -9629,7 +9643,7 @@ bind_invoked_canonical_successor "$requested" "$pending"
             )
             binder_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy")
                 for mutation, should_pass in mutation_cases
             ]
             binder_cases.append(("unknown", "none", False))
@@ -10562,6 +10576,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"',
         'readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306"',
         'readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"',
+        'readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d"',
+        'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
         'rev-parse --verify "${reviewed_recovery_commit}^1"',
@@ -10625,11 +10641,22 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "scripts/upgrade-host-control.sh",
         "scripts/validate-repository.py",
     )
+    acme_reload_privacy_expected_paths = (
+        "config/immutable-letsencrypt.fragment.yml",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+        "scripts/verify-host.sh",
+    )
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
         ("active_swap_expected_paths", active_swap_expected_paths),
         ("acme_expected_paths", acme_expected_paths),
         ("quarantine_output_expected_paths", quarantine_output_expected_paths),
+        ("acme_reload_privacy_expected_paths", acme_reload_privacy_expected_paths),
     ):
         marker = f"local -ar {name}=("
         block_start = source.index(marker)
@@ -10659,6 +10686,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_recovery_commit="85e12f1ce27e1462e7c82e59e1dbf01c190327b9"',
         'readonly reviewed_quarantine_output_failed_bootstrap_commit="c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306"',
         'readonly reviewed_quarantine_output_recovery_commit="8eea740795f0536468e48c5e8cda2ded29b1e51e"',
+        'readonly reviewed_acme_reload_privacy_failed_bootstrap_commit="fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d"',
+        'readonly reviewed_acme_reload_privacy_recovery_commit="f51c2e8deaf39293c9b97f3aab797b882c3dc628"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -10734,11 +10763,14 @@ reviewed_acme_failed_bootstrap_commit=f564d62a82adf79b8f012a25949826e2b447681d
 reviewed_acme_recovery_commit=85e12f1ce27e1462e7c82e59e1dbf01c190327b9
 reviewed_quarantine_output_failed_bootstrap_commit=c2f0f37ec2f73c41c7d1f63942a7483d1d7ef306
 reviewed_quarantine_output_recovery_commit=8eea740795f0536468e48c5e8cda2ded29b1e51e
+reviewed_acme_reload_privacy_failed_bootstrap_commit=fae3770f0817d05bbfd2520e9657ddc1c8a7ce5d
+reviewed_acme_reload_privacy_recovery_commit=f51c2e8deaf39293c9b97f3aab797b882c3dc628
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
   acme) failed="$reviewed_acme_failed_bootstrap_commit"; reviewed="$reviewed_acme_recovery_commit" ;;
   quarantine) failed="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
+  reload_privacy) failed="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
   unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) exit 84 ;;
 esac
@@ -10788,6 +10820,17 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        reload_privacy)
+          printf '%s\n' \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/upgrade-host-control.sh \
+            scripts/validate-repository.py
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -10816,7 +10859,7 @@ validate_source_lineage "$current" "$failed"
             )
             lineage_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy")
                 for mutation, should_pass in mutation_cases
             ]
             lineage_cases.append(("unknown", "none", False))
