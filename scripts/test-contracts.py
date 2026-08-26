@@ -467,6 +467,22 @@ test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
   test ! -L "${private_path}"
   test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
 done'''
+    challenge_paths = '''readonly public_webroot="/var/www/discourse/public"
+readonly challenge_parent="${public_webroot}/.well-known"
+readonly challenge_root="${challenge_parent}/acme-challenge"'''
+    challenge_preparation = '''test -d "${public_webroot}"
+test ! -L "${public_webroot}"
+for challenge_directory in "${challenge_parent}" "${challenge_root}"; do
+  if test -e "${challenge_directory}" || test -L "${challenge_directory}"; then
+    test -d "${challenge_directory}"
+    test ! -L "${challenge_directory}"
+  else
+    install -d -m 0755 -o root -g root -- "${challenge_directory}"
+  fi
+  test -d "${challenge_directory}"
+  test ! -L "${challenge_directory}"
+  test "$(stat -c '%U:%G %a' -- "${challenge_directory}")" = "root:root 755"
+done'''
     preflight = '''        for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
           if test -e "${private_path}" || test -L "${private_path}"; then
             test -f "${private_path}"
@@ -481,8 +497,46 @@ done'''
     exact_install = '''        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
           --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0
 '''
-    if tls.count(preflight) != 1 or tls.count(exact_install) != 1:
+    initial_start = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf"
+    if (
+        tls.count(preflight) != 1
+        or tls.count(exact_install) != 1
+        or letsencrypt.count(challenge_paths) != 1
+        or letsencrypt.count(challenge_preparation) != 1
+        or letsencrypt.index(challenge_paths) >= letsencrypt.index(challenge_preparation)
+        or letsencrypt.index(challenge_preparation) >= letsencrypt.index(f"\n{initial_start}\n")
+    ):
         raise RuntimeError("Private ACME preflight fixture differs from production source.")
+    challenge_preparation_yaml = "".join(f"        {line}\n" for line in challenge_preparation.splitlines())
+    without_challenge_preparation = tls.replace(challenge_preparation_yaml, "", 1)
+    post_start_challenge_preparation = without_challenge_preparation.replace(
+        f"        {initial_start}\n",
+        f"        {initial_start}\n" + challenge_preparation_yaml,
+        1,
+    )
+    uncalled_challenge_preparation = tls.replace(
+        challenge_preparation_yaml,
+        "        prepare_challenge_directories() {\n" + challenge_preparation_yaml + "        }\n",
+        1,
+    )
+    private_challenge_preparation = challenge_preparation.replace(
+        "install -d -m 0755 -o root -g root",
+        "install -d -m 0700 -o root -g root",
+        1,
+    )
+    linked_challenge_preparation = challenge_preparation.replace(
+        '    test ! -L "${challenge_directory}"',
+        "    true # linked challenge directory accepted",
+        1,
+    )
+    unbound_challenge_preparation = challenge_preparation.replace(
+        '''  test "$(stat -c '%U:%G %a' -- "${challenge_directory}")" = "root:root 755"''',
+        "  true # challenge directory metadata unbound",
+        1,
+    )
+    private_challenge_yaml = "".join(f"        {line}\n" for line in private_challenge_preparation.splitlines())
+    linked_challenge_yaml = "".join(f"        {line}\n" for line in linked_challenge_preparation.splitlines())
+    unbound_challenge_yaml = "".join(f"        {line}\n" for line in unbound_challenge_preparation.splitlines())
     without_preflight = tls.replace(preflight, "", 1)
     post_install_preflight = without_preflight.replace(exact_install, exact_install + preflight, 1)
     resealed_hostiles = (
@@ -514,6 +568,21 @@ done'''
             "ignored internal reload failure",
         ),
         (tls.replace("umask 077", "umask 022", 1), "permissive umask"),
+        (
+            tls.replace(challenge_preparation_yaml, private_challenge_yaml, 1),
+            "private challenge directory",
+        ),
+        (
+            tls.replace(challenge_preparation_yaml, linked_challenge_yaml, 1),
+            "linked challenge directory",
+        ),
+        (
+            tls.replace(challenge_preparation_yaml, unbound_challenge_yaml, 1),
+            "unbound challenge directory metadata",
+        ),
+        (without_challenge_preparation, "missing challenge preparation"),
+        (post_start_challenge_preparation, "late challenge preparation"),
+        (uncalled_challenge_preparation, "uncalled challenge preparation"),
         (post_install_preflight, "post-install private-state preflight"),
         (
             tls.replace(
@@ -771,17 +840,19 @@ printf leaked-success
             RENDER.TLS_FRAGMENT = previous_fragment
     if not rendered_run.startswith("dead: |1\n  - exec:") or "NO_DETECT_SH=1" not in rendered_run:
         raise RuntimeError("Actual renderer seam did not preserve the inert RUN block-scalar hostile.")
-    try:
-        VALIDATOR.validate_immutable_acme_install_contract(inert_run)
-    except RuntimeError:
-        pass
-    else:
-        raise RuntimeError("Actual validator accepted an inert immutable TLS RUN section.")
+    reject_resealed_tls(inert_run, "inert immutable TLS RUN section")
 
     encoded = (ROOT / "config/acme-sh-3.0.6.gz.b64").read_text(encoding="ascii")
     source = gzip.decompress(base64.b64decode("".join(encoded.splitlines()), validate=True))
     if hashlib.sha256(source).hexdigest() != VALIDATOR.ACME_SOURCE_SHA256:
         raise RuntimeError("Pinned ACME fixture bytes differ before the install control test.")
+    vendor_webroot_fragments = (
+        b'mkdir -p "$wellknown_path"',
+        b'printf "%s" "$keyauthorization" >"$wellknown_path/$token"',
+        b'chmod a+r "$wellknown_path/$token"',
+    )
+    if any(source.count(fragment) != 1 for fragment in vendor_webroot_fragments):
+        raise RuntimeError("Pinned ACME webroot directory, token write, or token-mode seam differs.")
 
     # The production image is Linux. The actual install behavior is exercised on
     # Linux CI; Windows still binds the exact rendered command and pinned bytes.
@@ -846,6 +917,84 @@ printf leaked-success
         or tail != source_tail
     ):
         raise RuntimeError("Uncontrolled ACME install did not reproduce the deterministic shebang-only drift.")
+
+    def run_challenge_preparation(public: Path) -> subprocess.CompletedProcess[bytes]:
+        path_seam = challenge_paths.replace("/var/www/discourse/public", public.as_posix())
+        preparation_seam = (
+            challenge_preparation.replace(" -o root -g root ", " ")
+            .replace('"root:root 755"', '"${fixture_owner} 755"')
+        )
+        harness = (
+            "set -euo pipefail\n"
+            "umask 077\n"
+            + path_seam
+            + "\n"
+            + 'fixture_owner="$(stat -c \'%U:%G\' -- "${public_webroot}")"\n'
+            + preparation_seam
+            + "\n"
+        )
+        return subprocess.run(
+            [bash, "-c", harness],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=10,
+        )
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-acme-webroot-") as directory:
+        root = Path(directory)
+        public = root / "public"
+        public.mkdir(mode=0o755)
+        public.chmod(0o755)
+        result = run_challenge_preparation(public)
+        if result.returncode != 0 or result.stdout or result.stderr:
+            raise RuntimeError("Exact ACME challenge preparation did not complete categorically.")
+        challenge_parent = public / ".well-known"
+        challenge_root = challenge_parent / "acme-challenge"
+        for challenge_directory in (challenge_parent, challenge_root):
+            metadata = challenge_directory.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or challenge_directory.is_symlink() or stat.S_IMODE(metadata.st_mode) != 0o755:
+                raise RuntimeError("ACME challenge preparation did not create an ordinary traversable directory.")
+
+        previous_umask = os.umask(0o077)
+        try:
+            token = challenge_root / "fixture-token"
+            token.write_bytes(b"fixture-authorization")
+        finally:
+            os.umask(previous_umask)
+        token.chmod(stat.S_IMODE(token.stat().st_mode) | 0o444)
+        if stat.S_IMODE(token.stat().st_mode) != 0o644:
+            raise RuntimeError("Pinned ACME token-mode behavior differs after challenge preparation.")
+
+        unprepared_public = root / "unprepared" / "public"
+        unprepared_public.mkdir(parents=True, mode=0o755)
+        unprepared_public.chmod(0o755)
+        previous_umask = os.umask(0o077)
+        try:
+            unprepared_root = unprepared_public / ".well-known" / "acme-challenge"
+            unprepared_root.mkdir(parents=True)
+        finally:
+            os.umask(previous_umask)
+        if any(stat.S_IMODE(path.stat().st_mode) != 0o700 for path in (unprepared_root.parent, unprepared_root)):
+            raise RuntimeError("Restricted-umask ACME webroot regression control did not reproduce mode 0700.")
+
+        linked_public = root / "linked" / "public"
+        linked_target = root / "linked-target"
+        linked_public.mkdir(parents=True, mode=0o755)
+        linked_target.mkdir(mode=0o755)
+        (linked_public / ".well-known").symlink_to(linked_target, target_is_directory=True)
+        linked_result = run_challenge_preparation(linked_public)
+        if linked_result.returncode == 0 or linked_result.stdout or linked_result.stderr:
+            raise RuntimeError("ACME challenge preparation accepted a linked directory.")
+
+        drift_public = root / "drift" / "public"
+        drift_parent = drift_public / ".well-known"
+        drift_parent.mkdir(parents=True, mode=0o700)
+        drift_parent.chmod(0o700)
+        drift_result = run_challenge_preparation(drift_public)
+        if drift_result.returncode == 0 or drift_result.stdout or drift_result.stderr:
+            raise RuntimeError("ACME challenge preparation accepted existing private directory metadata.")
 
 
 def test_opensearch_filter_contract() -> None:

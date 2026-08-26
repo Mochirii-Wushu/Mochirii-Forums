@@ -28,7 +28,9 @@ ACME_REVISION = "b7caf7a0165d80dd1556b16057a06bb32025066d"
 ACME_SOURCE_SHA256 = "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
 ACME_COMPRESSED_SHA256 = "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
 CONFIGURE_LETSENCRYPT_SHA256 = "069d53abb70100354d0b44bd0d3b132c9d764a952f8abc91f5e7b6d12775cfde"
-IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "1806f1aa5c9e3cc3741a422a8ea82d4dcba7137c60707ef1c186974b0685524e"
+IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "1aa59ab6147e4ff644b2ce9b7f42c846b10f7a2ca63502e2d007cc75e6e816c0"
+IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = "0c321d18361dbdf00ee0701df44ae53fe8eabf695b668dc1a7fba63d691784f2"
+IMMUTABLE_LETSENCRYPT_RUN_SHA256 = "d0692546160ea806aaa8325a3e89a386f80515b2a5540a39bf991495f65cd6f1"
 OBSERVED_MAIN_REVISION = "00595119c368c0aef7d7019ec66ffc8fa51cce79"
 OBSERVED_MAIN_TREE = "d5b846bf4e59784c5220c48839d7eb1b45671aae"
 OBSERVED_RANGE = [
@@ -1645,6 +1647,17 @@ def yaml_executable_file_contents(
 def validate_immutable_acme_install_contract(tls: str) -> None:
     if hashlib.sha256(tls.encode("utf-8")).hexdigest() != IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256:
         fail("Immutable TLS fragment differs from the exact active reviewed structure.")
+    run_begin = "# MOCHIRII TLS RUN BEGIN\n"
+    run_end = "# MOCHIRII TLS RUN END\n"
+    if tls.count(run_begin) != 1 or tls.count(run_end) != 1 or tls.index(run_begin) >= tls.index(run_end):
+        fail("Immutable TLS RUN section boundary differs.")
+    run_section = tls[tls.index(run_begin) + len(run_begin) : tls.index(run_end)]
+    if (
+        not run_section.startswith("  - exec:\n")
+        or not run_section.endswith("\n")
+        or hashlib.sha256(run_section.encode("utf-8")).hexdigest() != IMMUTABLE_LETSENCRYPT_RUN_SHA256
+    ):
+        fail("Immutable TLS RUN section differs from the exact active reviewed structure.")
     configure = yaml_executable_file_contents(tls, "/usr/local/bin/configure-letsencrypt")
     cron = yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-cron")
     letsencrypt = yaml_executable_file_contents(
@@ -1654,6 +1667,8 @@ def validate_immutable_acme_install_contract(tls: str) -> None:
     )
     if hashlib.sha256(configure.encode("utf-8")).hexdigest() != CONFIGURE_LETSENCRYPT_SHA256:
         fail("Immutable ACME configuration executable differs from the exact reviewed source.")
+    if hashlib.sha256(letsencrypt.encode("utf-8")).hexdigest() != IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256:
+        fail("Immutable ACME issuance executable differs from the exact reviewed source.")
     exact_install = '''AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
   --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0'''
     exact_reload = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload"
@@ -1710,7 +1725,24 @@ done'''
   test ! -L "${private_path}"
   test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
 done'''
+    challenge_paths = '''readonly public_webroot="/var/www/discourse/public"
+readonly challenge_parent="${public_webroot}/.well-known"
+readonly challenge_root="${challenge_parent}/acme-challenge"'''
+    challenge_preparation = '''test -d "${public_webroot}"
+test ! -L "${public_webroot}"
+for challenge_directory in "${challenge_parent}" "${challenge_root}"; do
+  if test -e "${challenge_directory}" || test -L "${challenge_directory}"; then
+    test -d "${challenge_directory}"
+    test ! -L "${challenge_directory}"
+  else
+    install -d -m 0755 -o root -g root -- "${challenge_directory}"
+  fi
+  test -d "${challenge_directory}"
+  test ! -L "${challenge_directory}"
+  test "$(stat -c '%U:%G %a' -- "${challenge_directory}")" = "root:root 755"
+done'''
     terminal = "exec /usr/local/bin/letsencrypt\n"
+    initial_start = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf"
     initial_stop = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s stop"
     if (
         configure.count(exact_install) != 1
@@ -1734,6 +1766,8 @@ done'''
         or configure.count(private_verification) != 1
         or cron.count(private_verification) != 2
         or letsencrypt.count(private_verification) != 2
+        or letsencrypt.count(challenge_paths) != 1
+        or letsencrypt.count(challenge_preparation) != 1
         or tls.count('chown root:root -- "${private_path}"') != 2
         or tls.count('chmod 0600 -- "${private_path}"') != 2
         or cron.count(cron_call) != 1
@@ -1746,6 +1780,7 @@ done'''
         or letsencrypt.count("--installcert") != 2
         or letsencrypt.count(exact_reload) != 1
         or letsencrypt.count(f"\n{exact_reload}\n") != 1
+        or letsencrypt.count(f"\n{initial_start}\n") != 1
         or letsencrypt.count(initial_stop) != 1
         or letsencrypt.count("set -euo pipefail") != 1
         or tls.count(exact_reload) != 2
@@ -1761,8 +1796,11 @@ done'''
         or cron.index(cron_call) >= cron.index(exact_reload)
         or cron.index(exact_reload) >= cron.rindex(private_verification)
         or not cron.endswith(private_verification + "\n")
+        or letsencrypt.index(challenge_paths) >= letsencrypt.index(private_directory_verification)
         or letsencrypt.index(private_directory_verification) >= letsencrypt.index(private_verification)
-        or letsencrypt.index(private_verification) >= letsencrypt.index(rsa_install)
+        or letsencrypt.index(private_verification) >= letsencrypt.index(challenge_preparation)
+        or letsencrypt.index(challenge_preparation) >= letsencrypt.index(f"\n{initial_start}\n")
+        or letsencrypt.index(f"\n{initial_start}\n") >= letsencrypt.index(rsa_install)
         or letsencrypt.index(rsa_install) >= letsencrypt.index(ecc_install)
         or letsencrypt.index(ecc_install) >= letsencrypt.index(exact_reload)
         or letsencrypt.index(exact_reload) >= letsencrypt.rindex(private_verification)
@@ -1770,7 +1808,7 @@ done'''
         or not configure.endswith(terminal)
         or configure.index(exact_install) >= configure.index(terminal)
     ):
-        fail("Immutable ACME installation, reload, or private-state contract differs.")
+        fail("Immutable ACME installation, challenge-webroot, reload, or private-state contract differs.")
 
 
 def validate_acme_host_private_state_contract(host_verifier: str) -> None:
