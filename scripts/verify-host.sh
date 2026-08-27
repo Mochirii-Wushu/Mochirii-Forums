@@ -843,6 +843,112 @@ for private_acme_path in \
   [[ -f ${private_acme_path} && ! -L ${private_acme_path} ]] || fail "Private ACME runtime state is absent or linked."
   [[ "$(stat -c '%U:%G %a %h' -- "${private_acme_path}")" == "root:root 600 1" ]] || fail "Private ACME runtime state metadata differs."
 done
+# MOCHIRII ACME STAGE VERIFIER BEGIN
+python3 -I -S -B - "${private_acme_directory}" "${expected_commit}" <<'PY_ACME_STAGE' >/dev/null 2>&1 || fail "Private ACME stage evidence is not terminal for the exact release."
+import os
+import re
+import stat
+import sys
+
+EXPECTED = (
+    "01-rsa-issue-entered",
+    "02-rsa-issue-completed",
+    "03-rsa-validation-entered",
+    "04-rsa-validation-completed",
+    "05-rsa-install-entered",
+    "06-rsa-install-completed",
+    "07-ecc-issue-entered",
+    "08-ecc-issue-completed",
+    "09-ecc-validation-entered",
+    "10-ecc-validation-completed",
+    "11-ecc-install-entered",
+    "12-ecc-install-completed",
+    "13-reload-entered",
+    "14-reload-completed",
+    "15-terminal-completed",
+)
+DIRECTORY_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+FILE_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+
+
+def valid_directory(metadata, mode):
+    return (
+        stat.S_ISDIR(metadata.st_mode)
+        and not stat.S_ISLNK(metadata.st_mode)
+        and metadata.st_uid == 0
+        and metadata.st_gid == 0
+        and stat.S_IMODE(metadata.st_mode) == mode
+    )
+
+
+def open_directory(path_or_name, *, mode, directory_fd=None):
+    metadata = os.stat(path_or_name, dir_fd=directory_fd, follow_symlinks=False)
+    if not valid_directory(metadata, mode):
+        raise ValueError
+    descriptor = os.open(path_or_name, DIRECTORY_FLAGS, dir_fd=directory_fd)
+    opened = os.fstat(descriptor)
+    if (
+        opened.st_dev != metadata.st_dev
+        or opened.st_ino != metadata.st_ino
+        or not valid_directory(opened, mode)
+    ):
+        os.close(descriptor)
+        raise ValueError
+    return descriptor
+
+
+def validate_file(directory_fd, name):
+    metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or metadata.st_size != 0
+    ):
+        raise ValueError
+    descriptor = os.open(name, FILE_FLAGS, dir_fd=directory_fd)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_dev != metadata.st_dev
+            or opened.st_ino != metadata.st_ino
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != 0
+            or opened.st_gid != 0
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+            or opened.st_size != 0
+            or os.read(descriptor, 1) != b""
+        ):
+            raise ValueError
+    finally:
+        os.close(descriptor)
+
+
+root, commit = sys.argv[1:]
+if root != "/var/discourse/shared/standalone/letsencrypt" or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+    raise SystemExit(1)
+root_descriptor = open_directory(root, mode=0o755)
+stage_descriptor = None
+try:
+    stage_descriptor = open_directory(
+        f"mochirii-acme-bootstrap-{commit}.v1",
+        mode=0o700,
+        directory_fd=root_descriptor,
+    )
+    if tuple(sorted(os.listdir(stage_descriptor))) != EXPECTED:
+        raise SystemExit(1)
+    for entry in EXPECTED:
+        validate_file(stage_descriptor, entry)
+finally:
+    if stage_descriptor is not None:
+        os.close(stage_descriptor)
+    os.close(root_descriptor)
+PY_ACME_STAGE
+# MOCHIRII ACME STAGE VERIFIER END
 
 [[ "$(timeout --signal=TERM --kill-after=5s 30s docker inspect --format '{{.State.Running}}' app)" == true ]] || fail "Application container is not running."
 [[ "$(timeout --signal=TERM --kill-after=5s 30s docker inspect --format '{{.State.Status}}' app)" == running ]] || fail "Application container state is not healthy-running."

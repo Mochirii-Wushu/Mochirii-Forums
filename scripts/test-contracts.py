@@ -353,7 +353,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "3f89e007af635ee95db28a68408f7568cfaf4b0f9db732d5c38f6c0459bb5edc"
+            "018ff6eef86744a80bc6108eb3600d663e16646bb7c1c6d7280bfb8377fe6c6e"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
             "b80af8388a6d90a0d4b9de120fc930d71fd8763168db837efbcbadfaa26fcfc0"
@@ -1139,10 +1139,83 @@ def test_acme_install_byte_stability() -> None:
     )
     validator_begin = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR BEGIN\n"
     validator_end = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR END\n"
+    stage_tool_begin = "# MOCHIRII ACME STAGE TOOL BEGIN\n"
+    stage_tool_end = "# MOCHIRII ACME STAGE TOOL END\n"
+    stage_preflight_begin = "# MOCHIRII ACME STAGE PREFLIGHT BEGIN\n"
+    stage_preflight_end = "# MOCHIRII ACME STAGE PREFLIGHT END\n"
+    installed_validator_begin = "# MOCHIRII INSTALLED CERTIFICATE VALIDATOR BEGIN\n"
+    installed_validator_end = "# MOCHIRII INSTALLED CERTIFICATE VALIDATOR END\n"
     order_begin = "# MOCHIRII ACME ORDER BEGIN\n"
     order_end = "# MOCHIRII ACME ORDER END\n"
-    if any(letsencrypt.count(marker) != 1 for marker in (validator_begin, validator_end, order_begin, order_end)):
-        raise RuntimeError("Production certificate validator or ordering boundary differs.")
+    if any(
+        letsencrypt.count(marker) != 1
+        for marker in (
+            validator_begin,
+            validator_end,
+            stage_tool_begin,
+            stage_tool_end,
+            stage_preflight_begin,
+            stage_preflight_end,
+            installed_validator_begin,
+            installed_validator_end,
+            order_begin,
+            order_end,
+        )
+    ):
+        raise RuntimeError("Production certificate stage, installed validator, material validator, or ordering boundary differs.")
+    stage_tool_source = letsencrypt[
+        letsencrypt.index(stage_tool_begin) + len(stage_tool_begin) : letsencrypt.index(stage_tool_end)
+    ]
+    stage_preflight_source = letsencrypt[
+        letsencrypt.index(stage_preflight_begin) + len(stage_preflight_begin) : letsencrypt.index(stage_preflight_end)
+    ]
+    installed_validator_source = letsencrypt[
+        letsencrypt.index(installed_validator_begin)
+        + len(installed_validator_begin) : letsencrypt.index(installed_validator_end)
+    ]
+    stage_python = stage_tool_source.split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0] + "\n"
+    ast.parse(stage_python)
+    installed_python = installed_validator_source.split(
+        "<<'PY_INSTALLED' >/dev/null 2>&1\n",
+        1,
+    )[1].rsplit(
+        "\nPY_INSTALLED\n",
+        1,
+    )[0] + "\n"
+    ast.parse(installed_python)
+    host_stage_begin = "# MOCHIRII ACME STAGE VERIFIER BEGIN\n"
+    host_stage_end = "# MOCHIRII ACME STAGE VERIFIER END\n"
+    if host_verifier.count(host_stage_begin) != 1 or host_verifier.count(host_stage_end) != 1:
+        raise RuntimeError("Host ACME stage verifier boundary differs.")
+    host_stage_source = host_verifier[
+        host_verifier.index(host_stage_begin) + len(host_stage_begin) : host_verifier.index(host_stage_end)
+    ]
+    host_stage_python = host_stage_source.split(
+        "<<'PY_ACME_STAGE' >/dev/null 2>&1 || fail "
+        '"Private ACME stage evidence is not terminal for the exact release."\n',
+        1,
+    )[1].rsplit(
+        "\nPY_ACME_STAGE\n",
+        1,
+    )[0] + "\n"
+    ast.parse(host_stage_python)
+    successful_stage_tokens = (
+        "01-rsa-issue-entered",
+        "02-rsa-issue-completed",
+        "03-rsa-validation-entered",
+        "04-rsa-validation-completed",
+        "05-rsa-install-entered",
+        "06-rsa-install-completed",
+        "07-ecc-issue-entered",
+        "08-ecc-issue-completed",
+        "09-ecc-validation-entered",
+        "10-ecc-validation-completed",
+        "11-ecc-install-entered",
+        "12-ecc-install-completed",
+        "13-reload-entered",
+        "14-reload-completed",
+        "15-terminal-completed",
+    )
     certificate_validator_source = letsencrypt[
         letsencrypt.index(validator_begin) + len(validator_begin) : letsencrypt.index(validator_end)
     ]
@@ -1153,7 +1226,7 @@ def test_acme_install_byte_stability() -> None:
         letsencrypt.index("issue_certificate() {\n") : letsencrypt.index("\n\ninstall_certificate() {\n")
     ]
     install_source = letsencrypt[
-        letsencrypt.index("install_certificate() {\n") : letsencrypt.index("\n\n" + validator_begin)
+        letsencrypt.index("install_certificate() {\n") : letsencrypt.index("\n\n" + installed_validator_begin)
     ]
     cron_call = '''env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \\
   "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"'''
@@ -1407,27 +1480,34 @@ done'''
     if bash is None:
         raise RuntimeError("Bash is required for ACME private-state and reload failure fixtures.")
 
-    if acme_order_source.count(exact_reload) != 1:
-        raise RuntimeError("Production ACME order does not contain one exact reload.")
-    order_harness_source = acme_order_source.replace(exact_reload, 'record "reload"', 1)
+    if acme_order_source.count(exact_reload) != 2:
+        raise RuntimeError("Production ACME order does not contain the terminal and fresh exact reloads.")
+    order_harness_source = acme_order_source.replace(exact_reload, "reload_certificate")
 
-    def run_acme_order(failing_algorithm: str) -> tuple[subprocess.CompletedProcess[bytes], bytes]:
+    def run_acme_order(
+        failing_operation: str,
+        stage_state: str = "FRESH",
+    ) -> tuple[subprocess.CompletedProcess[bytes], bytes]:
         with tempfile.TemporaryDirectory(prefix="mochirii-acme-order-") as directory:
             root = Path(directory)
             events = root / "events.log"
             harness = (
                 "set -euo pipefail\n"
                 'events="$1"\n'
-                'failing_algorithm="$2"\n'
+                'failing_operation="$2"\n'
+                'acme_stage_state="$3"\n'
                 ': >"${events}"\n'
                 "record() { printf '%s\\n' \"$1\" >>\"${events}\"; }\n"
-                'issue_certificate() { record "issue:$1"; }\n'
-                'validate_certificate_material() { record "validate:$2"; [[ "${failing_algorithm}" != "$2" ]]; }\n'
-                'install_certificate() { if [[ -z "$1" ]]; then record "install:rsa"; else record "install:ecc"; fi; }\n'
+                'record_acme_stage() { record "stage:$1"; if [[ "${failing_operation}" == "stage:$1" ]]; then printf \'%s\\n\' FORUMS_ACME_STAGE_RECORD_FAILED >&2; return 1; fi; }\n'
+                'issue_certificate() { record "issue:$1"; if [[ "${failing_operation}" == "issue:$1" ]]; then printf \'%s\\n\' FORUMS_ACME_ISSUANCE_FAILED >&2; return 1; fi; }\n'
+                'validate_certificate_material() { record "validate:$2"; [[ "${failing_operation}" != "validate:$2" ]]; }\n'
+                'install_certificate() { local algorithm=rsa; [[ -n "$1" ]] && algorithm=ecc; record "install:${algorithm}"; if [[ "${failing_operation}" == "install:${algorithm}" ]]; then printf \'%s\\n\' FORUMS_ACME_INSTALL_FAILED >&2; return 1; fi; }\n'
+                'validate_installed_certificate_material() { local algorithm=rsa; [[ -n "$1" ]] && algorithm=ecc; record "installed:${algorithm}"; [[ "${failing_operation}" != "installed:${algorithm}" ]]; }\n'
+                'reload_certificate() { record "reload"; [[ "${failing_operation}" != reload ]]; }\n'
                 + order_harness_source
             )
             result = subprocess.run(
-                [bash, "-c", harness, "bash", "events.log", failing_algorithm],
+                [bash, "-c", harness, "bash", "events.log", failing_operation, stage_state],
                 cwd=root,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -1439,8 +1519,14 @@ done'''
 
     successful_order, successful_events = run_acme_order("")
     expected_successful_events = (
-        b"issue:4096\nvalidate:rsa\ninstall:rsa\n"
-        b"issue:ec-256\nvalidate:ecc\ninstall:ecc\nreload\n"
+        b"stage:01-rsa-issue-entered\nissue:4096\nstage:02-rsa-issue-completed\n"
+        b"stage:03-rsa-validation-entered\nvalidate:rsa\nstage:04-rsa-validation-completed\n"
+        b"stage:05-rsa-install-entered\ninstall:rsa\ninstalled:rsa\nstage:06-rsa-install-completed\n"
+        b"stage:07-ecc-issue-entered\nissue:ec-256\nstage:08-ecc-issue-completed\n"
+        b"stage:09-ecc-validation-entered\nvalidate:ecc\nstage:10-ecc-validation-completed\n"
+        b"stage:11-ecc-install-entered\ninstall:ecc\ninstalled:ecc\nstage:12-ecc-install-completed\n"
+        b"stage:13-reload-entered\nreload\nstage:14-reload-completed\n"
+        b"stage:15-terminal-completed\n"
     )
     if (
         successful_order.returncode != 0
@@ -1449,23 +1535,91 @@ done'''
         or successful_events != expected_successful_events
     ):
         raise RuntimeError("Actual ACME sequence did not preserve issue-validate-install ordering.")
-    rsa_rejection, rsa_events = run_acme_order("rsa")
+    rsa_rejection, rsa_events = run_acme_order("validate:rsa")
     if (
         rsa_rejection.returncode == 0
         or rsa_rejection.stdout
         or rsa_rejection.stderr != b"FORUMS_ACME_RSA_MATERIAL_INVALID\n"
-        or rsa_events != b"issue:4096\nvalidate:rsa\n"
+        or rsa_events != (
+            b"stage:01-rsa-issue-entered\nissue:4096\nstage:02-rsa-issue-completed\n"
+            b"stage:03-rsa-validation-entered\nvalidate:rsa\nstage:04-rsa-validation-failed\n"
+        )
     ):
         raise RuntimeError("RSA material rejection retried issuance or reached a downstream action.")
-    ecc_rejection, ecc_events = run_acme_order("ecc")
+    ecc_rejection, ecc_events = run_acme_order("validate:ecc")
     if (
         ecc_rejection.returncode == 0
         or ecc_rejection.stdout
         or ecc_rejection.stderr != b"FORUMS_ACME_ECC_MATERIAL_INVALID\n"
-        or ecc_events
-        != b"issue:4096\nvalidate:rsa\ninstall:rsa\nissue:ec-256\nvalidate:ecc\n"
+        or ecc_events != (
+            expected_successful_events.split(b"stage:09-ecc-validation-entered\n", 1)[0]
+            + b"stage:09-ecc-validation-entered\nvalidate:ecc\nstage:10-ecc-validation-failed\n"
+        )
     ):
         raise RuntimeError("ECC material rejection retried issuance or reached a downstream action.")
+
+    failure_cases = (
+        (
+            "install:rsa",
+            b"FORUMS_ACME_INSTALL_FAILED\nFORUMS_ACME_RSA_INSTALL_INVALID\n",
+            b"stage:05-rsa-install-entered\ninstall:rsa\nstage:06-rsa-install-failed\n",
+        ),
+        (
+            "installed:rsa",
+            b"FORUMS_ACME_RSA_INSTALL_INVALID\n",
+            b"stage:05-rsa-install-entered\ninstall:rsa\ninstalled:rsa\nstage:06-rsa-install-failed\n",
+        ),
+        (
+            "issue:ec-256",
+            b"FORUMS_ACME_ISSUANCE_FAILED\n",
+            b"stage:07-ecc-issue-entered\nissue:ec-256\nstage:08-ecc-issue-failed\n",
+        ),
+        (
+            "reload",
+            b"FORUMS_ACME_RELOAD_FAILED\n",
+            b"stage:13-reload-entered\nreload\nstage:14-reload-failed\n",
+        ),
+        (
+            "stage:07-ecc-issue-entered",
+            b"FORUMS_ACME_STAGE_RECORD_FAILED\n",
+            b"stage:07-ecc-issue-entered\n",
+        ),
+    )
+    for failure, expected_stderr, terminal_events in failure_cases:
+        result, events = run_acme_order(failure)
+        if (
+            result.returncode == 0
+            or result.stdout
+            or result.stderr != expected_stderr
+            or not events.endswith(terminal_events)
+        ):
+            raise RuntimeError("ACME stage failure reached a downstream action or lost its fixed category.")
+
+    terminal_order, terminal_events = run_acme_order("", "TERMINAL")
+    if (
+        terminal_order.returncode != 0
+        or terminal_order.stdout
+        or terminal_order.stderr
+        or terminal_events != b"validate:rsa\ninstalled:rsa\nvalidate:ecc\ninstalled:ecc\nreload\n"
+    ):
+        raise RuntimeError("Terminal ACME replay did not revalidate exact installed material before reload.")
+    terminal_rejection, terminal_rejection_events = run_acme_order("installed:rsa", "TERMINAL")
+    if (
+        terminal_rejection.returncode == 0
+        or terminal_rejection.stdout
+        or terminal_rejection.stderr != b"FORUMS_ACME_TERMINAL_RSA_INVALID\n"
+        or terminal_rejection_events != b"validate:rsa\ninstalled:rsa\n"
+    ):
+        raise RuntimeError("Terminal ACME replay accepted mismatched retained RSA material.")
+    terminal_reload_rejection, terminal_reload_events = run_acme_order("reload", "TERMINAL")
+    if (
+        terminal_reload_rejection.returncode == 0
+        or terminal_reload_rejection.stdout
+        or terminal_reload_rejection.stderr != b"FORUMS_ACME_RELOAD_FAILED\n"
+        or terminal_reload_events
+        != b"validate:rsa\ninstalled:rsa\nvalidate:ecc\ninstalled:ecc\nreload\n"
+    ):
+        raise RuntimeError("Terminal ACME replay exposed or accepted a reload failure.")
 
     with tempfile.TemporaryDirectory(prefix="mochirii-acme-issue-") as directory:
         root = Path(directory)
@@ -1706,17 +1860,17 @@ printf leaked-success
     if cron.count(cron_call + "\n" + exact_reload) != 1:
         raise RuntimeError("Production cron caller-owned reload seam differs.")
     require_reload_failure(cron_call + "\n" + exact_reload, "ACME cron")
+    fresh_acme_order_source = acme_order_source.split("\nelse\n", 1)[1]
     if (
-        letsencrypt.count(rsa_install) != 1
-        or letsencrypt.count(ecc_install) != 1
-        or letsencrypt.index(rsa_install) >= letsencrypt.index(ecc_install)
-        or letsencrypt.index(ecc_install) >= letsencrypt.index(exact_reload)
+        fresh_acme_order_source.count(rsa_install) != 1
+        or fresh_acme_order_source.count(ecc_install) != 1
+        or fresh_acme_order_source.count(exact_reload + " >/dev/null 2>&1") != 1
+        or fresh_acme_order_source.index(rsa_install)
+        >= fresh_acme_order_source.index(ecc_install)
+        or fresh_acme_order_source.index(ecc_install)
+        >= fresh_acme_order_source.index(exact_reload)
     ):
         raise RuntimeError("Production initial certificate reload seam differs.")
-    require_reload_failure(
-        rsa_install + "\n" + ecc_install + "\n" + exact_reload,
-        "initial certificate installation",
-    )
 
     host_hostiles = (
         host_verifier.replace(
@@ -1801,6 +1955,232 @@ printf leaked-success
     # Linux CI; Windows still binds the exact rendered command and pinned bytes.
     if os.name == "nt":
         return
+
+    if os.geteuid() == 0:
+        commit = "a" * 40
+
+        def run_stage_tool(
+            root: Path,
+            mode: str,
+            stage: str = "",
+        ) -> subprocess.CompletedProcess[bytes]:
+            fixture_source = stage_python.replace(
+                'root != "/shared/letsencrypt"',
+                f"root != {str(root)!r}",
+                1,
+            )
+            return subprocess.run(
+                [sys.executable, "-I", "-S", "-B", "-", str(root), commit, mode, stage],
+                input=fixture_source.encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+
+        def make_stage_root(parent: Path, name: str) -> Path:
+            root = parent / name
+            root.mkdir(mode=0o755)
+            root.chmod(0o755)
+            return root
+
+        with tempfile.TemporaryDirectory(prefix="mochirii-acme-stage-") as directory:
+            fixture = Path(directory)
+            stage_root = make_stage_root(fixture, "terminal")
+            initial = run_stage_tool(stage_root, "inspect")
+            if initial.returncode != 0 or initial.stdout != b"FRESH\n" or initial.stderr:
+                raise RuntimeError("Fresh ACME stage evidence was not classified exactly.")
+            for stage in successful_stage_tokens:
+                result = run_stage_tool(stage_root, "record", stage)
+                if result.returncode != 0 or result.stdout or result.stderr:
+                    raise RuntimeError("Actual ACME stage publisher rejected a valid transition.")
+            terminal = run_stage_tool(stage_root, "inspect")
+            if terminal.returncode != 0 or terminal.stdout != b"TERMINAL\n" or terminal.stderr:
+                raise RuntimeError("Complete ACME stage evidence was not terminal.")
+
+            host_fixture_source = host_stage_python.replace(
+                'root != "/var/discourse/shared/standalone/letsencrypt"',
+                f"root != {str(stage_root)!r}",
+                1,
+            )
+            host_terminal = subprocess.run(
+                [sys.executable, "-I", "-S", "-B", "-", str(stage_root), commit],
+                input=host_fixture_source.encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            if host_terminal.returncode != 0 or host_terminal.stdout or host_terminal.stderr:
+                raise RuntimeError("Actual host verifier rejected exact terminal ACME stage evidence.")
+            stage_directory = stage_root / f"mochirii-acme-bootstrap-{commit}.v1"
+            unknown = stage_directory / "16-hostile"
+            unknown.write_bytes(b"")
+            unknown.chmod(0o600)
+            hostile_host = subprocess.run(
+                [sys.executable, "-I", "-S", "-B", "-", str(stage_root), commit],
+                input=host_fixture_source.encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+            if hostile_host.returncode == 0 or hostile_host.stdout:
+                raise RuntimeError("Host verification accepted unknown terminal ACME stage evidence.")
+            unknown.unlink()
+
+            incomplete_root = make_stage_root(fixture, "incomplete")
+            first = run_stage_tool(incomplete_root, "record", successful_stage_tokens[0])
+            incomplete = run_stage_tool(incomplete_root, "inspect")
+            if (
+                first.returncode != 0
+                or first.stdout
+                or first.stderr
+                or incomplete.returncode != 0
+                or incomplete.stdout != b"INCOMPLETE\n"
+                or incomplete.stderr
+            ):
+                raise RuntimeError("Interrupted ACME stage evidence was not retained as incomplete.")
+
+            failed_root = make_stage_root(fixture, "failed")
+            for stage in ("01-rsa-issue-entered", "02-rsa-issue-failed"):
+                result = run_stage_tool(failed_root, "record", stage)
+                if result.returncode != 0 or result.stdout or result.stderr:
+                    raise RuntimeError("Actual ACME stage publisher rejected an exact failed transition.")
+            failed = run_stage_tool(failed_root, "inspect")
+            after_failure = run_stage_tool(failed_root, "record", "03-rsa-validation-entered")
+            if (
+                failed.returncode != 0
+                or failed.stdout != b"INCOMPLETE\n"
+                or failed.stderr
+                or after_failure.returncode == 0
+                or after_failure.stdout
+                or after_failure.stderr
+            ):
+                raise RuntimeError("Failed ACME stage evidence permitted a downstream transition.")
+
+            unsafe_root = make_stage_root(fixture, "unsafe")
+            result = run_stage_tool(unsafe_root, "record", "01-rsa-issue-entered")
+            if result.returncode != 0:
+                raise RuntimeError("ACME unsafe-stage fixture setup failed.")
+            unsafe_directory = unsafe_root / f"mochirii-acme-bootstrap-{commit}.v1"
+            first_stage = unsafe_directory / "01-rsa-issue-entered"
+            first_stage.chmod(0o644)
+            unsafe = run_stage_tool(unsafe_root, "inspect")
+            if unsafe.returncode == 0 or unsafe.stdout or unsafe.stderr:
+                raise RuntimeError("ACME stage inspection accepted unsafe stage-file metadata.")
+
+        def run_installed_validator(
+            shared_root: Path,
+            suffix: str = "",
+            source: str = installed_python,
+        ) -> subprocess.CompletedProcess[bytes]:
+            root_contract = 'shared_root != "/shared"'
+            if source.count(root_contract) != 1:
+                raise RuntimeError("Installed ACME validator root contract differs.")
+            fixture_source = source.replace(
+                root_contract,
+                f"shared_root != {str(shared_root)!r}",
+                1,
+            )
+            return subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    "-",
+                    str(shared_root),
+                    "forums.mochirii.com",
+                    suffix,
+                ],
+                input=fixture_source.encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+
+        with tempfile.TemporaryDirectory(prefix="mochirii-acme-installed-") as directory:
+            root = Path(directory)
+            shared_root = root / "shared"
+            shared_root.mkdir(mode=0o755)
+            shared_root.chmod(0o755)
+            letsencrypt_root = shared_root / "letsencrypt"
+            shared_ssl = shared_root / "ssl"
+            internal = letsencrypt_root / "forums.mochirii.com"
+            internal.mkdir(parents=True, mode=0o700)
+            letsencrypt_root.chmod(0o755)
+            internal.chmod(0o700)
+            shared_ssl.mkdir(mode=0o755)
+            shared_ssl.chmod(0o755)
+            internal_fullchain = internal / "fullchain.cer"
+            internal_key = internal / "forums.mochirii.com.key"
+            installed_fullchain = shared_ssl / "forums.mochirii.com.cer"
+            installed_key = shared_ssl / "forums.mochirii.com.key"
+            internal_fullchain.write_bytes(b"exact-fullchain\n")
+            internal_key.write_bytes(b"exact-private-key\n")
+            installed_fullchain.write_bytes(internal_fullchain.read_bytes())
+            installed_key.write_bytes(internal_key.read_bytes())
+            internal_fullchain.chmod(0o600)
+            internal_key.chmod(0o600)
+            installed_fullchain.chmod(0o644)
+            installed_key.chmod(0o600)
+            valid_installed = run_installed_validator(shared_root)
+            if valid_installed.returncode != 0 or valid_installed.stdout or valid_installed.stderr:
+                raise RuntimeError("Installed ACME byte validator rejected exact retained material.")
+            installed_fullchain.write_bytes(b"partial")
+            partial = run_installed_validator(shared_root)
+            if partial.returncode == 0 or partial.stdout or partial.stderr:
+                raise RuntimeError("Installed ACME byte validator accepted partial destination material.")
+            installed_fullchain.write_bytes(internal_fullchain.read_bytes())
+            installed_fullchain.chmod(0o666)
+            writable = run_installed_validator(shared_root)
+            if writable.returncode == 0 or writable.stdout or writable.stderr:
+                raise RuntimeError("Installed ACME byte validator accepted writable certificate material.")
+            installed_fullchain.chmod(0o644)
+            installed_key.unlink()
+            os.link(internal_key, installed_key)
+            hardlinked = run_installed_validator(shared_root)
+            if hardlinked.returncode == 0 or hardlinked.stdout or hardlinked.stderr:
+                raise RuntimeError("Installed ACME byte validator accepted hard-linked key material.")
+            installed_key.unlink()
+            installed_key.write_bytes(internal_key.read_bytes())
+            installed_key.chmod(0o600)
+
+            real_ssl = shared_root / "ssl-real"
+            shared_ssl.rename(real_ssl)
+            shared_ssl.symlink_to(real_ssl, target_is_directory=True)
+            linked_parent = run_installed_validator(shared_root)
+            if linked_parent.returncode == 0 or linked_parent.stdout or linked_parent.stderr:
+                raise RuntimeError("Installed ACME byte validator accepted a linked SSL parent.")
+            shared_ssl.unlink()
+            real_ssl.rename(shared_ssl)
+
+            replacement = shared_ssl / "forums.mochirii.com.replacement"
+            replacement.write_bytes(internal_fullchain.read_bytes())
+            replacement.chmod(0o644)
+            race_anchor = (
+                "        for directory_fd, name, descriptor, identity, kind, maximum_bytes in held:\n"
+            )
+            if installed_python.count(race_anchor) != 1:
+                raise RuntimeError("Installed ACME validator revalidation seam differs.")
+            race_source = installed_python.replace(
+                race_anchor,
+                (
+                    '        os.replace(\n'
+                    '            hostname + ".replacement",\n'
+                    '            hostname + suffix + ".cer",\n'
+                    '            src_dir_fd=installed_fd,\n'
+                    '            dst_dir_fd=installed_fd,\n'
+                    '        )\n'
+                    + race_anchor
+                ),
+                1,
+            )
+            replaced = run_installed_validator(shared_root, source=race_source)
+            if replaced.returncode == 0 or replaced.stdout or replaced.stderr:
+                raise RuntimeError("Installed ACME byte validator accepted a replaced post-read leaf.")
 
     with tempfile.TemporaryDirectory(prefix="mochirii-acme-redirection-") as directory:
         missing_target = Path(directory) / "missing" / "private-output"

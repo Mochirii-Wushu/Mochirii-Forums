@@ -105,9 +105,9 @@ ACME_REVISION = "b7caf7a0165d80dd1556b16057a06bb32025066d"
 ACME_SOURCE_SHA256 = "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
 ACME_COMPRESSED_SHA256 = "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
 CONFIGURE_LETSENCRYPT_SHA256 = "069d53abb70100354d0b44bd0d3b132c9d764a952f8abc91f5e7b6d12775cfde"
-IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "f6af33a3fe39e8a06f493636a2c954bf34951000f08b96e2956644b6de3eb1ea"
-IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = "2a9ce4ff49e892ba470cdbaf27caedcbf3a54e193137896b662b30554878782f"
-IMMUTABLE_LETSENCRYPT_RUN_SHA256 = "5740ab22630f53ece56f453bef500dba614513ca27057363b80027b450f25a45"
+IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "41b14fc7e318f9ae4114565147788e6980d7931ee8da1aeadaa23b5a2b57160c"
+IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = "913c60891a627fbc8761ee1f0bfc291ed448b70bf2512fd31cbfe78c1b877b25"
+IMMUTABLE_LETSENCRYPT_RUN_SHA256 = "994eaa1c1b9d8eeb55a6687123ac5e9212c395c970a3706e3e65f55d0d494635"
 OBSERVED_MAIN_REVISION = "00595119c368c0aef7d7019ec66ffc8fa51cce79"
 OBSERVED_MAIN_TREE = "d5b846bf4e59784c5220c48839d7eb1b45671aae"
 OBSERVED_RANGE = [
@@ -301,9 +301,9 @@ SENSITIVE_LOG_EXECUTABLE_SHA256 = "3e9ca44f8d9f4e2f89463fca323ba63388f2c059664cc
 DISCOURSE_CONNECT_VERIFIER_SHA256 = "f12739d6baba4eb4267509fd35b5e6f9ce79be19e5ec63b07e2134140041a360"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
 HOST_NGINX_FILE_VERIFIER_SHA256 = "b7356abad4a80964825cf3a8cf1290ccd7c33d65fe0095c2dd47328f046ce9d9"
-HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "363ca993d78a0c3578c8118c3026f2d3410f8ecb876c1f9a12a1b684cca6d74b"
+HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "9300c08808e054a565bb41759f3bdc8dd0349f23971db715c10403cf07f34327"
 HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "cefc6ba11ee9810f228a9f47048c95d5d441e6de854a60d0a3629de7e6d3a0e7"
-HOST_VERIFY_SOURCE_SHA256 = "92e5ef74b22abd395c0c0a80d41d73dee46114c048e21a7cc9978b340b9c193f"
+HOST_VERIFY_SOURCE_SHA256 = "d506422d76d140591da3d0aa3291188d4738e6b23ba2ccb87ba56329da996129"
 DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "9aa1279010aac1a5b7c65b6634053792d15c17f788090456660f1a575aa9b98e"
 DISPOSABLE_NGINX_OUTLET_EXTRACTOR_RUBY = r"""
 require "yaml"
@@ -912,8 +912,8 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "1b7a434445aa727116ca026f1c49268ece460e214b3cfda4378042c2bdf54439"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "3f89e007af635ee95db28a68408f7568cfaf4b0f9db732d5c38f6c0459bb5edc"
+CONTRACT_TEST_SOURCE_SHA256 = "ce39393d82a0f7b200838577eccd997e8b003fe5df3d93047d972b992524c3d5"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "018ff6eef86744a80bc6108eb3600d663e16646bb7c1c6d7280bfb8377fe6c6e"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
 FAILED_BOOTSTRAP_TEST_SHA256 = "b80af8388a6d90a0d4b9de120fc930d71fd8763168db837efbcbadfaa26fcfc0"
 
@@ -2622,6 +2622,7 @@ readonly cat_bin="/usr/bin/cat"
 readonly cmp_bin="/usr/bin/cmp"
 readonly awk_bin="/usr/bin/awk"
 readonly mktemp_bin="/usr/bin/mktemp"
+readonly python_bin="/usr/bin/python3"
 readonly rm_bin="/usr/bin/rm"
 readonly rmdir_bin="/usr/bin/rmdir"
 for validator_tool in \\
@@ -2631,6 +2632,7 @@ for validator_tool in \\
   "${cmp_bin}" \\
   "${awk_bin}" \\
   "${mktemp_bin}" \\
+  "${python_bin}" \\
   "${rm_bin}" \\
   "${rmdir_bin}"; do
   if ! test -x "${validator_tool}"; then
@@ -2763,22 +2765,261 @@ fi'''
         '''[[ "${key_details}" = 'Public-Key: (4096 bit)'$'\\n'* ]] || return 1''',
         '''[[ "${key_details}" = *$'\\nASN1 OID: prime256v1\\nNIST CURVE: P-256' ]] || return 1''',
     )
-    acme_order = '''# MOCHIRII ACME ORDER BEGIN
-issue_certificate "4096"
-if ! validate_certificate_material "" "rsa" "0:0"; then
-  printf '%s\\n' 'FORUMS_ACME_RSA_MATERIAL_INVALID' >&2
-  exit 1
-fi
-install_certificate "" ""
+    stage_tool_begin = "# MOCHIRII ACME STAGE TOOL BEGIN\n"
+    stage_tool_end = "# MOCHIRII ACME STAGE TOOL END\n"
+    stage_preflight_begin = "# MOCHIRII ACME STAGE PREFLIGHT BEGIN\n"
+    stage_preflight_end = "# MOCHIRII ACME STAGE PREFLIGHT END\n"
+    installed_validator_begin = "# MOCHIRII INSTALLED CERTIFICATE VALIDATOR BEGIN\n"
+    installed_validator_end = "# MOCHIRII INSTALLED CERTIFICATE VALIDATOR END\n"
+    acme_order_begin = "# MOCHIRII ACME ORDER BEGIN\n"
+    acme_order_end = "# MOCHIRII ACME ORDER END\n"
+    section_markers = (
+        stage_tool_begin,
+        stage_tool_end,
+        stage_preflight_begin,
+        stage_preflight_end,
+        installed_validator_begin,
+        installed_validator_end,
+        acme_order_begin,
+        acme_order_end,
+    )
+    if any(letsencrypt.count(marker) != 1 for marker in section_markers):
+        fail("Immutable ACME stage or installed-material section boundary differs.")
+    stage_tool = letsencrypt[
+        letsencrypt.index(stage_tool_begin) + len(stage_tool_begin) : letsencrypt.index(stage_tool_end)
+    ]
+    stage_preflight = letsencrypt[
+        letsencrypt.index(stage_preflight_begin) + len(stage_preflight_begin) : letsencrypt.index(stage_preflight_end)
+    ]
+    installed_validator = letsencrypt[
+        letsencrypt.index(installed_validator_begin)
+        + len(installed_validator_begin) : letsencrypt.index(installed_validator_end)
+    ]
+    acme_order = letsencrypt[
+        letsencrypt.index(acme_order_begin) + len(acme_order_begin) : letsencrypt.index(acme_order_end)
+    ]
+    try:
+        stage_python = stage_tool.split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0] + "\n"
+        stage_tree = ast.parse(stage_python)
+    except (IndexError, SyntaxError) as error:
+        fail(f"Immutable ACME stage publisher is not exact Python: {error}")
+    try:
+        installed_python = installed_validator.split(
+            "<<'PY_INSTALLED' >/dev/null 2>&1\n",
+            1,
+        )[1].rsplit(
+            "\nPY_INSTALLED\n",
+            1,
+        )[0] + "\n"
+        installed_tree = ast.parse(installed_python)
+    except (IndexError, SyntaxError) as error:
+        fail(f"Installed ACME byte validator is not exact Python: {error}")
 
-issue_certificate "ec-256"
-if ! validate_certificate_material "_ecc" "ecc" "0:0"; then
-  printf '%s\\n' 'FORUMS_ACME_ECC_MATERIAL_INVALID' >&2
-  exit 1
-fi
-install_certificate "_ecc" "--ecc"
-/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload
-# MOCHIRII ACME ORDER END'''
+    stage_next_assignments = [
+        node
+        for node in stage_tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "NEXT"
+    ]
+    terminal_stage_assignments = [
+        node
+        for node in stage_tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "TERMINAL_STAGE"
+    ]
+    if (
+        len(stage_next_assignments) != 1
+        or not isinstance(stage_next_assignments[0].value, ast.Dict)
+        or len(terminal_stage_assignments) != 1
+    ):
+        fail("Immutable ACME stage transition authority differs.")
+
+    stage_next: dict[str | None, set[str]] = {}
+    for key_node, value_node in zip(
+        stage_next_assignments[0].value.keys,
+        stage_next_assignments[0].value.values,
+        strict=True,
+    ):
+        if not isinstance(key_node, ast.Constant) or not (
+            key_node.value is None or isinstance(key_node.value, str)
+        ):
+            fail("Immutable ACME stage transition key differs.")
+        if isinstance(value_node, ast.Set):
+            if any(
+                not isinstance(element, ast.Constant) or not isinstance(element.value, str)
+                for element in value_node.elts
+            ):
+                fail("Immutable ACME stage transition target differs.")
+            targets = {element.value for element in value_node.elts}
+        elif (
+            isinstance(value_node, ast.Call)
+            and isinstance(value_node.func, ast.Name)
+            and value_node.func.id == "set"
+            and not value_node.args
+            and not value_node.keywords
+        ):
+            targets = set()
+        else:
+            fail("Immutable ACME stage transition value differs.")
+        if key_node.value in stage_next:
+            fail("Immutable ACME stage transition key is duplicated.")
+        stage_next[key_node.value] = targets
+
+    expected_stage_next = {
+        None: {"01-rsa-issue-entered"},
+        "01-rsa-issue-entered": {"02-rsa-issue-completed", "02-rsa-issue-failed"},
+        "02-rsa-issue-completed": {"03-rsa-validation-entered"},
+        "02-rsa-issue-failed": set(),
+        "03-rsa-validation-entered": {"04-rsa-validation-completed", "04-rsa-validation-failed"},
+        "04-rsa-validation-completed": {"05-rsa-install-entered"},
+        "04-rsa-validation-failed": set(),
+        "05-rsa-install-entered": {"06-rsa-install-completed", "06-rsa-install-failed"},
+        "06-rsa-install-completed": {"07-ecc-issue-entered"},
+        "06-rsa-install-failed": set(),
+        "07-ecc-issue-entered": {"08-ecc-issue-completed", "08-ecc-issue-failed"},
+        "08-ecc-issue-completed": {"09-ecc-validation-entered"},
+        "08-ecc-issue-failed": set(),
+        "09-ecc-validation-entered": {"10-ecc-validation-completed", "10-ecc-validation-failed"},
+        "10-ecc-validation-completed": {"11-ecc-install-entered"},
+        "10-ecc-validation-failed": set(),
+        "11-ecc-install-entered": {"12-ecc-install-completed", "12-ecc-install-failed"},
+        "12-ecc-install-completed": {"13-reload-entered"},
+        "12-ecc-install-failed": set(),
+        "13-reload-entered": {"14-reload-completed", "14-reload-failed"},
+        "14-reload-completed": {"15-terminal-completed"},
+        "14-reload-failed": set(),
+        "15-terminal-completed": set(),
+    }
+    try:
+        terminal_stage = ast.literal_eval(terminal_stage_assignments[0].value)
+    except (TypeError, ValueError) as error:
+        fail(f"Immutable ACME terminal stage is not literal: {error}")
+    if stage_next != expected_stage_next or terminal_stage != "15-terminal-completed":
+        fail("Immutable ACME stage transition graph differs.")
+    stage_tokens = (
+        "01-rsa-issue-entered",
+        "02-rsa-issue-completed",
+        "02-rsa-issue-failed",
+        "03-rsa-validation-entered",
+        "04-rsa-validation-completed",
+        "04-rsa-validation-failed",
+        "05-rsa-install-entered",
+        "06-rsa-install-completed",
+        "06-rsa-install-failed",
+        "07-ecc-issue-entered",
+        "08-ecc-issue-completed",
+        "08-ecc-issue-failed",
+        "09-ecc-validation-entered",
+        "10-ecc-validation-completed",
+        "10-ecc-validation-failed",
+        "11-ecc-install-entered",
+        "12-ecc-install-completed",
+        "12-ecc-install-failed",
+        "13-reload-entered",
+        "14-reload-completed",
+        "14-reload-failed",
+        "15-terminal-completed",
+    )
+    stage_tool_fragments = (
+        '"${python_bin}" -I -S -B -',
+        'root != "/shared/letsencrypt"',
+        'stage_name = f"mochirii-acme-bootstrap-{commit}.v1"',
+        'os.mkdir(stage_name, 0o700, dir_fd=root_descriptor)',
+        "os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW",
+        "os.fsync(root_descriptor)",
+        "os.fsync(descriptor)",
+        "os.fsync(stage_descriptor)",
+        'state = "TERMINAL" if current == TERMINAL_STAGE else "INCOMPLETE"',
+        'sys.stdout.write("FRESH\\n")',
+        "except BaseException:",
+        "os._exit(1)",
+    )
+    stage_preflight_fragments = (
+        'acme_stage_state="$(acme_stage_tool inspect 2>/dev/null)"',
+        "FORUMS_ACME_STAGE_RECORD_FAILED",
+        "FORUMS_ACME_STAGE_EVIDENCE_INVALID",
+        "FORUMS_ACME_STAGE_FORWARD_FIX_REQUIRED",
+        "FRESH|TERMINAL",
+    )
+    expected_installed_functions = (
+        "metadata_identity",
+        "valid_directory",
+        "open_directory",
+        "valid_file",
+        "open_file",
+        "read_exact",
+        "revalidate_directory",
+        "revalidate_file",
+        "main",
+    )
+    installed_functions = tuple(
+        node.name
+        for node in installed_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    installed_validation_fragments = (
+        '"${python_bin}" -I -S -B - "/shared" "${DISCOURSE_HOSTNAME}"',
+        "os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW",
+        "os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW",
+        'shared_root != "/shared"',
+        'hostname != "forums.mochirii.com"',
+        'suffix not in {"", "_ecc"}',
+        '''letsencrypt_fd, letsencrypt_identity = open_directory(
+            "letsencrypt",''',
+        '''installed_fd, installed_identity = open_directory(
+            "ssl",''',
+        "stat.S_IMODE(metadata.st_mode)",
+        "metadata.st_uid == 0",
+        "metadata.st_gid == 0",
+        "metadata.st_nlink != 1",
+        "values = [read_exact(item[2], item[3][6]) for item in held]",
+        "values[0] != values[2] or values[1] != values[3]",
+        "metadata_identity(path_metadata) != identity",
+        "metadata_identity(held_metadata) != identity",
+        "revalidate_file(",
+        "revalidate_directory(",
+        "except BaseException:",
+        "os._exit(1)",
+    )
+    successful_stage_order = (
+        'record_acme_stage "01-rsa-issue-entered"',
+        'record_acme_stage "02-rsa-issue-completed"',
+        'record_acme_stage "03-rsa-validation-entered"',
+        'record_acme_stage "04-rsa-validation-completed"',
+        'record_acme_stage "05-rsa-install-entered"',
+        'record_acme_stage "06-rsa-install-completed"',
+        'record_acme_stage "07-ecc-issue-entered"',
+        'record_acme_stage "08-ecc-issue-completed"',
+        'record_acme_stage "09-ecc-validation-entered"',
+        'record_acme_stage "10-ecc-validation-completed"',
+        'record_acme_stage "11-ecc-install-entered"',
+        'record_acme_stage "12-ecc-install-completed"',
+        'record_acme_stage "13-reload-entered"',
+        'record_acme_stage "14-reload-completed"',
+        'record_acme_stage "15-terminal-completed"',
+    )
+    if (
+        any(fragment not in stage_tool for fragment in stage_tool_fragments)
+        or any(fragment not in stage_preflight for fragment in stage_preflight_fragments)
+        or installed_functions != expected_installed_functions
+        or any(fragment not in installed_validator for fragment in installed_validation_fragments)
+        or '"${cmp_bin}"' in installed_validator
+        or '"${stat_bin}"' in installed_validator
+        or any(acme_order.count(f'record_acme_stage "{token}"') != 1 for token in stage_tokens)
+        or any(acme_order.count(fragment) != 1 for fragment in successful_stage_order)
+        or [acme_order.index(fragment) for fragment in successful_stage_order]
+        != sorted(acme_order.index(fragment) for fragment in successful_stage_order)
+        or acme_order.count('if [ "${acme_stage_state}" = "TERMINAL" ]; then') != 1
+        or acme_order.count('validate_installed_certificate_material ""') != 2
+        or acme_order.count('validate_installed_certificate_material "_ecc"') != 2
+        or acme_order.count(exact_reload + " >/dev/null 2>&1") != 2
+        or acme_order.count("FORUMS_ACME_RELOAD_FAILED") != 2
+    ):
+        fail("Immutable ACME stage evidence, replay, or installed-byte contract differs.")
     private_directory_verification = '''test -d "${letsencrypt_dir}"
 test ! -L "${letsencrypt_dir}"
 test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"'''
@@ -2881,7 +3122,6 @@ done'''
         or letsencrypt.count(certificate_validator_begin) != 1
         or letsencrypt.count(certificate_validator_end) != 1
         or any(letsencrypt.count(fragment) != 1 for fragment in certificate_validation_fragments)
-        or letsencrypt.count(acme_order) != 1
         or letsencrypt.count("--issue") != 1
         or letsencrypt.count("--installcert") != 1
         or letsencrypt.count('issue_certificate "4096"') != 1
@@ -2891,12 +3131,12 @@ done'''
         or "--force" in letsencrypt
         or "cert_exists" in letsencrypt
         or "extra_domains" in letsencrypt
-        or letsencrypt.count(exact_reload) != 1
-        or letsencrypt.count(f"\n{exact_reload}\n") != 1
+        or letsencrypt.count(exact_reload) != 2
+        or acme_order.count(exact_reload) != 2
         or letsencrypt.count(f"\n{initial_start}\n") != 1
         or letsencrypt.count(initial_stop) != 1
         or letsencrypt.count("set -euo pipefail") != 1
-        or tls.count(exact_reload) != 2
+        or tls.count(exact_reload) != 3
         or "sv reload nginx" in tls
         or "--reloadcmd" in tls
         or configure.index("umask 077") >= configure.index(private_directory_normalization)
@@ -2918,9 +3158,9 @@ done'''
         or letsencrypt.index(issue_call) >= letsencrypt.index(install_call)
         or letsencrypt.index(install_call) >= letsencrypt.index(certificate_validator_begin)
         or letsencrypt.index(certificate_validator_begin) >= letsencrypt.index(certificate_validator_end)
-        or letsencrypt.index(certificate_validator_end) >= letsencrypt.index(acme_order)
-        or letsencrypt.index(f"\n{initial_start}\n") >= letsencrypt.index(acme_order)
-        or letsencrypt.index(acme_order) >= letsencrypt.rindex(private_verification)
+        or letsencrypt.index(certificate_validator_end) >= letsencrypt.index(acme_order_begin)
+        or letsencrypt.index(f"\n{initial_start}\n") >= letsencrypt.index(acme_order_begin)
+        or letsencrypt.index(acme_order_end) >= letsencrypt.rindex(private_verification)
         or letsencrypt.index(exact_reload) >= letsencrypt.rindex(private_verification)
         or letsencrypt.rindex(private_verification) >= letsencrypt.index(initial_stop)
         or not configure.endswith(terminal)
@@ -2941,6 +3181,47 @@ for private_acme_path in \\
 done'''
     if host_verifier.count(expected) != 1:
         fail("Host verification does not bind exact root-private ACME runtime state.")
+    stage_begin = "# MOCHIRII ACME STAGE VERIFIER BEGIN\n"
+    stage_end = "# MOCHIRII ACME STAGE VERIFIER END\n"
+    if host_verifier.count(stage_begin) != 1 or host_verifier.count(stage_end) != 1:
+        fail("Host verification ACME stage boundary differs.")
+    stage_verifier = host_verifier[
+        host_verifier.index(stage_begin) + len(stage_begin) : host_verifier.index(stage_end)
+    ]
+    expected_stages = (
+        "01-rsa-issue-entered",
+        "02-rsa-issue-completed",
+        "03-rsa-validation-entered",
+        "04-rsa-validation-completed",
+        "05-rsa-install-entered",
+        "06-rsa-install-completed",
+        "07-ecc-issue-entered",
+        "08-ecc-issue-completed",
+        "09-ecc-validation-entered",
+        "10-ecc-validation-completed",
+        "11-ecc-install-entered",
+        "12-ecc-install-completed",
+        "13-reload-entered",
+        "14-reload-completed",
+        "15-terminal-completed",
+    )
+    required = (
+        'python3 -I -S -B - "${private_acme_directory}" "${expected_commit}"',
+        'root != "/var/discourse/shared/standalone/letsencrypt"',
+        'f"mochirii-acme-bootstrap-{commit}.v1"',
+        "os.O_DIRECTORY | os.O_NOFOLLOW",
+        "tuple(sorted(os.listdir(stage_descriptor))) != EXPECTED",
+        'stat.S_IMODE(metadata.st_mode) != 0o600',
+        "metadata.st_nlink != 1",
+        "metadata.st_size != 0",
+        'os.read(descriptor, 1) != b""',
+        'fail "Private ACME stage evidence is not terminal for the exact release."',
+    )
+    if (
+        any(stage_verifier.count(stage) != 1 for stage in expected_stages)
+        or any(fragment not in stage_verifier for fragment in required)
+    ):
+        fail("Host verification does not bind exact terminal ACME stage evidence.")
 
 
 def validate_stage4_pull_request_template(text: str) -> None:
