@@ -6269,7 +6269,7 @@ def expect_validation_failure(action, label: str) -> None:
 
 def test_repository_governance() -> None:
     allowed = sorted(VALIDATOR.ALLOWED_FILES)
-    if len(allowed) != 163:
+    if len(allowed) != 164:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")
@@ -6406,6 +6406,32 @@ def test_repository_governance() -> None:
         ),
         "write workflow permission",
     )
+    review_workflow_path = VALIDATOR.REVIEW_AUTHORITY_WORKFLOW_PATH
+    review_workflow = (ROOT / review_workflow_path).read_text(encoding="utf-8")
+    codeowners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")
+    VALIDATOR.validate_workflow_contract(review_workflow_path, review_workflow)
+    VALIDATOR.validate_review_authority_source(codeowners, review_workflow)
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_review_authority_source(
+            codeowners.replace("* @xartaiusx", "* @unapproved-owner", 1),
+            review_workflow,
+        ),
+        "unapproved repository code owner",
+    )
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_review_authority_source(
+            codeowners,
+            review_workflow.replace('method not in {"GET", "POST"}', 'method not in {"GET", "POST", "PATCH"}', 1),
+        ),
+        "updating an existing reviewed-source ref",
+    )
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_workflow_contract(
+            review_workflow_path,
+            review_workflow.replace("  pull-requests: write", "  pull-requests: read", 1),
+        ),
+        "review wrapper permission drift",
+    )
     checkout_workflow_path = ".github/workflows/disposable-bootstrap.yml"
     checkout_workflow = (ROOT / checkout_workflow_path).read_text(encoding="utf-8")
     expect_validation_failure(
@@ -6515,6 +6541,377 @@ def test_extracted_archive_governance() -> None:
         else:
             if archive_validation(linked).returncode == 0:
                 raise RuntimeError("Extracted archive validator accepted a linked source entry.")
+
+
+def test_reviewed_source_pull_request_wrapper() -> None:
+    import http.client
+
+    workflow = (ROOT / VALIDATOR.REVIEW_AUTHORITY_WORKFLOW_PATH).read_text(encoding="utf-8")
+    start_marker = "          import http.client\n"
+    end_marker = "          PY\n"
+    if workflow.count(start_marker) != 1 or workflow.count(end_marker) != 1:
+        raise RuntimeError("Reviewed-source workflow Python boundary differs.")
+    start = workflow.index(start_marker)
+    end = workflow.index(end_marker, start)
+    embedded = "\n".join(line[10:] for line in workflow[start:end].splitlines()) + "\n"
+    ast.parse(embedded)
+
+    base_sha = "1" * 40
+    source_sha = "2" * 40
+    tree_sha = "3" * 40
+    finalized_sha = "4" * 40
+    replacement_finalized_sha = "5" * 40
+    head_ref = "codex/agent-2/forums-fixture"
+    bot_head_ref = f"codex/github-actions/reviewed-forums-{base_sha[:12]}-{source_sha[:12]}"
+    token_sentinel = "github-token-private-sentinel"
+    fixed_error = "Reviewed-source pull-request operation failed.\n"
+    title = "Forums: reviewed source successor"
+    message = "Create reviewed Mochirii Forums source head"
+    body = (
+        "This pull request was opened by the protected default-branch review wrapper.\n\n"
+        f"Reviewed source commit: `{source_sha}`\n"
+        f"Reviewed source tree: `{tree_sha}`\n\n"
+        "The bot-authored head is tree-identical to the reviewed source and has current main as its sole "
+        "parent. A fresh code-owner approval of that exact head and all required checks remain mandatory."
+    )
+    api_prefix = "/repos/Mochirii-Wushu/Mochirii-Forums"
+    query = (
+        "state=all&head=Mochirii-Wushu%3Acodex%2Fgithub-actions%2Freviewed-forums-"
+        f"{base_sha[:12]}-{source_sha[:12]}&base=main&per_page=100"
+    )
+
+    def git_commit(sha: str, parent: str, tree: str, commit_message: str = "source") -> dict[str, object]:
+        return {
+            "sha": sha,
+            "tree": {"sha": tree},
+            "parents": [{"sha": parent}],
+            "message": commit_message,
+        }
+
+    def git_ref(ref: str, sha: str) -> dict[str, object]:
+        return {"ref": ref, "object": {"type": "commit", "sha": sha}}
+
+    def pull_request(
+        head_sha: str,
+        login: str = "github-actions[bot]",
+        head_repository: str = "Mochirii-Wushu/Mochirii-Forums",
+        base_repository: str = "Mochirii-Wushu/Mochirii-Forums",
+    ) -> dict[str, object]:
+        return {
+            "number": 7,
+            "state": "open",
+            "draft": False,
+            "title": title,
+            "body": body,
+            "user": {"login": login},
+            "head": {"ref": bot_head_ref, "sha": head_sha, "repo": {"full_name": head_repository}},
+            "base": {
+                "ref": "main",
+                "sha": base_sha,
+                "repo": {"full_name": base_repository},
+            },
+        }
+
+    class FakeResponse:
+        def __init__(self, status: int, document: object):
+            self.status = status
+            self.raw = json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+
+        def getheader(self, name: str, default: str | None = None) -> str | None:
+            headers = {
+                "Content-Length": str(len(self.raw)),
+                "Content-Type": "application/json; charset=utf-8",
+            }
+            return headers.get(name, default)
+
+        def read(self, maximum: int) -> bytes:
+            if maximum != 1024 * 1024 + 1:
+                raise RuntimeError("Reviewed-source response bound differs.")
+            return self.raw
+
+    def execute(
+        responses: list[tuple[str, str, int, object]],
+        overrides: dict[str, str] | None = None,
+    ):
+        remaining = list(responses)
+        observed: list[tuple[str, str, object | None, dict[str, str]]] = []
+
+        class FakeConnection:
+            def __init__(self, host: str, timeout: int):
+                if host != "api.github.com" or timeout != 30:
+                    raise RuntimeError("Reviewed-source API origin or timeout differs.")
+                self.response: FakeResponse | None = None
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                body: bytes | None = None,
+                headers: dict[str, str] | None = None,
+            ) -> None:
+                parsed_body = None if body is None else json.loads(body.decode("ascii"))
+                observed_headers = dict(headers or {})
+                observed.append((method, path, parsed_body, observed_headers))
+                if not remaining:
+                    raise RuntimeError("Reviewed-source wrapper issued an extra request.")
+                expected_method, expected_path, status, document = remaining.pop(0)
+                if method != expected_method or path != expected_path:
+                    raise RuntimeError("Reviewed-source request sequence differs.")
+                if observed_headers.get("Authorization") != f"Bearer {token_sentinel}":
+                    raise RuntimeError("Reviewed-source request omitted its protected authorization boundary.")
+                self.response = FakeResponse(status, document)
+
+            def getresponse(self) -> FakeResponse:
+                if self.response is None:
+                    raise RuntimeError("Reviewed-source response was read before a request.")
+                return self.response
+
+            def close(self) -> None:
+                return None
+
+        values = {
+            "MOCHIRII_EVENT_NAME": "repository_dispatch",
+            "MOCHIRII_EVENT_ACTION": "open-reviewed-forums-source-pr",
+            "MOCHIRII_REPOSITORY": "Mochirii-Wushu/Mochirii-Forums",
+            "MOCHIRII_ACTOR": "xartaiusx",
+            "MOCHIRII_TRIGGERING_ACTOR": "xartaiusx",
+            "MOCHIRII_SENDER": "xartaiusx",
+            "MOCHIRII_RUN_ATTEMPT": "1",
+            "MOCHIRII_EVENT_REF": "refs/heads/main",
+            "MOCHIRII_EVENT_SHA": base_sha,
+            "MOCHIRII_WORKFLOW_REF": (
+                "Mochirii-Wushu/Mochirii-Forums/"
+                ".github/workflows/open-reviewed-source-pr.yml@refs/heads/main"
+            ),
+            "MOCHIRII_WORKFLOW_SHA": base_sha,
+            "MOCHIRII_HEAD_REF": head_ref,
+            "MOCHIRII_EXPECTED_SOURCE_SHA": source_sha,
+            "MOCHIRII_EXPECTED_TREE_SHA": tree_sha,
+            "MOCHIRII_GITHUB_TOKEN": token_sentinel,
+        }
+        values.update(overrides or {})
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        original = http.client.HTTPSConnection
+        return_code = 0
+        try:
+            http.client.HTTPSConnection = FakeConnection
+            with environment(values), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                try:
+                    exec(compile(embedded, VALIDATOR.REVIEW_AUTHORITY_WORKFLOW_PATH, "exec"), {})
+                except SystemExit as error:
+                    return_code = error.code if isinstance(error.code, int) else 1
+        finally:
+            http.client.HTTPSConnection = original
+        if remaining:
+            raise RuntimeError("Reviewed-source wrapper skipped an expected request.")
+        return return_code, stdout.getvalue(), stderr.getvalue(), observed
+
+    base_path = f"{api_prefix}/git/ref/heads/main"
+    source_ref_path = f"{api_prefix}/git/ref/heads/{head_ref}"
+    bot_ref_path = f"{api_prefix}/git/ref/heads/{bot_head_ref}"
+    base_response = git_ref("refs/heads/main", base_sha)
+    source_ref_response = git_ref(f"refs/heads/{head_ref}", source_sha)
+    source_response = git_commit(source_sha, base_sha, tree_sha, message)
+    compare_response = {
+        "status": "ahead",
+        "ahead_by": 1,
+        "behind_by": 0,
+        "total_commits": 1,
+        "merge_base_commit": {"sha": base_sha},
+    }
+
+    def common(pulls: list[object]) -> list[tuple[str, str, int, object]]:
+        return [
+            ("GET", base_path, 200, base_response),
+            ("GET", source_ref_path, 200, source_ref_response),
+            ("GET", f"{api_prefix}/git/commits/{source_sha}", 200, source_response),
+            ("GET", f"{api_prefix}/compare/{base_sha}...{source_sha}", 200, compare_response),
+            ("GET", f"{api_prefix}/pulls?{query}", 200, pulls),
+        ]
+
+    def assert_failure(result: tuple[object, ...], label: str) -> None:
+        if result[0] == 0 or result[1] or result[2] != fixed_error or any(
+            entry[0] != "GET" for entry in result[3]
+        ):
+            raise RuntimeError(f"Reviewed-source wrapper accepted {label}.")
+        if token_sentinel in result[1] or token_sentinel in result[2]:
+            raise RuntimeError("Reviewed-source diagnostics exposed the protected credential.")
+
+    initial = execute(
+        [
+            *common([]),
+            ("GET", bot_ref_path, 404, {"message": "Not Found"}),
+            ("GET", base_path, 200, base_response),
+            (
+                "POST",
+                f"{api_prefix}/git/commits",
+                201,
+                git_commit(finalized_sha, base_sha, tree_sha, message),
+            ),
+            ("GET", base_path, 200, base_response),
+            ("POST", f"{api_prefix}/git/refs", 201, git_ref(f"refs/heads/{bot_head_ref}", finalized_sha)),
+            ("GET", base_path, 200, base_response),
+            ("POST", f"{api_prefix}/pulls", 201, pull_request(finalized_sha)),
+            ("GET", f"{api_prefix}/pulls/7", 200, pull_request(finalized_sha)),
+            ("GET", base_path, 200, base_response),
+        ]
+    )
+    if initial[0] != 0 or initial[2] or initial[1] != f"Reviewed-source pull request #7 opened at {finalized_sha}.\n":
+        raise RuntimeError("Reviewed-source initial operation did not complete exactly.")
+    writes = [entry for entry in initial[3] if entry[0] != "GET"]
+    if [entry[0:2] for entry in writes] != [
+        ("POST", f"{api_prefix}/git/commits"),
+        ("POST", f"{api_prefix}/git/refs"),
+        ("POST", f"{api_prefix}/pulls"),
+    ]:
+        raise RuntimeError("Reviewed-source write boundary differs.")
+    if writes[0][2] != {
+        "message": message,
+        "tree": tree_sha,
+        "parents": [base_sha],
+    } or writes[1][2] != {
+        "ref": f"refs/heads/{bot_head_ref}",
+        "sha": finalized_sha,
+    } or writes[2][2] != {
+        "title": title,
+        "head": bot_head_ref,
+        "base": "main",
+        "body": body,
+        "draft": False,
+        "maintainer_can_modify": False,
+    }:
+        raise RuntimeError("Reviewed-source write payload differs.")
+
+    # A failure after the commit-object write leaves no ref. A new dispatch may
+    # create a replacement orphan commit before completing the ref and PR.
+    after_commit_only = execute(
+        [
+            *common([]),
+            ("GET", bot_ref_path, 404, {"message": "Not Found"}),
+            ("GET", base_path, 200, base_response),
+            (
+                "POST",
+                f"{api_prefix}/git/commits",
+                201,
+                git_commit(replacement_finalized_sha, base_sha, tree_sha, message),
+            ),
+            ("GET", base_path, 200, base_response),
+            (
+                "POST",
+                f"{api_prefix}/git/refs",
+                201,
+                git_ref(f"refs/heads/{bot_head_ref}", replacement_finalized_sha),
+            ),
+            ("GET", base_path, 200, base_response),
+            ("POST", f"{api_prefix}/pulls", 201, pull_request(replacement_finalized_sha)),
+            ("GET", f"{api_prefix}/pulls/7", 200, pull_request(replacement_finalized_sha)),
+            ("GET", base_path, 200, base_response),
+        ]
+    )
+    if (
+        after_commit_only[0] != 0
+        or after_commit_only[2]
+        or after_commit_only[1]
+        != f"Reviewed-source pull request #7 opened at {replacement_finalized_sha}.\n"
+        or [entry[0:2] for entry in after_commit_only[3] if entry[0] != "GET"]
+        != [
+            ("POST", f"{api_prefix}/git/commits"),
+            ("POST", f"{api_prefix}/git/refs"),
+            ("POST", f"{api_prefix}/pulls"),
+        ]
+    ):
+        raise RuntimeError("Reviewed-source commit-only crash replay did not complete exactly.")
+
+    after_ref = execute(
+        [
+            *common([]),
+            ("GET", bot_ref_path, 200, git_ref(f"refs/heads/{bot_head_ref}", finalized_sha)),
+            (
+                "GET",
+                f"{api_prefix}/git/commits/{finalized_sha}",
+                200,
+                git_commit(finalized_sha, base_sha, tree_sha, message),
+            ),
+            ("GET", base_path, 200, base_response),
+            ("POST", f"{api_prefix}/pulls", 201, pull_request(finalized_sha)),
+            ("GET", f"{api_prefix}/pulls/7", 200, pull_request(finalized_sha)),
+            ("GET", base_path, 200, base_response),
+        ]
+    )
+    if after_ref[0] != 0 or after_ref[2] or [entry[0:2] for entry in after_ref[3] if entry[0] != "GET"] != [
+        ("POST", f"{api_prefix}/pulls")
+    ]:
+        raise RuntimeError("Reviewed-source ref-only crash replay did not complete exactly.")
+
+    replay = execute(
+        [
+            *common([pull_request(finalized_sha)]),
+            ("GET", bot_ref_path, 200, git_ref(f"refs/heads/{bot_head_ref}", finalized_sha)),
+            (
+                "GET",
+                f"{api_prefix}/git/commits/{finalized_sha}",
+                200,
+                git_commit(finalized_sha, base_sha, tree_sha, message),
+            ),
+            ("GET", f"{api_prefix}/pulls/7", 200, pull_request(finalized_sha)),
+            ("GET", base_path, 200, base_response),
+        ]
+    )
+    if replay[0] != 0 or replay[2] or any(entry[0] != "GET" for entry in replay[3]):
+        raise RuntimeError("Reviewed-source PR-created replay was not exact and read-only.")
+
+    hostile_pr = execute(common([pull_request(finalized_sha, "xartaiusx")]))
+    assert_failure(hostile_pr, "a human-authored pull request")
+    wrong_head_repository = execute(
+        common([pull_request(finalized_sha, head_repository="Mochirii-Wushu/other-repository")])
+    )
+    assert_failure(wrong_head_repository, "a pull request from another repository")
+    wrong_base_repository = execute(
+        common([pull_request(finalized_sha, base_repository="Mochirii-Wushu/other-repository")])
+    )
+    assert_failure(wrong_base_repository, "a pull request targeting another repository")
+
+    source_as_bot = execute(
+        [
+            *common([pull_request(source_sha)]),
+            ("GET", bot_ref_path, 200, git_ref(f"refs/heads/{bot_head_ref}", source_sha)),
+        ]
+    )
+    assert_failure(source_as_bot, "a source-owned head presented as the bot head")
+
+    wrong_parent = execute(
+        [
+            ("GET", base_path, 200, base_response),
+            ("GET", source_ref_path, 200, source_ref_response),
+            (
+                "GET",
+                f"{api_prefix}/git/commits/{source_sha}",
+                200,
+                git_commit(source_sha, "9" * 40, tree_sha),
+            ),
+        ]
+    )
+    assert_failure(wrong_parent, "a non-current-main source parent")
+
+    for label, overrides in {
+        "a different initial actor": {"MOCHIRII_ACTOR": "other-writer"},
+        "a different re-run actor": {"MOCHIRII_TRIGGERING_ACTOR": "other-writer"},
+        "a different dispatch sender": {"MOCHIRII_SENDER": "other-writer"},
+        "a workflow re-run": {"MOCHIRII_RUN_ATTEMPT": "2"},
+        "a selected source-branch workflow": {
+            "MOCHIRII_WORKFLOW_REF": (
+                "Mochirii-Wushu/Mochirii-Forums/"
+                ".github/workflows/open-reviewed-source-pr.yml@refs/heads/codex/agent-2/forums-fixture"
+            )
+        },
+        "a non-default workflow SHA": {"MOCHIRII_WORKFLOW_SHA": "9" * 40},
+        "a non-dispatch event": {"MOCHIRII_EVENT_NAME": "workflow_dispatch"},
+    }.items():
+        result = execute([], overrides)
+        assert_failure(result, label)
+        if result[3]:
+            raise RuntimeError(f"Reviewed-source wrapper contacted the API for {label}.")
 
 
 def test_authentication_state_machine() -> None:
@@ -12915,6 +13312,7 @@ def main() -> int:
     test_ssh_dispatch_contract()
     test_current_main_observation()
     test_repository_governance()
+    test_reviewed_source_pull_request_wrapper()
     test_extracted_archive_governance()
     test_authentication_state_machine()
     test_deployment_checkout_configuration_boundary()

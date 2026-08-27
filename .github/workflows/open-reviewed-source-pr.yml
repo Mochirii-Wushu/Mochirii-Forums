@@ -1,0 +1,404 @@
+name: open-reviewed-forums-source-pr
+
+'on':
+  repository_dispatch:
+    types:
+      - open-reviewed-forums-source-pr
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: open-reviewed-forums-source-pr
+  cancel-in-progress: false
+
+jobs:
+  open-reviewed-source-pr:
+    name: open-reviewed-source-pr
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MOCHIRII_EVENT_NAME: ${{ github.event_name }}
+      MOCHIRII_EVENT_ACTION: ${{ github.event.action }}
+      MOCHIRII_REPOSITORY: ${{ github.repository }}
+      MOCHIRII_ACTOR: ${{ github.actor }}
+      MOCHIRII_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+      MOCHIRII_SENDER: ${{ github.event.sender.login }}
+      MOCHIRII_RUN_ATTEMPT: ${{ github.run_attempt }}
+      MOCHIRII_EVENT_REF: ${{ github.ref }}
+      MOCHIRII_EVENT_SHA: ${{ github.sha }}
+      MOCHIRII_WORKFLOW_REF: ${{ github.workflow_ref }}
+      MOCHIRII_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      MOCHIRII_HEAD_REF: ${{ github.event.client_payload.head_ref }}
+      MOCHIRII_EXPECTED_SOURCE_SHA: ${{ github.event.client_payload.expected_source_sha }}
+      MOCHIRII_EXPECTED_TREE_SHA: ${{ github.event.client_payload.expected_tree_sha }}
+      MOCHIRII_GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Open exact bot-authored pull request
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I -S -B - <<'PY'
+          import http.client
+          import json
+          import os
+          import re
+          import sys
+          import urllib.parse
+
+          REPOSITORY = "Mochirii-Wushu/Mochirii-Forums"
+          OWNER = "Mochirii-Wushu"
+          REPOSITORY_NAME = "Mochirii-Forums"
+          REVIEWER = "xartaiusx"
+          BASE_REF = "main"
+          EVENT_NAME = "repository_dispatch"
+          EVENT_ACTION = "open-reviewed-forums-source-pr"
+          WORKFLOW_PATH = ".github/workflows/open-reviewed-source-pr.yml"
+          API_HOST = "api.github.com"
+          API_VERSION = "2022-11-28"
+          MAX_RESPONSE_BYTES = 1024 * 1024
+          COMMIT_MESSAGE = "Create reviewed Mochirii Forums source head"
+          PR_TITLE = "Forums: reviewed source successor"
+          FIXED_FAILURE = "Reviewed-source pull-request operation failed.\n"
+
+
+          def fail() -> None:
+              raise RuntimeError("reviewed-source operation failed")
+
+
+          def environment(name: str, maximum: int) -> str:
+              value = os.environ.get(name)
+              if not isinstance(value, str) or not value or len(value) > maximum:
+                  fail()
+              return value
+
+
+          def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+              result: dict[str, object] = {}
+              for key, value in pairs:
+                  if key in result:
+                      fail()
+                  result[key] = value
+              return result
+
+
+          def request(
+              method: str,
+              path: str,
+              expected_status: int | tuple[int, ...],
+              payload: object | None = None,
+          ) -> tuple[int, object]:
+              if method not in {"GET", "POST"}:
+                  fail()
+              prefix = f"/repos/{OWNER}/{REPOSITORY_NAME}/"
+              if not path.startswith(prefix) or len(path) > 768:
+                  fail()
+              statuses = (expected_status,) if type(expected_status) is int else expected_status
+              if type(statuses) is not tuple or not statuses or any(type(status) is not int for status in statuses):
+                  fail()
+              body = None
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {AUTHORIZATION_VALUE}",
+                  "User-Agent": "mochirii-forums-reviewed-source-pr",
+                  "X-GitHub-Api-Version": API_VERSION,
+              }
+              if payload is not None:
+                  body = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+                  if len(body) > 8192:
+                      fail()
+                  headers["Content-Type"] = "application/json"
+              connection = http.client.HTTPSConnection(API_HOST, timeout=30)
+              try:
+                  connection.request(method, path, body=body, headers=headers)
+                  response = connection.getresponse()
+                  content_length = response.getheader("Content-Length")
+                  if content_length is not None:
+                      if not re.fullmatch(r"[0-9]+", content_length) or int(content_length) > MAX_RESPONSE_BYTES:
+                          fail()
+                  raw = response.read(MAX_RESPONSE_BYTES + 1)
+                  if len(raw) > MAX_RESPONSE_BYTES or response.status not in statuses:
+                      fail()
+                  media_type = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
+                  if media_type != "application/json":
+                      fail()
+                  document = json.loads(
+                      raw.decode("utf-8", errors="strict"),
+                      object_pairs_hook=reject_duplicate_keys,
+                  )
+                  return response.status, document
+              finally:
+                  connection.close()
+
+
+          def response_document(
+              method: str,
+              path: str,
+              expected_status: int,
+              payload: object | None = None,
+          ) -> object:
+              status, document = request(method, path, expected_status, payload)
+              if status != expected_status:
+                  fail()
+              return document
+
+
+          def object_value(value: object) -> dict[str, object]:
+              if type(value) is not dict:
+                  fail()
+              return value
+
+
+          def string_value(value: object, pattern: str, maximum: int = 256) -> str:
+              if type(value) is not str or len(value) > maximum or re.fullmatch(pattern, value) is None:
+                  fail()
+              return value
+
+
+          def list_value(value: object, maximum: int = 100) -> list[object]:
+              if type(value) is not list or len(value) > maximum:
+                  fail()
+              return value
+
+
+          def commit(sha: str) -> dict[str, object]:
+              return object_value(
+                  response_document("GET", f"/repos/{OWNER}/{REPOSITORY_NAME}/git/commits/{sha}", 200)
+              )
+
+
+          def commit_tree_sha(document: dict[str, object]) -> str:
+              return string_value(object_value(document.get("tree")).get("sha"), r"[0-9a-f]{40}")
+
+
+          def commit_parent_sha(document: dict[str, object]) -> str:
+              parents = list_value(document.get("parents"), 2)
+              if len(parents) != 1:
+                  fail()
+              return string_value(object_value(parents[0]).get("sha"), r"[0-9a-f]{40}")
+
+
+          def reference_sha(document: object, exact_ref: str) -> str:
+              value = object_value(document)
+              if string_value(value.get("ref"), re.escape(exact_ref), 192) != exact_ref:
+                  fail()
+              target = object_value(value.get("object"))
+              if string_value(target.get("type"), r"commit") != "commit":
+                  fail()
+              return string_value(target.get("sha"), r"[0-9a-f]{40}")
+
+
+          def require_base_current() -> None:
+              base_path = f"/repos/{OWNER}/{REPOSITORY_NAME}/git/ref/heads/{BASE_REF}"
+              base = response_document("GET", base_path, 200)
+              if reference_sha(base, f"refs/heads/{BASE_REF}") != EVENT_SHA:
+                  fail()
+
+
+          def pull_request_body(source_sha: str, tree_sha: str) -> str:
+              return (
+                  "This pull request was opened by the protected default-branch review wrapper.\n\n"
+                  f"Reviewed source commit: `{source_sha}`\n"
+                  f"Reviewed source tree: `{tree_sha}`\n\n"
+                  "The bot-authored head is tree-identical to the reviewed source and has current main as its sole "
+                  "parent. A fresh code-owner approval of that exact head and all required checks remain mandatory."
+              )
+
+
+          def pull_request_identity(document: dict[str, object], head_ref: str) -> tuple[int, str]:
+              head = object_value(document.get("head"))
+              base = object_value(document.get("base"))
+              if (
+                  string_value(document.get("state"), r"open") != "open"
+                  or document.get("draft") is not False
+                  or string_value(document.get("title"), re.escape(PR_TITLE)) != PR_TITLE
+                  or string_value(document.get("body"), r"[\x20-\x7e\n]+", 2048) != PR_BODY
+                  or string_value(object_value(document.get("user")).get("login"), r"github-actions\[bot\]")
+                  != "github-actions[bot]"
+                  or string_value(head.get("ref"), re.escape(head_ref), 192) != head_ref
+                  or string_value(object_value(head.get("repo")).get("full_name"), re.escape(REPOSITORY), 128)
+                  != REPOSITORY
+                  or string_value(base.get("ref"), r"main") != BASE_REF
+                  or string_value(base.get("sha"), r"[0-9a-f]{40}") != EVENT_SHA
+                  or string_value(object_value(base.get("repo")).get("full_name"), re.escape(REPOSITORY), 128)
+                  != REPOSITORY
+              ):
+                  fail()
+              number = document.get("number")
+              if type(number) is not int or number < 1:
+                  fail()
+              head_sha = string_value(head.get("sha"), r"[0-9a-f]{40}")
+              return number, head_sha
+
+
+          def main() -> None:
+              expected_workflow_ref = f"{REPOSITORY}/{WORKFLOW_PATH}@refs/heads/{BASE_REF}"
+              if (
+                  EVENT_NAME_ENV != EVENT_NAME
+                  or EVENT_ACTION_ENV != EVENT_ACTION
+                  or REPOSITORY_ENV != REPOSITORY
+                  or ACTOR.casefold() != REVIEWER
+                  or TRIGGERING_ACTOR.casefold() != REVIEWER
+                  or SENDER.casefold() != REVIEWER
+                  or RUN_ATTEMPT != "1"
+                  or EVENT_REF != "refs/heads/main"
+                  or WORKFLOW_REF != expected_workflow_ref
+                  or WORKFLOW_SHA != EVENT_SHA
+              ):
+                  fail()
+              if re.fullmatch(r"[0-9a-f]{40}", EVENT_SHA) is None:
+                  fail()
+              if (
+                  re.fullmatch(r"codex/agent-2/forums-[a-z0-9][a-z0-9._/-]{0,95}", HEAD_REF) is None
+                  or ".." in HEAD_REF
+                  or "//" in HEAD_REF
+                  or HEAD_REF.endswith(("/", ".", ".lock"))
+              ):
+                  fail()
+              if re.fullmatch(r"[0-9a-f]{40}", SOURCE_SHA) is None or re.fullmatch(r"[0-9a-f]{40}", TREE_SHA) is None:
+                  fail()
+
+              bot_head_ref = f"codex/github-actions/reviewed-forums-{EVENT_SHA[:12]}-{SOURCE_SHA[:12]}"
+              bot_ref_name = f"refs/heads/{bot_head_ref}"
+              source_ref_suffix = urllib.parse.quote(f"heads/{HEAD_REF}", safe="/")
+              source_ref_path = f"/repos/{OWNER}/{REPOSITORY_NAME}/git/ref/{source_ref_suffix}"
+              bot_ref_suffix = urllib.parse.quote(f"heads/{bot_head_ref}", safe="/")
+              bot_ref_path = f"/repos/{OWNER}/{REPOSITORY_NAME}/git/ref/{bot_ref_suffix}"
+
+              require_base_current()
+              source_ref = response_document("GET", source_ref_path, 200)
+              if reference_sha(source_ref, f"refs/heads/{HEAD_REF}") != SOURCE_SHA:
+                  fail()
+              source = commit(SOURCE_SHA)
+              if commit_tree_sha(source) != TREE_SHA or commit_parent_sha(source) != EVENT_SHA:
+                  fail()
+              compare = object_value(
+                  response_document(
+                      "GET",
+                      f"/repos/{OWNER}/{REPOSITORY_NAME}/compare/{EVENT_SHA}...{SOURCE_SHA}",
+                      200,
+                  )
+              )
+              if (
+                  string_value(compare.get("status"), r"ahead") != "ahead"
+                  or compare.get("ahead_by") != 1
+                  or compare.get("behind_by") != 0
+                  or compare.get("total_commits") != 1
+                  or string_value(object_value(compare.get("merge_base_commit")).get("sha"), r"[0-9a-f]{40}")
+                  != EVENT_SHA
+              ):
+                  fail()
+
+              query = urllib.parse.urlencode(
+                  {"state": "all", "head": f"{OWNER}:{bot_head_ref}", "base": BASE_REF, "per_page": "100"}
+              )
+              pulls = list_value(
+                  response_document("GET", f"/repos/{OWNER}/{REPOSITORY_NAME}/pulls?{query}", 200)
+              )
+              if len(pulls) > 1:
+                  fail()
+              pull: dict[str, object] | None = object_value(pulls[0]) if pulls else None
+              pull_number: int | None = None
+              pull_head_sha: str | None = None
+              if pull is not None:
+                  pull_number, pull_head_sha = pull_request_identity(pull, bot_head_ref)
+
+              ref_status, ref_document = request("GET", bot_ref_path, (200, 404))
+              finalized_sha: str
+              if ref_status == 404:
+                  if pull is not None:
+                      fail()
+                  require_base_current()
+                  created = object_value(
+                      response_document(
+                          "POST",
+                          f"/repos/{OWNER}/{REPOSITORY_NAME}/git/commits",
+                          201,
+                          {"message": COMMIT_MESSAGE, "tree": TREE_SHA, "parents": [EVENT_SHA]},
+                      )
+                  )
+                  finalized_sha = string_value(created.get("sha"), r"[0-9a-f]{40}")
+                  if finalized_sha == SOURCE_SHA:
+                      fail()
+                  if (
+                      commit_tree_sha(created) != TREE_SHA
+                      or commit_parent_sha(created) != EVENT_SHA
+                      or string_value(created.get("message"), re.escape(COMMIT_MESSAGE), 128) != COMMIT_MESSAGE
+                  ):
+                      fail()
+                  require_base_current()
+                  created_ref = response_document(
+                      "POST",
+                      f"/repos/{OWNER}/{REPOSITORY_NAME}/git/refs",
+                      201,
+                      {"ref": bot_ref_name, "sha": finalized_sha},
+                  )
+                  if reference_sha(created_ref, bot_ref_name) != finalized_sha:
+                      fail()
+              else:
+                  finalized_sha = reference_sha(ref_document, bot_ref_name)
+                  if finalized_sha == SOURCE_SHA:
+                      fail()
+                  finalized = commit(finalized_sha)
+                  if (
+                      commit_tree_sha(finalized) != TREE_SHA
+                      or commit_parent_sha(finalized) != EVENT_SHA
+                      or string_value(finalized.get("message"), re.escape(COMMIT_MESSAGE), 128) != COMMIT_MESSAGE
+                  ):
+                      fail()
+
+              if pull is None:
+                  require_base_current()
+                  pull = object_value(
+                      response_document(
+                          "POST",
+                          f"/repos/{OWNER}/{REPOSITORY_NAME}/pulls",
+                          201,
+                          {
+                              "title": PR_TITLE,
+                              "head": bot_head_ref,
+                              "base": BASE_REF,
+                              "body": PR_BODY,
+                              "draft": False,
+                              "maintainer_can_modify": False,
+                          },
+                      )
+                  )
+                  pull_number, pull_head_sha = pull_request_identity(pull, bot_head_ref)
+
+              if pull_number is None or pull_head_sha != finalized_sha:
+                  fail()
+              refreshed = object_value(
+                  response_document("GET", f"/repos/{OWNER}/{REPOSITORY_NAME}/pulls/{pull_number}", 200)
+              )
+              refreshed_number, refreshed_head = pull_request_identity(refreshed, bot_head_ref)
+              if refreshed_number != pull_number or refreshed_head != finalized_sha:
+                  fail()
+              require_base_current()
+              sys.stdout.write(f"Reviewed-source pull request #{pull_number} opened at {finalized_sha}.\n")
+
+
+          try:
+              EVENT_NAME_ENV = environment("MOCHIRII_EVENT_NAME", 64)
+              EVENT_ACTION_ENV = environment("MOCHIRII_EVENT_ACTION", 64)
+              REPOSITORY_ENV = environment("MOCHIRII_REPOSITORY", 128)
+              ACTOR = environment("MOCHIRII_ACTOR", 64)
+              TRIGGERING_ACTOR = environment("MOCHIRII_TRIGGERING_ACTOR", 64)
+              SENDER = environment("MOCHIRII_SENDER", 64)
+              RUN_ATTEMPT = environment("MOCHIRII_RUN_ATTEMPT", 16)
+              EVENT_REF = environment("MOCHIRII_EVENT_REF", 128)
+              EVENT_SHA = environment("MOCHIRII_EVENT_SHA", 40)
+              WORKFLOW_REF = environment("MOCHIRII_WORKFLOW_REF", 256)
+              WORKFLOW_SHA = environment("MOCHIRII_WORKFLOW_SHA", 40)
+              HEAD_REF = environment("MOCHIRII_HEAD_REF", 128)
+              SOURCE_SHA = environment("MOCHIRII_EXPECTED_SOURCE_SHA", 40)
+              TREE_SHA = environment("MOCHIRII_EXPECTED_TREE_SHA", 40)
+              AUTHORIZATION_VALUE = environment("MOCHIRII_GITHUB_TOKEN", 4096)
+              PR_BODY = pull_request_body(SOURCE_SHA, TREE_SHA)
+              main()
+          except BaseException:
+              sys.stdout.flush()
+              sys.stderr.write(FIXED_FAILURE)
+              raise SystemExit(1)
+          PY

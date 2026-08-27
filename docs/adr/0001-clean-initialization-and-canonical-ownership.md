@@ -5,7 +5,7 @@
 
 ## Context
 
-The private `Mochirii-Wushu/Mochirii-Forums` repository is the intended canonical
+The public `Mochirii-Wushu/Mochirii-Forums` repository is the intended canonical
 source boundary for future Mōchirīī forum customizations and controlled upstream
 tracking. No approved forum-source migration, provider configuration, hostname,
 runtime, or deployment belongs in this initial change.
@@ -27,10 +27,16 @@ new source category requires a focused change that updates the contract and the
 relevant decision record. GitHub Actions validates the exact pull-request head
 with read-only contents permission and no third-party actions.
 
-CODEOWNERS remains comment-only until an existing GitHub user or team is approved.
-No nonexistent team or organization placeholder is treated as an owner. Because
-enforceable private-repository rulesets are not currently assumed, exact-head CI
-and accountable human review are procedural merge gates.
+The existing repository owner `@xartaiusx` is the code owner for every tracked
+path, including CODEOWNERS and workflows. This decision requires, but does not
+itself activate, protected-`main` provider settings for one fresh code-owner
+approval, stale-approval dismissal, approval of the most recent reviewable push,
+and no administrator bypass. Those gates remain pending until post-bootstrap
+provider readback proves them. A default-branch `repository_dispatch` workflow
+can create a fresh bot branch whose sole commit has current `main` as its parent
+and is tree-identical to an exact reviewed source commit, then open a pull
+request. It has no review, merge, ref-update, or `main`-update operation. Exact-
+head CI and provider readback remain mandatory before merge.
 
 ## Future import gate
 
