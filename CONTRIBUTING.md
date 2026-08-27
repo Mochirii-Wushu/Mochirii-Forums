@@ -60,10 +60,22 @@ provider.
 
 ## Exact-head review boundary
 
-Do not assume a CODEOWNERS entry, plan feature, or repository visibility alone
-enforces review. Immediately before merge, re-check the base, exact head SHA,
-required CI, branch protections, and accountable human approval. Do not bypass
-protections, force-push a reviewed head, or merge a different commit.
+Protected `main` is required to obtain a fresh approval from the repository code
+owner and approval of the most recent reviewable push. Stale approvals must be
+dismissed and administrators must not bypass these gates. Do not treat those
+requirements as active until current provider readback proves every setting.
+The default-branch `repository_dispatch` workflow may create a fresh bot branch
+whose sole commit has current `main` as its parent and is tree-identical to one
+exact reviewed source commit, then open a pull request from that branch. It
+cannot approve or merge a pull request, update an existing ref, or update
+`main`. Re-runs are rejected; a new exact dispatch resumes safely after a
+failure. Workflow-created pull-request checks must be explicitly released by a
+write-authorized human before their results are considered.
+
+Immediately before merge, re-check the base, exact source and bot head SHAs,
+tree equality, required CI, branch-protection readback, and accountable code-
+owner approval of the final head. Do not bypass protections, force-push a
+reviewed head, reuse a prior branch, or merge a different commit.
 
 ## Prohibited contributions
 

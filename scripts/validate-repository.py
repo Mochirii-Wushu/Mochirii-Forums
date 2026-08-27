@@ -452,6 +452,13 @@ PINNED_GRAVATAR_EVIDENCE = [
         "sha256": "2757a35e7521b9b6d8a7cdf7d6cf5e5ebf1273132956533dcf3951b27bca397c",
     },
 ]
+REVIEW_AUTHORITY_WORKFLOW_PATH = ".github/workflows/open-reviewed-source-pr.yml"
+REVIEW_AUTHORITY_WORKFLOW_SHA256 = "1c04910c900b33257d52c789ec94813f0e5c8eecc39c139510873b9dbab2f817"
+REVIEW_AUTHORITY_CODEOWNERS = (
+    "# The repository owner is the accountable reviewer for every tracked path,\n"
+    "# including this file and all workflow definitions.\n"
+    "* @xartaiusx\n"
+)
 ALLOWED_FILES = frozenset(
     {
     ".env.example",
@@ -463,6 +470,7 @@ ALLOWED_FILES = frozenset(
     ".github/workflows/deploy-forums.yml",
     ".github/workflows/disposable-bootstrap.yml",
     ".github/workflows/inspect-upstream.yml",
+    ".github/workflows/open-reviewed-source-pr.yml",
     ".github/workflows/restore-forums.yml",
     ".github/workflows/validate-repository.yml",
     ".github/workflows/verify-forums.yml",
@@ -1549,8 +1557,66 @@ def validate_workflow_contract(relative: str, text: str) -> None:
             break
         if line.strip() and not line.lstrip().startswith("#"):
             permissions.append(line)
-    if permissions != ["  contents: read"]:
-        fail(f"Workflow permissions must equal contents read only: {relative}")
+    expected_permissions = (
+        ["  contents: write", "  pull-requests: write"]
+        if relative == REVIEW_AUTHORITY_WORKFLOW_PATH
+        else ["  contents: read"]
+    )
+    if permissions != expected_permissions:
+        fail(f"Workflow permissions differ from the exact path-specific contract: {relative}")
+
+
+def validate_review_authority_source(codeowners: str, workflow: str) -> None:
+    if codeowners != REVIEW_AUTHORITY_CODEOWNERS:
+        fail("Repository code-owner authority differs.")
+    if hashlib.sha256(workflow.encode("utf-8")).hexdigest() != REVIEW_AUTHORITY_WORKFLOW_SHA256:
+        fail("Reviewed-source workflow bytes differ.")
+    if workflow.count("if finalized_sha == SOURCE_SHA:") != 2:
+        fail("Reviewed-source workflow lost its distinct bot-head identity gate.")
+    require_text(
+        workflow,
+        [
+            "repository_dispatch:\n    types:\n      - open-reviewed-forums-source-pr",
+            "permissions:\n  contents: write\n  pull-requests: write",
+            "MOCHIRII_TRIGGERING_ACTOR: ${{ github.triggering_actor }}",
+            "MOCHIRII_RUN_ATTEMPT: ${{ github.run_attempt }}",
+            "MOCHIRII_EVENT_REF: ${{ github.ref }}",
+            "MOCHIRII_EVENT_SHA: ${{ github.sha }}",
+            "MOCHIRII_WORKFLOW_REF: ${{ github.workflow_ref }}",
+            "MOCHIRII_WORKFLOW_SHA: ${{ github.workflow_sha }}",
+            "MOCHIRII_GITHUB_TOKEN: ${{ github.token }}",
+            'REPOSITORY = "Mochirii-Wushu/Mochirii-Forums"',
+            'REVIEWER = "xartaiusx"',
+            'BASE_REF = "main"',
+            'EVENT_NAME = "repository_dispatch"',
+            'COMMIT_MESSAGE = "Create reviewed Mochirii Forums source head"',
+            'RUN_ATTEMPT != "1"',
+            "WORKFLOW_SHA != EVENT_SHA",
+            '"draft": False',
+            '"maintainer_can_modify": False',
+            '"message": COMMIT_MESSAGE, "tree": TREE_SHA, "parents": [EVENT_SHA]',
+            '{"ref": bot_ref_name, "sha": finalized_sha}',
+            'string_value(object_value(document.get("user")).get("login"), r"github-actions\\[bot\\]")',
+            'string_value(object_value(head.get("repo")).get("full_name"), re.escape(REPOSITORY), 128)',
+            'string_value(object_value(base.get("repo")).get("full_name"), re.escape(REPOSITORY), 128)',
+            "python3 -I -S -B - <<'PY'",
+        ],
+        "protected reviewed-source pull-request wrapper",
+    )
+    for forbidden in (
+        "pull_request_target",
+        "workflow_dispatch:",
+        "/reviews",
+        "/merge",
+        "auto_merge",
+        "enablePullRequestAutoMerge",
+        "branches/main",
+        '"PATCH"',
+        '"DELETE"',
+        '"force"',
+    ):
+        if forbidden in workflow:
+            fail("Reviewed-source workflow exceeds create-only branch authority.")
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -4777,6 +4843,10 @@ def validate_secrets_and_workflows() -> None:
             validate_workflow_contract(relative, text)
 
     validation_workflow = text_files[".github/workflows/validate-repository.yml"]
+    validate_review_authority_source(
+        text_files[".github/CODEOWNERS"],
+        text_files[REVIEW_AUTHORITY_WORKFLOW_PATH],
+    )
     trusted_marker = "  trusted-online-pins:"
     if trusted_marker not in validation_workflow:
         fail("Trusted authenticated online pin gate is absent.")
