@@ -350,13 +350,13 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
     }
     expected_contract_seals = {
         "VALIDATOR_CLI_SOURCE_SHA256": (
-            "2f9da6f53b135a31e2129d51550582a007e0d03dbd255f93c25d7347f9129246"
+            "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "76e1fc0d46f02dad6dea2c31750c7e981436f8c05839f86efcacafd45d1062f4"
+            "3f89e007af635ee95db28a68408f7568cfaf4b0f9db732d5c38f6c0459bb5edc"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
-            "bea50b165daa8bdff8e658977b7d7742db0df866c06898a92fad1fa8b8a73105"
+            "b80af8388a6d90a0d4b9de120fc930d71fd8763168db837efbcbadfaa26fcfc0"
         ),
     }
     observed_contract_seals: dict[str, str] = {}
@@ -559,9 +559,9 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
         hashlib.sha256(verifier_source.encode("utf-8")).hexdigest()
         != "6668eda049f2d14d63ab7da7421faebe41d94d09f73d8420eec77d81d5f2f284"
         or hashlib.sha256(contract_verifier_source.encode("utf-8")).hexdigest()
-        != "b4632a5af4955d84dd77235b785cb26b97f251b6eb0c0929cf650104a6749e72"
+        != "43ab4b67ad4220227eedccd2815a7b487bbec0c65f62d770890461c3d606bdc8"
         or hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
-        != "2f9da6f53b135a31e2129d51550582a007e0d03dbd255f93c25d7347f9129246"
+        != "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
     ):
         raise RuntimeError("Repository validator independent CLI source seal differs.")
 
@@ -580,13 +580,70 @@ def validate_validator_cli_independently(
 EXACT_VALIDATOR_WRAPPER = '''import sys
 path = sys.argv[1]
 source = sys.stdin.buffer.read()
-sys.argv = [path]
+arguments = sys.argv[2:]
+sys.argv = [path, *arguments]
 namespace = {"__name__": "__main__", "__file__": path, "__package__": None, "__cached__": None}
 exec(compile(source, path, "exec"), namespace, namespace)
 '''
 
 
+def metadata_is_link_or_reparse(metadata: os.stat_result) -> bool:
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+
+
+def exact_validator_archive_root(path: Path) -> Path | None:
+    if path.name != "validate-repository.py" or path.parent.name != "scripts":
+        raise RuntimeError("Repository validator source boundary differs.")
+    scripts_directory = path.parent
+    repository_root = scripts_directory.parent
+    root_metadata = repository_root.lstat()
+    scripts_metadata = scripts_directory.lstat()
+    metadata = path.lstat()
+    if (
+        metadata_is_link_or_reparse(root_metadata)
+        or not stat.S_ISDIR(root_metadata.st_mode)
+        or metadata_is_link_or_reparse(scripts_metadata)
+        or not stat.S_ISDIR(scripts_metadata.st_mode)
+        or metadata_is_link_or_reparse(metadata)
+        or not stat.S_ISREG(metadata.st_mode)
+    ):
+        raise RuntimeError("Repository validator source boundary differs.")
+    resolved = path.resolve(strict=True)
+    resolved_scripts = scripts_directory.resolve(strict=True)
+    resolved_root = repository_root.resolve(strict=True)
+    if (
+        resolved.parent != resolved_scripts
+        or resolved_scripts.parent != resolved_root
+    ):
+        raise RuntimeError("Repository validator root boundary differs.")
+    git_boundary = resolved_root / ".git"
+    try:
+        git_metadata = git_boundary.lstat()
+    except FileNotFoundError:
+        return resolved_root
+    if metadata_is_link_or_reparse(git_metadata) or not (
+        stat.S_ISREG(git_metadata.st_mode) or stat.S_ISDIR(git_metadata.st_mode)
+    ):
+        raise RuntimeError("Repository validator Git boundary differs.")
+    return None
+
+
 def run_exact_validator(path: Path, source: bytes) -> subprocess.CompletedProcess[bytes]:
+    archive_root = exact_validator_archive_root(path)
+    arguments = [
+        sys.executable,
+        "-I",
+        "-S",
+        "-B",
+        "-c",
+        EXACT_VALIDATOR_WRAPPER,
+        str(path),
+    ]
+    if archive_root is not None:
+        arguments.extend(("--archive-root", str(archive_root)))
     child_environment = {
         key: value
         for key, value in os.environ.items()
@@ -601,7 +658,7 @@ def run_exact_validator(path: Path, source: bytes) -> subprocess.CompletedProces
         }
     )
     return subprocess.run(
-        [sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)],
+        arguments,
         cwd=path.parents[1],
         env=child_environment,
         input=source,
@@ -13349,8 +13406,20 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 raise RuntimeError("Ordinary Python startup bypass was not rejected categorically.")
 
         sentinel.unlink(missing_ok=True)
+        safe_validator_arguments = [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            str(actual_entries[0]),
+        ]
+        safe_validator_archive_root = exact_validator_archive_root(actual_entries[0])
+        if safe_validator_archive_root is not None:
+            safe_validator_arguments.extend(
+                ("--archive-root", str(safe_validator_archive_root))
+            )
         safe_validator = subprocess.run(
-            [sys.executable, "-I", "-S", "-B", str(actual_entries[0])],
+            safe_validator_arguments,
             cwd=ROOT,
             env=environment,
             stdin=subprocess.DEVNULL,
@@ -13362,6 +13431,124 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         require_exact_validator_result(safe_validator)
         if sentinel.exists():
             raise RuntimeError("Isolated validator startup executed sitecustomize.")
+
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-validator-archive-"
+        ) as archive_directory:
+            archive_root = Path(archive_directory) / "candidate"
+            archive_root.mkdir(mode=0o700)
+            for relative in sorted(VALIDATOR.ALLOWED_FILES):
+                source_path = ROOT / relative
+                source_metadata = source_path.lstat()
+                if stat.S_ISLNK(source_metadata.st_mode) or not stat.S_ISREG(
+                    source_metadata.st_mode
+                ):
+                    raise RuntimeError("Archive validator fixture source differs.")
+                destination = archive_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source_path, destination)
+                destination.chmod(0o644)
+            archive_validator = archive_root / "scripts/validate-repository.py"
+            require_exact_validator_result(
+                run_exact_validator(archive_validator, archive_validator.read_bytes())
+            )
+            if exact_validator_archive_root(archive_validator) != archive_root.resolve(
+                strict=True
+            ):
+                raise RuntimeError("Archive validator root selection differs.")
+            if os.name == "nt":
+                def create_junction(link: Path, target: Path) -> None:
+                    junction_result = subprocess.run(
+                        [
+                            "cmd.exe",
+                            "/d",
+                            "/c",
+                            "mklink",
+                            "/J",
+                            str(link),
+                            str(target),
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=30,
+                        check=False,
+                    )
+                    if (
+                        junction_result.returncode != 0
+                        or junction_result.stderr
+                        or not os.path.isjunction(link)
+                    ):
+                        raise RuntimeError("Archive validator junction fixture differs.")
+
+                git_target = Path(archive_directory) / "git-target"
+                git_target.mkdir()
+                git_junction = archive_root / ".git"
+                create_junction(git_junction, git_target)
+                try:
+                    expect_validation_failure(
+                        lambda: exact_validator_archive_root(archive_validator),
+                        "archive validator Git reparse boundary",
+                    )
+                finally:
+                    git_junction.rmdir()
+                if not git_target.is_dir():
+                    raise RuntimeError("Archive validator junction target was altered.")
+
+                root_junction = Path(archive_directory) / "candidate-root-link"
+                create_junction(root_junction, archive_root)
+                try:
+                    expect_validation_failure(
+                        lambda: exact_validator_archive_root(
+                            root_junction / "scripts" / "validate-repository.py"
+                        ),
+                        "archive validator root reparse boundary",
+                    )
+                    direct_root_reparse = subprocess.run(
+                        [
+                            sys.executable,
+                            "-I",
+                            "-S",
+                            "-B",
+                            str(archive_validator),
+                            "--archive-root",
+                            str(root_junction),
+                        ],
+                        cwd=archive_root,
+                        env=environment,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=300,
+                        check=False,
+                    )
+                    if (
+                        direct_root_reparse.returncode == 0
+                        or direct_root_reparse.stdout
+                        or b"Archive validation root is linked or special."
+                        not in direct_root_reparse.stderr
+                    ):
+                        raise RuntimeError(
+                            "Archive validator CLI accepted a root reparse boundary."
+                        )
+                finally:
+                    root_junction.rmdir()
+
+                scripts_junction_root = Path(archive_directory) / "scripts-link-candidate"
+                scripts_junction_root.mkdir()
+                scripts_junction = scripts_junction_root / "scripts"
+                create_junction(scripts_junction, archive_root / "scripts")
+                try:
+                    expect_validation_failure(
+                        lambda: exact_validator_archive_root(
+                            scripts_junction / "validate-repository.py"
+                        ),
+                        "archive validator scripts reparse boundary",
+                    )
+                finally:
+                    scripts_junction.rmdir()
+                if not archive_validator.is_file():
+                    raise RuntimeError("Archive validator junction target was altered.")
 
         safe_contract_probe = subprocess.run(
             [
@@ -13518,8 +13705,23 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             'python3 -I -B "${candidate}/scripts/test-contracts.py"',
         ),
         "scripts/test-contracts.py": (
-            '[sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]',
-            '[sys.executable, "-I", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]',
+            '    arguments = [\n'
+            '        sys.executable,\n'
+            '        "-I",\n'
+            '        "-S",\n'
+            '        "-B",\n'
+            '        "-c",\n'
+            '        EXACT_VALIDATOR_WRAPPER,\n'
+            '        str(path),\n'
+            '    ]',
+            '    arguments = [\n'
+            '        sys.executable,\n'
+            '        "-I",\n'
+            '        "-B",\n'
+            '        "-c",\n'
+            '        EXACT_VALIDATOR_WRAPPER,\n'
+            '        str(path),\n'
+            '    ]',
         ),
         "scripts/test-source-introduction.ps1": (
             "python -I -S -B",
