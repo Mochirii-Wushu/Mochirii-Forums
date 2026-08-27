@@ -855,12 +855,24 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
             'bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"',
         ),
         "scripts/test-contracts.py": (
-            '[sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]',
-            '                    sys.executable,\n'
-            '                    "-I",\n'
-            '                    "-S",\n'
-            '                    "-B",\n'
-            '                    str(root / "scripts/validate-repository.py"),',
+            "arguments = sys.argv[2:]\nsys.argv = [path, *arguments]",
+            '    archive_root = exact_validator_archive_root(path)\n'
+            '    arguments = [\n'
+            '        sys.executable,\n'
+            '        "-I",\n'
+            '        "-S",\n'
+            '        "-B",\n'
+            '        "-c",\n'
+            '        EXACT_VALIDATOR_WRAPPER,\n'
+            '        str(path),\n'
+            '    ]\n'
+            '    if archive_root is not None:\n'
+            '        arguments.extend(("--archive-root", str(archive_root)))',
+            "    return subprocess.run(\n        arguments,",
+            '            safe_validator_arguments.extend(\n'
+            '                ("--archive-root", str(safe_validator_archive_root))\n'
+            '            )',
+            "                run_exact_validator(archive_validator, archive_validator.read_bytes())",
         ),
     }
     for relative, requirements in exact_requirements.items():
@@ -868,14 +880,7 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
         if not isinstance(source, str):
             fail("Trusted Python caller inventory or isolated startup flags differ.")
         for value in requirements:
-            expected_count = (
-                2
-                if relative == "scripts/test-contracts.py"
-                and value
-                == '[sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]'
-                else 1
-            )
-            if source.count(value) != expected_count:
+            if source.count(value) != 1:
                 fail("Trusted Python caller inventory or isolated startup flags differ.")
 
     workflow = text_files.get(".github/workflows/validate-repository.yml")
@@ -906,11 +911,11 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
         fail("Required root Linux quarantine acceptance job differs.")
 
 
-VALIDATOR_CLI_SOURCE_SHA256 = "2f9da6f53b135a31e2129d51550582a007e0d03dbd255f93c25d7347f9129246"
-CONTRACT_TEST_SOURCE_SHA256 = "ef22482ebf77b46b779638e255f8e235ee27b81463b62065ded425c32d01eada"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "76e1fc0d46f02dad6dea2c31750c7e981436f8c05839f86efcacafd45d1062f4"
+VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
+CONTRACT_TEST_SOURCE_SHA256 = "1b7a434445aa727116ca026f1c49268ece460e214b3cfda4378042c2bdf54439"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "3f89e007af635ee95db28a68408f7568cfaf4b0f9db732d5c38f6c0459bb5edc"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-FAILED_BOOTSTRAP_TEST_SHA256 = "bea50b165daa8bdff8e658977b7d7742db0df866c06898a92fad1fa8b8a73105"
+FAILED_BOOTSTRAP_TEST_SHA256 = "b80af8388a6d90a0d4b9de120fc930d71fd8763168db837efbcbadfaa26fcfc0"
 
 
 def validate_validator_cli_acceptance_chain(source: str) -> None:
@@ -1255,7 +1260,7 @@ def validate_contract_test_acceptance_chain(source: str) -> None:
     )
     if (
         hashlib.sha256(module_startup_source.encode("utf-8")).hexdigest()
-        != "f051ee325c09041ba34ebccdd73afcaf197a6a4a28fb715dec87fa43e845740b"
+        != "1e27fb4b9835a84d26f8898b0f0763138424aaccf4264f84579cfee2e3eef662"
     ):
         fail("Hostile fixture module-startup source seal differs.")
     if any(
@@ -9108,11 +9113,29 @@ def main() -> int:
     args = parser.parse_args()
     if args.archive_root is not None:
         supplied = args.archive_root.absolute()
-        if supplied.is_symlink() or not supplied.is_dir():
+        try:
+            supplied_metadata = supplied.lstat()
+        except OSError:
             fail("Archive validation root must be one real directory.")
+        if (
+            stat.S_ISLNK(supplied_metadata.st_mode)
+            or bool(
+                getattr(supplied_metadata, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            )
+            or not stat.S_ISDIR(supplied_metadata.st_mode)
+        ):
+            fail("Archive validation root is linked or special.")
         resolved = supplied.resolve(strict=True)
         metadata = resolved.lstat()
-        if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or bool(
+                getattr(metadata, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            )
+        ):
             fail("Archive validation root is linked or special.")
         ROOT = resolved
         ARCHIVE_MODE = True
