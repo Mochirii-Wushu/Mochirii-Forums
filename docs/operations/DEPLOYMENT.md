@@ -764,6 +764,50 @@ identify any additional retained-runtime cause. The same retained journal and
 runtime, stopped/absent publication, root-owned state, unrelated-journal
 exclusion, and evidence-preserving quarantine rules apply.
 
+The later bootstrap at exact release
+`81e5226e54246686ce0ef80051d4df2cd1b64c5e` has a seventh,
+non-interchangeable recovery chain for the proved ACME certificate-material
+validation boundary. That failed release is the sole parent of reviewed
+material repair commit `64e12c2344fbc04d44b10c495cf9651cac5ac0b8`; exact reviewed
+source-authority commit `af3540426051c94bf26e9661ac68ce8ee720f977` is the material
+repair's sole-parent child; and the recovery source must be one exact
+sole-parent child of that source-authority commit and the current canonical
+`main`. The three exact path segments are independently bound: the material
+repair changes only `config/immutable-letsencrypt.fragment.yml`,
+`scripts/test-contracts.py`, and `scripts/validate-repository.py`; the reviewed
+source-authority commit changes only `.gitattributes`, `.github/CODEOWNERS`,
+`.github/workflows/open-reviewed-source-pr.yml`, `CONTRIBUTING.md`,
+`docs/adr/0001-clean-initialization-and-canonical-ownership.md`,
+`scripts/test-contracts.py`, and `scripts/validate-repository.py`; and the final
+recovery child changes only the eleven reviewed recovery-control paths. Its
+cumulative diff from the failed release is exactly `.gitattributes`,
+`.github/CODEOWNERS`, `.github/workflows/open-reviewed-source-pr.yml`,
+`.github/workflows/validate-repository.yml`, `CONTRIBUTING.md`,
+`config/immutable-letsencrypt.fragment.yml`, `docs/operations/DEPLOYMENT.md`,
+`docs/adr/0001-clean-initialization-and-canonical-ownership.md`,
+`docs/operations/RECOVERY.md`, `scripts/check-repository.ps1`,
+`scripts/check-source-introduction.ps1`, `scripts/host-deploy.sh`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/test-source-introduction.ps1`, `scripts/upgrade-host-control.sh`, and
+`scripts/validate-repository.py`. Selection remains by exact failed commit, so
+this exception cannot substitute for an earlier lineage, admit another
+descendant or merge commit, or authorize another path set. The reviewed repair
+removes automatic forced reissuance and enforces a one-way
+issue-validate-install sequence for RSA and then ECC, with ordered cumulative
+chain, exact public-key algorithm, private diagnostic, and certificate/key
+identity validation. It neither authorizes an identical-byte retry nor claims
+another retained-runtime cause. The same retained journal and runtime,
+stopped/absent publication, root-owned state, unrelated-journal exclusion, and
+evidence-preserving quarantine rules apply.
+
+Every direct acceptance launcher pins the exact validator or hostile-fixture
+bytes before execution and invokes Python with `-I -S -B`. Both entrypoints
+also reject ambiguous import paths and incompatible startup flags before any
+shadowable import. The required repository workflow repeats the exact digest
+binding and runs the complete hostile fixture as root in isolated, site-free
+Linux, so Windows-only or non-root success cannot skip the real quarantine
+transaction contract.
+
 After that exact upgrade, use the separately authenticated operator session:
 
 ```sh

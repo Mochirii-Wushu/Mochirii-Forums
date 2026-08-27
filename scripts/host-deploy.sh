@@ -23,6 +23,9 @@ readonly deployment_transaction="/var/lib/mochirii/forums/deployment-transaction
 readonly deployment_terminal="/var/lib/mochirii/forums/current-deployment.json"
 readonly launcher_timeout_seconds=7200
 readonly launcher_cumulative_budget_seconds=7800
+readonly repository_validator_sha256="d7b359b5540ba0cd8bd003efb8171f95431bd39376b36fbcf157ba491593e3a4"
+readonly repository_contract_tests_sha256="ef22482ebf77b46b779638e255f8e235ee27b81463b62065ded425c32d01eada"
+readonly repository_python_acceptance_root_sha256="49ddf0f7cea78cc8bd6f8656fb0a16bbdc27e6b58dc2bb0a4ecda27c4b77e6ac"
 readonly operation_started_epoch="$(date +%s)"
 
 fail() {
@@ -2485,8 +2488,12 @@ tar -xf "${quarantine}" -C "${candidate}" --no-same-owner --no-same-permissions 
 chmod -R go-w "${candidate}"
 
 export PYTHONDONTWRITEBYTECODE=1
-python3 "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"
-python3 "${candidate}/scripts/test-contracts.py"
+[[ "$(sha256sum -- "${candidate}/scripts/validate-repository.py" | awk '{print $1}')" == "${repository_validator_sha256}" ]] || fail "Trusted repository validator source differs."
+[[ "$(sha256sum -- "${candidate}/scripts/test-contracts.py" | awk '{print $1}')" == "${repository_contract_tests_sha256}" ]] || fail "Trusted hostile-fixture source differs."
+observed_python_acceptance_root_sha256="$(printf 'mochirii-forums-python-acceptance-root-v1\0%s\0%s\n' "${repository_validator_sha256}" "${repository_contract_tests_sha256}" | sha256sum | awk '{print $1}')"
+[[ "${observed_python_acceptance_root_sha256}" == "${repository_python_acceptance_root_sha256}" ]] || fail "Trusted Python acceptance root differs."
+python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"
+python3 -I -S -B "${candidate}/scripts/test-contracts.py"
 python3 "${candidate}/scripts/verify-pinned-source.py" --online
 if [[ -n "$(find "${candidate}" \( \( -type d -name __pycache__ \) -o \( -type f \( -name '*.pyc' -o -name '*.pyo' \) \) \) -print -quit)" ]]; then
   fail "Generated Python cache entered the immutable release."

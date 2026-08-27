@@ -35,9 +35,12 @@ readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8f
 readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"
 readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"
 readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"
+readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"
+readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"
+readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"
 
 validate_source_lineage() {
-  local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit current_parent_commit
+  local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit current_parent_commit actual_path_output
   local -ar legacy_expected_paths=(
     .github/workflows/deploy-forums.yml
     config/host-control-manifest.v1.json
@@ -95,6 +98,52 @@ validate_source_lineage() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
   )
+  local -ar acme_material_repair_expected_paths=(
+    config/immutable-letsencrypt.fragment.yml
+    scripts/test-contracts.py
+    scripts/validate-repository.py
+  )
+  local -ar acme_material_review_authority_expected_paths=(
+    .gitattributes
+    .github/CODEOWNERS
+    .github/workflows/open-reviewed-source-pr.yml
+    CONTRIBUTING.md
+    docs/adr/0001-clean-initialization-and-canonical-ownership.md
+    scripts/test-contracts.py
+    scripts/validate-repository.py
+  )
+  local -ar acme_material_current_expected_paths=(
+    .github/workflows/validate-repository.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
+  local -ar acme_material_expected_paths=(
+    .gitattributes
+    .github/CODEOWNERS
+    .github/workflows/open-reviewed-source-pr.yml
+    .github/workflows/validate-repository.yml
+    CONTRIBUTING.md
+    config/immutable-letsencrypt.fragment.yml
+    docs/adr/0001-clean-initialization-and-canonical-ownership.md
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
   local -a actual_paths expected_paths
   case "${failed}" in
     "${reviewed_legacy_failed_bootstrap_commit}")
@@ -127,9 +176,19 @@ validate_source_lineage() {
       current_parent_commit="${reviewed_recovery_commit}"
       expected_paths=("${acme_webroot_expected_paths[@]}")
       ;;
+    "${reviewed_acme_material_failed_bootstrap_commit}")
+      reviewed_recovery_commit="${reviewed_acme_material_recovery_commit}"
+      current_parent_commit="${reviewed_acme_material_review_authority_commit}"
+      expected_paths=("${acme_material_expected_paths[@]}")
+      ;;
     *) return 1 ;;
   esac
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_REPLACE_REF_BASE
+  unset GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_PROTOCOL_FROM_USER
+  export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1
   [[ -d ${source_root}/.git && ! -L ${source_root}/.git ]] || return 1
+  [[ ! -e ${source_root}/.git/commondir && ! -L ${source_root}/.git/commondir ]] || return 1
+  [[ ! -e ${source_root}/.git/info/grafts && ! -L ${source_root}/.git/info/grafts ]] || return 1
   [[ "$(git -C "${source_root}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${current}" ]] || return 1
   [[ "$(git -C "${source_root}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
   [[ "$(git -C "${source_root}" rev-parse --verify "${current}^1" 2>/dev/null)" == "${current_parent_commit}" ]] || return 1
@@ -140,6 +199,10 @@ validate_source_lineage() {
     [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
     [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit} ${reviewed_recovery_commit}" ]] || return 1
   fi
+  if [[ ${failed} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
+    [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" == "${reviewed_acme_material_review_authority_commit} ${reviewed_recovery_commit}" ]] || return 1
+  fi
   [[ "$(git -C "${source_root}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${failed}" ]] || return 1
   [[ "$(git -C "${source_root}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${failed}" ]] || return 1
   status_output="$(git -c core.fsmonitor=false -C "${source_root}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || return 1
@@ -149,7 +212,32 @@ validate_source_lineage() {
   remote_output="$(bounded 120s git -c credential.helper= -c core.askPass= -c protocol.allow=never -c protocol.https.allow=always -c http.followRedirects=false ls-remote --refs "${canonical_repository}" refs/heads/main 2>/dev/null)" || return 1
   (( ${#remote_output} <= 256 )) || return 1
   [[ ${remote_output} == "${current}"$'\trefs/heads/main' ]] || return 1
-  mapfile -t actual_paths < <(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${failed}" "${current}") || return 1
+  if [[ ${failed} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
+    actual_path_output="$(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${failed}" "${reviewed_recovery_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_material_repair_expected_paths[@]} ]] || return 1
+    for index in "${!acme_material_repair_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_material_repair_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_material_review_authority_expected_paths[@]} ]] || return 1
+    for index in "${!acme_material_review_authority_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_material_review_authority_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_material_review_authority_commit}" "${current}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_material_current_expected_paths[@]} ]] || return 1
+    for index in "${!acme_material_current_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_material_current_expected_paths[$index]}" ]] || return 1
+    done
+  fi
+  actual_path_output="$(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${failed}" "${current}" 2>/dev/null)" || return 1
+  (( ${#actual_path_output} <= 65536 )) || return 1
+  mapfile -t actual_paths <<< "${actual_path_output}"
   [[ ${#actual_paths[@]} -eq ${#expected_paths[@]} ]] || return 1
   for index in "${!expected_paths[@]}"; do
     [[ ${actual_paths[$index]} == "${expected_paths[$index]}" ]] || return 1
@@ -167,7 +255,10 @@ import stat
 import sys
 
 path = pathlib.Path(sys.argv[1])
-metadata = path.lstat()
+try:
+    metadata = path.lstat()
+except OSError as error:
+    raise SystemExit("failed bootstrap journal is unavailable") from error
 if (
     not stat.S_ISREG(metadata.st_mode)
     or stat.S_ISLNK(metadata.st_mode)
@@ -179,7 +270,10 @@ if (
     or metadata.st_size > 65_536
 ):
     raise SystemExit("failed bootstrap journal is unsafe")
-raw = path.read_bytes()
+try:
+    raw = path.read_bytes()
+except OSError as error:
+    raise SystemExit("failed bootstrap journal is unavailable") from error
 
 def canonical(document):
     try:
@@ -307,17 +401,23 @@ validate_quarantine_environment() {
 
 read_quarantine_identity() {
   local kind="$1" current="$2" failed="$3"
-  python3 -B - "${kind}" "${pending_journal}" "${evidence_root}" "${current}" "${failed}" <<'PY'
+  python3 -B - "${kind}" "${pending_journal}" "${evidence_root}" "${current}" "${failed}" \
+    "${standalone_root}" "${recovery_root}" "${deployment_journal}" <<'PY'
+import hashlib
 import itertools
 import json
+import os
 import pathlib
 import re
 import stat
 import sys
 
-kind, pending_name, evidence_name, current, failed = sys.argv[1:6]
+kind, pending_name, evidence_name, current, failed, standalone_name, recovery_name, mutation_name = sys.argv[1:9]
 pending = pathlib.Path(pending_name)
 evidence = pathlib.Path(evidence_name)
+standalone = pathlib.Path(standalone_name)
+recovery = pathlib.Path(recovery_name)
+mutation = pathlib.Path(mutation_name)
 sha_pattern = r"[0-9a-f]{64}"
 timestamp_pattern = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z")
 base_keys = {
@@ -326,6 +426,7 @@ base_keys = {
     "standalonePath", "quarantinePath", "mutationEvidencePath",
     "standaloneUid", "standaloneGid", "standaloneMode", "sslPresent",
 }
+phase_order = {"prepared": 0, "runtime-quarantined": 1, "clean-boundary": 2, "authority-retired": 3}
 
 def canonical(document):
     try:
@@ -341,23 +442,50 @@ def reject_duplicate(pairs):
         document[key] = value
     return document
 
-def read_exact(path):
+def publication_staging(path):
+    return path.with_name(f".{path.name}.publish")
+
+def publication_alias(path, metadata, allow_candidate):
+    staging = publication_staging(path)
     try:
-        metadata = path.lstat()
+        staging_metadata = staging.lstat()
+    except FileNotFoundError:
+        if metadata.st_nlink == 1:
+            return None, None
+        raise SystemExit("failed-bootstrap recovery evidence is unsafe")
     except OSError as error:
-        raise SystemExit("failed-bootstrap recovery evidence is unavailable") from error
+        raise SystemExit("failed-bootstrap recovery evidence is unsafe") from error
+    if metadata.st_nlink == 1:
+        if (
+            not allow_candidate
+            or not stat.S_ISREG(staging_metadata.st_mode)
+            or stat.S_ISLNK(staging_metadata.st_mode)
+            or staging_metadata.st_uid != 0
+            or staging_metadata.st_gid != 0
+            or stat.S_IMODE(staging_metadata.st_mode) != 0o600
+            or staging_metadata.st_nlink != 1
+            or staging_metadata.st_size <= 0
+            or staging_metadata.st_size > 65_536
+        ):
+            raise SystemExit("failed-bootstrap recovery evidence is unsafe")
+        return None, staging
+    if metadata.st_nlink != 2:
+        raise SystemExit("failed-bootstrap recovery evidence is unsafe")
     if (
-        not stat.S_ISREG(metadata.st_mode)
-        or stat.S_ISLNK(metadata.st_mode)
-        or metadata.st_uid != 0
-        or metadata.st_gid != 0
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
-        or metadata.st_size <= 0
-        or metadata.st_size > 65_536
+        not stat.S_ISREG(staging_metadata.st_mode)
+        or stat.S_ISLNK(staging_metadata.st_mode)
+        or staging_metadata.st_uid != 0
+        or staging_metadata.st_gid != 0
+        or stat.S_IMODE(staging_metadata.st_mode) != 0o600
+        or staging_metadata.st_nlink != 2
+        or staging_metadata.st_dev != metadata.st_dev
+        or staging_metadata.st_ino != metadata.st_ino
+        or staging_metadata.st_size != metadata.st_size
     ):
         raise SystemExit("failed-bootstrap recovery evidence is unsafe")
-    raw = path.read_bytes()
+    return staging, None
+
+def decode_exact(raw):
     try:
         document = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate)
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError, RecursionError) as error:
@@ -369,10 +497,148 @@ def read_exact(path):
         raise SystemExit("failed-bootstrap recovery evidence is noncanonical")
     return document
 
+def read_exact(path, allow_candidate=False):
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise SystemExit("failed-bootstrap recovery evidence is unavailable") from error
+    staging, candidate = publication_alias(path, metadata, allow_candidate)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size <= 0
+        or metadata.st_size > 65_536
+    ):
+        raise SystemExit("failed-bootstrap recovery evidence is unsafe")
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise SystemExit("failed-bootstrap recovery evidence is unavailable") from error
+    return decode_exact(raw), staging, candidate, raw
+
+def read_candidate(path):
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size <= 0
+            or metadata.st_size > 65_536
+        ):
+            raise SystemExit("failed-bootstrap recovery evidence is unsafe")
+        raw = path.read_bytes()
+        final_metadata = path.lstat()
+    except OSError as error:
+        raise SystemExit("failed-bootstrap recovery evidence is unavailable") from error
+    if (
+        final_metadata.st_dev != metadata.st_dev
+        or final_metadata.st_ino != metadata.st_ino
+        or final_metadata.st_nlink != 1
+        or final_metadata.st_uid != 0
+        or final_metadata.st_gid != 0
+        or stat.S_IMODE(final_metadata.st_mode) != 0o600
+        or final_metadata.st_size != len(raw)
+    ):
+        raise SystemExit("failed-bootstrap recovery evidence is unsafe")
+    return decode_exact(raw)
+
+def path_exists(path):
+    try:
+        path.lstat()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise SystemExit("failed-bootstrap recovery authority differs") from error
+
+def read_authority(path, digest, links):
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink not in links
+            or metadata.st_size <= 0
+            or metadata.st_size > 65_536
+        ):
+            raise SystemExit("failed-bootstrap recovery authority differs")
+        raw = path.read_bytes()
+        final_metadata = path.lstat()
+    except OSError as error:
+        raise SystemExit("failed-bootstrap recovery authority differs") from error
+    if (
+        final_metadata.st_dev != metadata.st_dev
+        or final_metadata.st_ino != metadata.st_ino
+        or final_metadata.st_uid != metadata.st_uid
+        or final_metadata.st_gid != metadata.st_gid
+        or final_metadata.st_mode != metadata.st_mode
+        or final_metadata.st_nlink != metadata.st_nlink
+        or final_metadata.st_size != len(raw)
+        or hashlib.sha256(raw).hexdigest() != digest
+    ):
+        raise SystemExit("failed-bootstrap recovery authority differs")
+    try:
+        decode_exact(raw)
+    except SystemExit as error:
+        raise SystemExit("failed-bootstrap recovery authority differs") from error
+    return metadata, raw
+
+def observe_authority(document, candidate=None):
+    digest = document["mutationSha256"]
+    retained = pathlib.Path(document["mutationEvidencePath"])
+    active_exists = path_exists(mutation)
+    retained_exists = path_exists(retained)
+    if active_exists and not retained_exists:
+        read_authority(mutation, digest, {1})
+        authority_state = "active"
+    elif active_exists and retained_exists:
+        active_metadata, active_raw = read_authority(mutation, digest, {2})
+        retained_metadata, retained_raw = read_authority(retained, digest, {2})
+        if (
+            active_metadata.st_dev != retained_metadata.st_dev
+            or active_metadata.st_ino != retained_metadata.st_ino
+            or active_raw != retained_raw
+        ):
+            raise SystemExit("failed-bootstrap recovery authority differs")
+        authority_state = "retiring"
+    elif not active_exists and retained_exists:
+        read_authority(retained, digest, {1})
+        authority_state = "retired"
+    else:
+        raise SystemExit("failed-bootstrap recovery authority differs")
+
+    phase = document["phase"]
+    candidate_phase = None if candidate is None else candidate["phase"]
+    if phase in {"prepared", "runtime-quarantined"}:
+        allowed = {"active"}
+    elif phase == "clean-boundary":
+        allowed = (
+            {"active", "retiring", "retired"}
+            if candidate_phase == "authority-retired"
+            else {"active"}
+        )
+    elif phase in {"authority-retired", "complete"}:
+        allowed = {"retired"}
+    else:
+        raise SystemExit("failed-bootstrap recovery authority differs")
+    if authority_state not in allowed:
+        raise SystemExit("failed-bootstrap recovery authority differs")
+
 def valid_base(document, phases):
     mode = document.get("standaloneMode")
     uid = document.get("standaloneUid")
     gid = document.get("standaloneGid")
+    mutation_sha = document.get("mutationSha256")
     return (
         type(document.get("schemaVersion")) is int
         and document.get("schemaVersion") == 1
@@ -380,7 +646,13 @@ def valid_base(document, phases):
         and document.get("phase") in phases
         and document.get("currentControlCommit") == current
         and document.get("failedReleaseCommit") == failed
-        and re.fullmatch(sha_pattern, str(document.get("mutationSha256", ""))) is not None
+        and type(mutation_sha) is str
+        and re.fullmatch(sha_pattern, mutation_sha) is not None
+        and document.get("standalonePath") == str(standalone)
+        and document.get("quarantinePath") == str(recovery / f"{failed}-{mutation_sha}")
+        and document.get("mutationEvidencePath") == str(
+            evidence / f"{failed}-{mutation_sha}-deployment-mutation.json"
+        )
         and timestamp_pattern.fullmatch(str(document.get("recordedAt", ""))) is not None
         and timestamp_pattern.fullmatch(str(document.get("updatedAt", ""))) is not None
         and type(uid) is int and 0 <= uid <= 2_147_483_647
@@ -391,9 +663,30 @@ def valid_base(document, phases):
     )
 
 if kind == "pending":
-    document = read_exact(pending)
+    selected = pending
+    document, staging, candidate, raw = read_exact(selected, allow_candidate=True)
     if set(document) != base_keys or not valid_base(document, {"prepared", "runtime-quarantined", "clean-boundary", "authority-retired"}):
         raise SystemExit("failed-bootstrap pending identity differs")
+    if staging is not None and document["phase"] != "prepared":
+        raise SystemExit("failed-bootstrap pending publication transition differs")
+    candidate_document = None
+    if candidate is not None:
+        candidate_document = read_candidate(candidate)
+        if (
+            set(candidate_document) != base_keys
+            or not valid_base(candidate_document, set(phase_order))
+            or phase_order[document["phase"]] >= len(phase_order) - 1
+        ):
+            raise SystemExit("failed-bootstrap pending publication transition differs")
+        expected_phase = tuple(phase_order)[phase_order[document["phase"]] + 1]
+        expected_candidate = {
+            **document,
+            "phase": expected_phase,
+            "updatedAt": candidate_document["updatedAt"],
+        }
+        if candidate_document != expected_candidate:
+            raise SystemExit("failed-bootstrap pending publication transition differs")
+    observe_authority(document, candidate_document)
 elif kind == "terminal":
     try:
         metadata = evidence.lstat()
@@ -413,7 +706,8 @@ elif kind == "terminal":
     matches = [entry for entry in entries if name_pattern.fullmatch(entry.name)]
     if len(matches) != 1:
         raise SystemExit("failed-bootstrap terminal identity is ambiguous")
-    document = read_exact(matches[0])
+    selected = matches[0]
+    document, staging, candidate, raw = read_exact(selected)
     if (
         set(document) != base_keys | {"completedAt", "sslRestored"}
         or not valid_base(document, {"complete"})
@@ -422,6 +716,9 @@ elif kind == "terminal":
         or name_pattern.fullmatch(matches[0].name).group(1) != document.get("mutationSha256")
     ):
         raise SystemExit("failed-bootstrap terminal identity differs")
+    if candidate is not None:
+        raise SystemExit("failed-bootstrap terminal publication staging is unsafe")
+    observe_authority(document)
 else:
     raise SystemExit("failed-bootstrap recovery identity kind differs")
 
@@ -432,7 +729,7 @@ PY
 }
 
 validate_failed_bootstrap_state() {
-  local current="$1" failed configuration archive_sha target_app journal_sha release_helper
+  local current="$1" failed configuration archive_sha target_app journal_sha release_helper terminal_staging
   local -a identity inspection
   readarray -t identity < <(read_mutation_identity) || return 1
   [[ ${#identity[@]} -eq 5 ]] || return 1
@@ -462,6 +759,8 @@ validate_failed_bootstrap_state() {
     "${evidence_root}/${failed}-${journal_sha}-failed-bootstrap-quarantine.json"; do
     [[ ! -e ${path} && ! -L ${path} ]] || return 1
   done
+  terminal_staging="${evidence_root}/.${failed}-${journal_sha}-failed-bootstrap-quarantine.json.publish"
+  [[ ! -e ${terminal_staging} && ! -L ${terminal_staging} ]] || return 1
   printf '%s\n%s\n' "${failed}" "${journal_sha}"
 }
 
@@ -492,17 +791,19 @@ else
 fi
 
 if [[ -e ${pending_journal} || -L ${pending_journal} ]]; then
+  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs before identity repair."
   readarray -t recovery_identity < <(read_quarantine_identity pending "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap pending recovery identity was rejected."
   [[ ${#recovery_identity[@]} -eq 3 && ${recovery_identity[0]} == "${current_commit}" && ${recovery_identity[1]} == "${failed_commit}" && ${recovery_identity[2]} =~ ^[0-9a-f]{64}$ ]] || fail "Failed-bootstrap pending recovery tuple differs."
   preflight=("${failed_commit}" "${recovery_identity[2]}")
-  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs."
+  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs after identity repair."
 elif [[ -e ${deployment_journal} || -L ${deployment_journal} ]]; then
   readarray -t preflight < <(validate_failed_bootstrap_state "${current_commit}") || fail "Failed-bootstrap quarantine rejected the retained state."
 else
+  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs before identity repair."
   readarray -t recovery_identity < <(read_quarantine_identity terminal "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap terminal recovery identity was rejected."
   [[ ${#recovery_identity[@]} -eq 3 && ${recovery_identity[0]} == "${current_commit}" && ${recovery_identity[1]} == "${failed_commit}" && ${recovery_identity[2]} =~ ^[0-9a-f]{64}$ ]] || fail "Failed-bootstrap terminal recovery tuple differs."
   preflight=("${failed_commit}" "${recovery_identity[2]}")
-  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs."
+  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs after identity repair."
 fi
 [[ ${#preflight[@]} -eq 2 && ${preflight[0]} == "${failed_commit}" && ${preflight[1]} =~ ^[0-9a-f]{64}$ ]] || fail "Failed-bootstrap quarantine tuple differs."
 validate_quarantine_environment || fail "Failed-bootstrap quarantine environment differs."
@@ -514,6 +815,7 @@ python3 -B - "${pending_journal}" "${deployment_journal}" "${evidence_root}" "${
   "${standalone_root}" "${recovery_root}" "${current_commit}" "${failed_commit}" "${preflight[1]}" <<'PY'
 # BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION
 import datetime as dt
+import ctypes
 import hashlib
 import itertools
 import json
@@ -522,7 +824,6 @@ import pathlib
 import re
 import stat
 import sys
-import tempfile
 
 pending, mutation, evidence_root, shared_root, standalone, recovery_root = map(pathlib.Path, sys.argv[1:7])
 current, failed, mutation_sha = sys.argv[7:10]
@@ -532,6 +833,14 @@ quarantine = recovery_root / f"{failed}-{mutation_sha}"
 mutation_evidence = evidence_root / f"{failed}-{mutation_sha}-deployment-mutation.json"
 terminal = evidence_root / f"{failed}-{mutation_sha}-failed-bootstrap-quarantine.json"
 phase_order = {"prepared": 0, "runtime-quarantined": 1, "clean-boundary": 2, "authority-retired": 3}
+
+def categorical_io_failure(exception_type, exception, traceback):
+    if issubclass(exception_type, OSError):
+        sys.stderr.write("failed-bootstrap quarantine transaction failed\n")
+        return
+    sys.__excepthook__(exception_type, exception, traceback)
+
+sys.excepthook = categorical_io_failure
 
 def now():
     return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -543,6 +852,15 @@ def fsync_directory(path):
     finally:
         os.close(descriptor)
 
+def persist_directory(path):
+    fsync_directory(path)
+    fsync_directory(path.parent)
+
+def durable_directory_move(source, destination):
+    os.rename(source, destination)
+    fsync_directory(destination.parent)
+    fsync_directory(source.parent)
+
 def exact_directory(path, label):
     try:
         metadata = path.lstat()
@@ -552,11 +870,208 @@ def exact_directory(path, label):
         raise SystemExit(f"{label} is unsafe")
     return metadata
 
+def publication_staging(path):
+    return path.with_name(f".{path.name}.publish")
+
+def publication_alias(path, metadata, label):
+    if path not in {pending, terminal}:
+        if metadata.st_nlink != 1:
+            raise SystemExit(f"{label} is unsafe")
+        return None, None
+    staging = publication_staging(path)
+    try:
+        staging_metadata = staging.lstat()
+    except FileNotFoundError:
+        if metadata.st_nlink == 1:
+            return None, None
+        raise SystemExit(f"{label} is unsafe")
+    except OSError as error:
+        raise SystemExit(f"{label} is unsafe") from error
+    if metadata.st_nlink == 1:
+        if (
+            not stat.S_ISREG(staging_metadata.st_mode)
+            or stat.S_ISLNK(staging_metadata.st_mode)
+            or staging_metadata.st_uid != 0
+            or staging_metadata.st_gid != 0
+            or stat.S_IMODE(staging_metadata.st_mode) != 0o600
+            or staging_metadata.st_nlink != 1
+            or staging_metadata.st_size <= 0
+            or staging_metadata.st_size > 65_536
+        ):
+            raise SystemExit(f"{label} publication staging is unsafe")
+        return None, staging
+    if metadata.st_nlink != 2:
+        raise SystemExit(f"{label} is unsafe")
+    if (
+        not stat.S_ISREG(staging_metadata.st_mode)
+        or stat.S_ISLNK(staging_metadata.st_mode)
+        or staging_metadata.st_uid != 0
+        or staging_metadata.st_gid != 0
+        or stat.S_IMODE(staging_metadata.st_mode) != 0o600
+        or staging_metadata.st_nlink != 2
+        or staging_metadata.st_dev != metadata.st_dev
+        or staging_metadata.st_ino != metadata.st_ino
+        or staging_metadata.st_size != metadata.st_size
+    ):
+        raise SystemExit(f"{label} is unsafe")
+    return staging, None
+
+def exact_publication_staging(path, label):
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or metadata.st_size <= 0
+            or metadata.st_size > 65_536
+        ):
+            raise SystemExit(f"{label} publication staging is unsafe")
+        raw = path.read_bytes()
+        final_metadata = path.lstat()
+    except OSError as error:
+        raise SystemExit(f"{label} publication staging is unavailable") from error
+    if (
+        final_metadata.st_dev != metadata.st_dev
+        or final_metadata.st_ino != metadata.st_ino
+        or final_metadata.st_nlink != 1
+        or final_metadata.st_size != len(raw)
+    ):
+        raise SystemExit(f"{label} publication staging is unsafe")
+    return raw
+
+def finish_publication_alias(path, staging, raw, label):
+    if staging is None:
+        return
+    try:
+        metadata = path.lstat()
+        staging_metadata = staging.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 2
+            or not stat.S_ISREG(staging_metadata.st_mode)
+            or stat.S_ISLNK(staging_metadata.st_mode)
+            or staging_metadata.st_uid != 0
+            or staging_metadata.st_gid != 0
+            or stat.S_IMODE(staging_metadata.st_mode) != 0o600
+            or staging_metadata.st_nlink != 2
+            or metadata.st_dev != staging_metadata.st_dev
+            or metadata.st_ino != staging_metadata.st_ino
+            or path.read_bytes() != raw
+            or staging.read_bytes() != raw
+        ):
+            raise SystemExit(f"{label} is unsafe")
+        staging.unlink()
+        fsync_directory(path.parent)
+        final_metadata = path.lstat()
+    except OSError as error:
+        raise SystemExit(f"{label} is unsafe") from error
+    if (
+        final_metadata.st_dev != metadata.st_dev
+        or final_metadata.st_ino != metadata.st_ino
+        or final_metadata.st_nlink != 1
+        or final_metadata.st_uid != 0
+        or final_metadata.st_gid != 0
+        or stat.S_IMODE(final_metadata.st_mode) != 0o600
+    ):
+        raise SystemExit(f"{label} is unsafe")
+
+def finish_publication_update(path, staging, previous_raw, replacement_raw, label):
+    try:
+        metadata = path.lstat()
+        staging_metadata = staging.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or not stat.S_ISREG(staging_metadata.st_mode)
+            or stat.S_ISLNK(staging_metadata.st_mode)
+            or staging_metadata.st_uid != 0
+            or staging_metadata.st_gid != 0
+            or stat.S_IMODE(staging_metadata.st_mode) != 0o600
+            or staging_metadata.st_nlink != 1
+            or path.read_bytes() != previous_raw
+            or staging.read_bytes() != replacement_raw
+        ):
+            raise SystemExit(f"{label} publication update is unsafe")
+        os.replace(staging, path)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        fsync_directory(path.parent)
+        final_metadata = path.lstat()
+        final_raw = path.read_bytes()
+    except OSError as error:
+        raise SystemExit(f"{label} publication failed") from error
+    if (
+        not stat.S_ISREG(final_metadata.st_mode)
+        or stat.S_ISLNK(final_metadata.st_mode)
+        or final_metadata.st_uid != 0
+        or final_metadata.st_gid != 0
+        or stat.S_IMODE(final_metadata.st_mode) != 0o600
+        or final_metadata.st_nlink != 1
+        or final_metadata.st_dev != staging_metadata.st_dev
+        or final_metadata.st_ino != staging_metadata.st_ino
+        or final_raw != replacement_raw
+    ):
+        raise SystemExit(f"{label} publication readback differs")
+
+def finish_mutation_evidence_alias(source, destination, expected_sha):
+    try:
+        source_metadata = source.lstat()
+        destination_metadata = destination.lstat()
+        if (
+            not stat.S_ISREG(source_metadata.st_mode)
+            or stat.S_ISLNK(source_metadata.st_mode)
+            or source_metadata.st_uid != 0
+            or source_metadata.st_gid != 0
+            or stat.S_IMODE(source_metadata.st_mode) != 0o600
+            or source_metadata.st_nlink != 2
+            or not stat.S_ISREG(destination_metadata.st_mode)
+            or stat.S_ISLNK(destination_metadata.st_mode)
+            or destination_metadata.st_uid != 0
+            or destination_metadata.st_gid != 0
+            or stat.S_IMODE(destination_metadata.st_mode) != 0o600
+            or destination_metadata.st_nlink != 2
+            or source_metadata.st_dev != destination_metadata.st_dev
+            or source_metadata.st_ino != destination_metadata.st_ino
+        ):
+            raise SystemExit("deployment mutation evidence retirement is unsafe")
+        raw = source.read_bytes()
+        if destination.read_bytes() != raw or hashlib.sha256(raw).hexdigest() != expected_sha:
+            raise SystemExit("deployment mutation evidence retirement differs")
+        decode_raw(raw, "deployment mutation evidence")
+        fsync_directory(destination.parent)
+        source.unlink()
+        fsync_directory(source.parent)
+        final_metadata = destination.lstat()
+    except OSError as error:
+        raise SystemExit("deployment mutation evidence retirement failed") from error
+    if (
+        final_metadata.st_dev != destination_metadata.st_dev
+        or final_metadata.st_ino != destination_metadata.st_ino
+        or final_metadata.st_nlink != 1
+    ):
+        raise SystemExit("deployment mutation evidence retirement differs")
+
 def exact_regular(path, label, expected_sha=None):
     try:
         metadata = path.lstat()
     except OSError as error:
         raise SystemExit(f"{label} is unavailable") from error
+    staging, candidate = publication_alias(path, metadata, label)
     if (
         not stat.S_ISREG(metadata.st_mode)
         or stat.S_ISLNK(metadata.st_mode)
@@ -565,13 +1080,15 @@ def exact_regular(path, label, expected_sha=None):
         or metadata.st_size <= 0
         or metadata.st_size > 65_536
         or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
     ):
         raise SystemExit(f"{label} is unsafe")
-    raw = path.read_bytes()
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise SystemExit(f"{label} is unavailable") from error
     if expected_sha is not None and hashlib.sha256(raw).hexdigest() != expected_sha:
         raise SystemExit(f"{label} digest differs")
-    return raw
+    return raw, staging, candidate
 
 def exact_inventory(path, maximum, label):
     try:
@@ -596,8 +1113,7 @@ def reject_duplicate(pairs):
         document[key] = value
     return document
 
-def decode_canonical(path, label, expected_sha=None):
-    raw = exact_regular(path, label, expected_sha)
+def decode_raw(raw, label):
     try:
         document = json.loads(raw.decode("utf-8"), object_pairs_hook=reject_duplicate)
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError, RecursionError) as error:
@@ -606,7 +1122,248 @@ def decode_canonical(path, label, expected_sha=None):
         raise SystemExit(f"{label} is malformed")
     if raw != canonical(document, label):
         raise SystemExit(f"{label} is not canonical")
-    return raw, document
+    return document
+
+def path_exists(path, label):
+    try:
+        path.lstat()
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise SystemExit(f"{label} is unavailable") from error
+
+def exact_authority(path, label, links):
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink not in links
+            or metadata.st_size <= 0
+            or metadata.st_size > 65_536
+        ):
+            raise SystemExit(f"{label} is unsafe")
+        raw = path.read_bytes()
+        final_metadata = path.lstat()
+    except OSError as error:
+        raise SystemExit(f"{label} is unavailable") from error
+    if (
+        final_metadata.st_dev != metadata.st_dev
+        or final_metadata.st_ino != metadata.st_ino
+        or final_metadata.st_uid != metadata.st_uid
+        or final_metadata.st_gid != metadata.st_gid
+        or final_metadata.st_mode != metadata.st_mode
+        or final_metadata.st_nlink != metadata.st_nlink
+        or final_metadata.st_size != len(raw)
+        or hashlib.sha256(raw).hexdigest() != mutation_sha
+    ):
+        raise SystemExit(f"{label} differs")
+    decode_raw(raw, label)
+    return metadata, raw
+
+def observe_mutation_authority():
+    active_exists = path_exists(mutation, "deployment mutation journal")
+    retained_exists = path_exists(mutation_evidence, "deployment mutation evidence")
+    if active_exists and not retained_exists:
+        exact_authority(mutation, "deployment mutation journal", {1})
+        return "active"
+    if active_exists and retained_exists:
+        active_metadata, active_raw = exact_authority(
+            mutation, "deployment mutation journal", {2}
+        )
+        retained_metadata, retained_raw = exact_authority(
+            mutation_evidence, "deployment mutation evidence", {2}
+        )
+        if (
+            active_metadata.st_dev != retained_metadata.st_dev
+            or active_metadata.st_ino != retained_metadata.st_ino
+            or active_raw != retained_raw
+        ):
+            raise SystemExit("deployment mutation evidence retirement differs")
+        return "retiring"
+    if not active_exists and retained_exists:
+        exact_authority(mutation_evidence, "deployment mutation evidence", {1})
+        return "retired"
+    raise SystemExit("deployment mutation authority state differs")
+
+def require_mutation_authority(allowed):
+    authority_state = observe_mutation_authority()
+    if authority_state not in allowed:
+        raise SystemExit("deployment mutation authority state differs")
+    return authority_state
+
+def validate_prepared_runtime(document):
+    metadata = exact_directory(standalone, "standalone root")
+    if (
+        metadata.st_uid != document["standaloneUid"]
+        or metadata.st_gid != document["standaloneGid"]
+        or stat.S_IMODE(metadata.st_mode) != document["standaloneMode"]
+    ):
+        raise SystemExit("standalone metadata differs")
+    if path_exists(quarantine, "failed-bootstrap quarantine"):
+        raise SystemExit("failed-bootstrap recovery target already exists")
+    inventory = exact_inventory(standalone, 4096, "standalone inventory")
+    if "postgres_data" not in inventory:
+        raise SystemExit("standalone inventory differs")
+    exact_directory(standalone / "postgres_data", "standalone PostgreSQL directory")
+    ssl_exists = "ssl" in inventory
+    if ssl_exists is not document["sslPresent"]:
+        raise SystemExit("standalone SSL inventory differs")
+    if ssl_exists:
+        exact_directory(standalone / "ssl", "standalone SSL directory")
+
+def validate_prepared_replay_runtime(document):
+    source_exists = path_exists(standalone, "standalone root")
+    target_exists = path_exists(quarantine, "failed-bootstrap quarantine")
+    if source_exists and not target_exists:
+        validate_prepared_runtime(document)
+        return "source"
+    if target_exists and not source_exists:
+        metadata = exact_directory(quarantine, "failed-bootstrap quarantine")
+        observed_metadata = (
+            metadata.st_uid,
+            metadata.st_gid,
+            stat.S_IMODE(metadata.st_mode),
+        )
+        allowed_metadata = {
+            (
+                document["standaloneUid"],
+                document["standaloneGid"],
+                document["standaloneMode"],
+            ),
+            (0, 0, document["standaloneMode"]),
+            (0, 0, 0o700),
+        }
+        if observed_metadata not in allowed_metadata:
+            raise SystemExit("failed-bootstrap quarantine permissions differ")
+        inventory = exact_inventory(
+            quarantine, 4096, "failed-bootstrap quarantine inventory"
+        )
+        if "postgres_data" not in inventory:
+            raise SystemExit("failed-bootstrap quarantine inventory differs")
+        exact_directory(quarantine / "postgres_data", "quarantined PostgreSQL directory")
+        ssl_exists = "ssl" in inventory
+        if ssl_exists is not document["sslPresent"]:
+            raise SystemExit("failed-bootstrap quarantine SSL inventory differs")
+        if ssl_exists:
+            exact_directory(quarantine / "ssl", "quarantined SSL directory")
+        return "target"
+    raise SystemExit("failed-bootstrap runtime quarantine state is ambiguous")
+
+def validate_quarantined_runtime(document):
+    if path_exists(standalone, "standalone root"):
+        raise SystemExit("failed-bootstrap runtime quarantine state is ambiguous")
+    metadata = exact_directory(quarantine, "failed-bootstrap quarantine")
+    if metadata.st_uid != 0 or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise SystemExit("failed-bootstrap quarantine permissions differ")
+    inventory = exact_inventory(quarantine, 4096, "failed-bootstrap quarantine inventory")
+    if "postgres_data" not in inventory:
+        raise SystemExit("failed-bootstrap quarantine inventory differs")
+    exact_directory(quarantine / "postgres_data", "quarantined PostgreSQL directory")
+    ssl_exists = "ssl" in inventory
+    if ssl_exists is not document["sslPresent"]:
+        raise SystemExit("failed-bootstrap quarantine SSL inventory differs")
+    if ssl_exists:
+        exact_directory(quarantine / "ssl", "quarantined SSL directory")
+
+def validate_runtime_quarantined_replay(document):
+    metadata = exact_directory(quarantine, "failed-bootstrap quarantine")
+    if metadata.st_uid != 0 or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise SystemExit("failed-bootstrap quarantine permissions differ")
+    quarantine_inventory = exact_inventory(
+        quarantine, 4096, "failed-bootstrap quarantine inventory"
+    )
+    if "postgres_data" not in quarantine_inventory:
+        raise SystemExit("failed-bootstrap quarantine inventory differs")
+    exact_directory(quarantine / "postgres_data", "quarantined PostgreSQL directory")
+    source_ssl_exists = "ssl" in quarantine_inventory
+    if not path_exists(standalone, "clean standalone root"):
+        if source_ssl_exists is not document["sslPresent"]:
+            raise SystemExit("failed-bootstrap quarantine SSL inventory differs")
+        if source_ssl_exists:
+            exact_directory(quarantine / "ssl", "quarantined SSL directory")
+        return "standalone-absent"
+
+    standalone_metadata = exact_directory(standalone, "clean standalone root")
+    observed_metadata = (
+        standalone_metadata.st_uid,
+        standalone_metadata.st_gid,
+        stat.S_IMODE(standalone_metadata.st_mode),
+    )
+    allowed_metadata = {
+        (0, 0, 0o700),
+        (document["standaloneUid"], document["standaloneGid"], 0o700),
+        (
+            document["standaloneUid"],
+            document["standaloneGid"],
+            document["standaloneMode"],
+        ),
+    }
+    if observed_metadata not in allowed_metadata:
+        raise SystemExit("clean standalone metadata differs")
+    standalone_inventory = exact_inventory(
+        standalone, 1, "clean standalone partial inventory"
+    )
+    destination_ssl_exists = "ssl" in standalone_inventory
+    if document["sslPresent"]:
+        if source_ssl_exists and not destination_ssl_exists:
+            if standalone_inventory:
+                raise SystemExit("clean standalone partial inventory differs")
+            exact_directory(quarantine / "ssl", "quarantined SSL directory")
+            return "ssl-source"
+        if not source_ssl_exists and destination_ssl_exists:
+            if standalone_inventory != {"ssl"} or observed_metadata != (
+                document["standaloneUid"],
+                document["standaloneGid"],
+                document["standaloneMode"],
+            ):
+                raise SystemExit("clean standalone partial inventory differs")
+            exact_directory(standalone / "ssl", "restored SSL directory")
+            return "ssl-destination"
+        raise SystemExit("failed-bootstrap SSL recovery state is ambiguous")
+    if source_ssl_exists or destination_ssl_exists or standalone_inventory:
+        raise SystemExit("unexpected SSL directory appeared during failed-bootstrap quarantine")
+    return "no-ssl"
+
+def validate_clean_runtime(document):
+    quarantine_metadata = exact_directory(quarantine, "failed-bootstrap quarantine")
+    if (
+        quarantine_metadata.st_uid != 0
+        or quarantine_metadata.st_gid != 0
+        or stat.S_IMODE(quarantine_metadata.st_mode) != 0o700
+    ):
+        raise SystemExit("failed-bootstrap quarantine permissions differ")
+    quarantine_inventory = exact_inventory(
+        quarantine, 4096, "failed-bootstrap quarantine inventory"
+    )
+    if "postgres_data" not in quarantine_inventory or "ssl" in quarantine_inventory:
+        raise SystemExit("failed-bootstrap quarantine inventory differs")
+    exact_directory(quarantine / "postgres_data", "quarantined PostgreSQL directory")
+    clean_metadata = exact_directory(standalone, "clean standalone root")
+    if (
+        clean_metadata.st_uid != document["standaloneUid"]
+        or clean_metadata.st_gid != document["standaloneGid"]
+        or stat.S_IMODE(clean_metadata.st_mode) != document["standaloneMode"]
+    ):
+        raise SystemExit("clean standalone metadata differs")
+    expected_inventory = {"ssl"} if document["sslPresent"] else set()
+    if exact_inventory(standalone, 1, "clean standalone inventory") != expected_inventory:
+        raise SystemExit("clean standalone inventory differs")
+    if document["sslPresent"]:
+        exact_directory(standalone / "ssl", "restored SSL directory")
+
+def decode_canonical(path, label, expected_sha=None):
+    raw, alias, candidate = exact_regular(path, label, expected_sha)
+    document = decode_raw(raw, label)
+    staged = None
+    if candidate is not None:
+        candidate_raw = exact_publication_staging(candidate, label)
+        staged = (candidate, candidate_raw, decode_raw(candidate_raw, label))
+    return raw, document, alias, staged
 
 base_keys = {
     "schemaVersion", "operation", "phase", "recordedAt", "updatedAt",
@@ -649,93 +1406,397 @@ def validate_state(document, phases, terminal_state=False):
     ):
         raise SystemExit("failed-bootstrap terminal evidence tuple differs")
 
-def publish(path, document, create):
-    raw = canonical(document, "failed-bootstrap quarantine document")
-    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = pathlib.Path(name)
+def validate_pending_transition(previous, candidate):
+    validate_state(previous, set(phase_order))
+    validate_state(candidate, set(phase_order))
+    previous_index = phase_order[previous["phase"]]
+    if previous_index >= len(phase_order) - 1:
+        raise SystemExit("failed-bootstrap pending publication transition differs")
+    expected_phase = tuple(phase_order)[previous_index + 1]
+    expected = {**previous, "phase": expected_phase, "updatedAt": candidate["updatedAt"]}
+    if candidate != expected:
+        raise SystemExit("failed-bootstrap pending publication transition differs")
+
+def bind_create_publication(path, requested, candidate, label):
     try:
-        os.fchmod(descriptor, 0o600)
-        os.fchown(descriptor, 0, 0)
-        with os.fdopen(descriptor, "wb") as target:
-            target.write(raw)
-            target.flush()
-            os.fsync(target.fileno())
-        if create:
-            os.link(temporary, path, follow_symlinks=False)
+        if path == pending:
+            validate_state(candidate, {"prepared"})
+            expected = {
+                **requested,
+                "recordedAt": candidate["recordedAt"],
+                "updatedAt": candidate["updatedAt"],
+            }
+            timestamps_match = candidate["recordedAt"] == candidate["updatedAt"]
+        elif path == terminal:
+            validate_state(candidate, {"complete"}, terminal_state=True)
+            expected = {**requested, "completedAt": candidate["completedAt"]}
+            timestamps_match = True
+        else:
+            raise SystemExit(f"{label} publication staging differs")
+    except (KeyError, SystemExit) as error:
+        raise SystemExit(f"{label} publication staging differs") from error
+    if not timestamps_match or candidate != expected:
+        raise SystemExit(f"{label} publication staging differs")
+    requested.clear()
+    requested.update(candidate)
+
+def link_unnamed_staging(descriptor, staging):
+    try:
+        linkat = ctypes.CDLL(None, use_errno=True).linkat
+    except (AttributeError, OSError) as error:
+        raise OSError("linkat is unavailable") from error
+    linkat.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+    linkat.restype = ctypes.c_int
+    if linkat(descriptor, b"", -100, os.fsencode(staging), 0x1000) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, "linkat failed")
+
+def observe_pending_publication(document, alias, staged):
+    validate_state(document, set(phase_order))
+    if alias is not None and document["phase"] != "prepared":
+        raise SystemExit("failed-bootstrap pending publication transition differs")
+    if staged is None:
+        return None
+    _, _, candidate = staged
+    validate_pending_transition(document, candidate)
+    return candidate
+
+def validate_pending_publication_runtime(document, alias, staged):
+    candidate = observe_pending_publication(document, alias, staged)
+    if alias is not None:
+        require_mutation_authority({"active"})
+        validate_prepared_runtime(document)
+    elif candidate is not None:
+        if candidate["phase"] == "runtime-quarantined":
+            require_mutation_authority({"active"})
+            validate_quarantined_runtime(candidate)
+        elif candidate["phase"] == "clean-boundary":
+            require_mutation_authority({"active"})
+            validate_clean_runtime(candidate)
+        elif candidate["phase"] == "authority-retired":
+            validate_clean_runtime(candidate)
+        else:
+            raise SystemExit("failed-bootstrap pending publication transition differs")
+    elif document["phase"] == "prepared":
+        validate_prepared_replay_runtime(document)
+    elif document["phase"] == "runtime-quarantined":
+        validate_runtime_quarantined_replay(document)
+    else:
+        validate_clean_runtime(document)
+    return candidate
+
+def reconcile_pending_publication(raw, document, alias, staged):
+    candidate = validate_pending_publication_runtime(document, alias, staged)
+    if candidate is not None and candidate["phase"] == "authority-retired":
+        require_mutation_authority({"retired"})
+    finish_publication_alias(pending, alias, raw, "failed-bootstrap pending journal")
+    if staged is None:
+        return document
+    staging, candidate_raw, _ = staged
+    finish_publication_update(
+        pending,
+        staging,
+        raw,
+        candidate_raw,
+        "failed-bootstrap pending journal",
+    )
+    return candidate
+
+def publish(path, document, create, defer_update=False):
+    raw = canonical(document, "failed-bootstrap quarantine document")
+    staging = publication_staging(path)
+    label = "failed-bootstrap pending journal" if path == pending else "failed-bootstrap terminal evidence"
+    descriptor = -1
+    try:
+        try:
+            metadata = path.lstat()
+            path_exists = True
+        except FileNotFoundError:
+            metadata = None
+            path_exists = False
+        if path_exists:
+            alias, candidate = publication_alias(path, metadata, label)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_nlink not in {1, 2}
+            ):
+                raise SystemExit(f"{label} publication target is unsafe")
+            previous_raw = path.read_bytes()
+            if alias is not None:
+                if previous_raw != raw:
+                    raise SystemExit(f"{label} publication target differs")
+                finish_publication_alias(path, alias, raw, label)
+                return
+            if candidate is not None:
+                candidate_raw = exact_publication_staging(candidate, label)
+                if create or candidate_raw != raw:
+                    raise SystemExit(f"{label} publication staging differs")
+                if defer_update:
+                    return
+                finish_publication_update(path, candidate, previous_raw, raw, label)
+                return
+            if create:
+                if previous_raw != raw:
+                    raise SystemExit(f"{label} publication target differs")
+                return
+        elif not create:
+            raise SystemExit(f"{label} publication target is unavailable")
+
+        try:
+            staging.lstat()
+            staging_exists = True
+        except FileNotFoundError:
+            staging_exists = False
+        if staging_exists:
+            candidate_raw = exact_publication_staging(staging, label)
+            if create:
+                bind_create_publication(path, document, decode_raw(candidate_raw, label), label)
+                raw = candidate_raw
+            elif candidate_raw != raw:
+                raise SystemExit(f"{label} publication staging differs")
+        else:
+            flags = os.O_RDWR | os.O_TMPFILE | os.O_NOFOLLOW
+            descriptor = os.open(path.parent, flags, 0o600)
+            os.fchmod(descriptor, 0o600)
+            os.fchown(descriptor, 0, 0)
+            offset = 0
+            while offset < len(raw):
+                written = os.write(descriptor, raw[offset:])
+                if written <= 0:
+                    raise OSError("publication write failed")
+                offset += written
+            os.fsync(descriptor)
+            link_unnamed_staging(descriptor, staging)
             fsync_directory(path.parent)
-            temporary.unlink()
+            os.close(descriptor)
+            descriptor = -1
+
+        if create:
+            os.link(staging, path, follow_symlinks=False)
+            fsync_directory(path.parent)
+            staging.unlink()
             fsync_directory(path.parent)
         else:
-            os.replace(temporary, path)
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-            fsync_directory(path.parent)
+            if defer_update:
+                return
+            finish_publication_update(path, staging, previous_raw, raw, label)
+            return
+        final_metadata = path.lstat()
+        if (
+            not stat.S_ISREG(final_metadata.st_mode)
+            or stat.S_ISLNK(final_metadata.st_mode)
+            or final_metadata.st_uid != 0
+            or final_metadata.st_gid != 0
+            or stat.S_IMODE(final_metadata.st_mode) != 0o600
+            or final_metadata.st_nlink != 1
+            or path.read_bytes() != raw
+        ):
+            raise SystemExit(f"{label} publication readback differs")
+    except OSError as error:
+        raise SystemExit(f"{label} publication failed") from error
     finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+        if descriptor >= 0:
+            os.close(descriptor)
+
+def observe_recovery_root():
+    if path_exists(recovery_root, "failed-bootstrap recovery root"):
+        recovery_metadata = exact_directory(recovery_root, "failed-bootstrap recovery root")
+        if (
+            recovery_metadata.st_uid != 0
+            or recovery_metadata.st_gid != 0
+            or stat.S_IMODE(recovery_metadata.st_mode) != 0o700
+        ):
+            raise SystemExit("failed-bootstrap recovery root permissions differ")
+        return
+
+    raise SystemExit("failed-bootstrap recovery root is unavailable")
+
+def require_recovery_root(allow_create):
+    if path_exists(recovery_root, "failed-bootstrap recovery root"):
+        observe_recovery_root()
+        persist_directory(recovery_root)
+        return
+    if not allow_create:
+        raise SystemExit("failed-bootstrap recovery root is unavailable")
+    recovery_root.mkdir(mode=0o700)
+    os.chown(recovery_root, 0, 0)
+    persist_directory(recovery_root)
+
+def validate_completed_runtime(document):
+    require_mutation_authority({"retired"})
+    validate_clean_runtime(document)
+
+def expected_terminal_document(document, completed_at):
+    return {
+        **document,
+        "phase": "complete",
+        "completedAt": completed_at,
+        "sslRestored": document["sslPresent"],
+    }
+
+def preflight_pending_staging():
+    staging = publication_staging(pending)
+    if not path_exists(staging, "failed-bootstrap pending publication staging"):
+        return None
+    if path_exists(pending, "failed-bootstrap pending journal"):
+        return None
+    try:
+        if path_exists(terminal, "failed-bootstrap terminal evidence"):
+            raise SystemExit("failed-bootstrap pending publication staging is unsafe")
+        staging_raw = exact_publication_staging(staging, "failed-bootstrap pending journal")
+        staging_document = decode_raw(staging_raw, "failed-bootstrap pending journal")
+        validate_state(staging_document, {"prepared"})
+        observe_recovery_root()
+        require_mutation_authority({"active"})
+        validate_prepared_runtime(staging_document)
+    except (KeyError, SystemExit) as error:
+        raise SystemExit("failed-bootstrap pending publication staging is unsafe") from error
+    return staging_document
+
+def preflight_terminal_staging():
+    if path_exists(terminal, "failed-bootstrap terminal evidence"):
+        return None
+    staging = publication_staging(terminal)
+    if not path_exists(staging, "failed-bootstrap terminal publication staging"):
+        return None
+    try:
+        staging_raw = exact_publication_staging(staging, "failed-bootstrap terminal evidence")
+        staging_document = decode_raw(staging_raw, "failed-bootstrap terminal evidence")
+        validate_state(staging_document, {"complete"}, terminal_state=True)
+        if not path_exists(pending, "failed-bootstrap pending journal"):
+            raise SystemExit("failed-bootstrap terminal publication staging is unsafe")
+        pending_raw, pending_document, pending_alias, pending_staged = decode_canonical(
+            pending, "failed-bootstrap pending journal"
+        )
+        pending_candidate = observe_pending_publication(
+            pending_document, pending_alias, pending_staged
+        )
+        validate_state(pending_document, {"authority-retired"})
+        if pending_alias is not None or pending_candidate is not None:
+            raise SystemExit("failed-bootstrap terminal publication staging is unsafe")
+        expected = expected_terminal_document(
+            pending_document, staging_document["completedAt"]
+        )
+        if staging_document != expected:
+            raise SystemExit("failed-bootstrap terminal publication staging is unsafe")
+        observe_recovery_root()
+        validate_completed_runtime(pending_document)
+    except (KeyError, SystemExit) as error:
+        raise SystemExit("failed-bootstrap terminal publication staging is unsafe") from error
+    return staging_document, pending_raw, pending_document
 
 exact_directory(shared_root, "shared runtime root")
 evidence_metadata = exact_directory(evidence_root, "evidence root")
 if evidence_metadata.st_uid != 0 or evidence_metadata.st_gid != 0 or stat.S_IMODE(evidence_metadata.st_mode) != 0o700:
     raise SystemExit("evidence root permissions differ")
-if recovery_root.exists() or recovery_root.is_symlink():
-    recovery_metadata = exact_directory(recovery_root, "failed-bootstrap recovery root")
-    if recovery_metadata.st_uid != 0 or recovery_metadata.st_gid != 0 or stat.S_IMODE(recovery_metadata.st_mode) != 0o700:
-        raise SystemExit("failed-bootstrap recovery root permissions differ")
-else:
-    recovery_root.mkdir(mode=0o700)
-    os.chown(recovery_root, 0, 0)
-    fsync_directory(recovery_root.parent)
 
-if terminal.exists() or terminal.is_symlink():
-    _, document = decode_canonical(terminal, "failed-bootstrap terminal evidence")
+pending_staging_replay = preflight_pending_staging()
+terminal_staging_replay = preflight_terminal_staging()
+
+if path_exists(terminal, "failed-bootstrap terminal evidence"):
+    terminal_raw, document, terminal_alias, terminal_staged = decode_canonical(
+        terminal, "failed-bootstrap terminal evidence"
+    )
     validate_state(document, {"complete"}, terminal_state=True)
-    if mutation.exists() or mutation.is_symlink():
-        raise SystemExit("failed-bootstrap terminal evidence conflicts with active authority")
-    decode_canonical(mutation_evidence, "deployment mutation evidence", mutation_sha)
-    quarantine_metadata = exact_directory(quarantine, "failed-bootstrap quarantine")
-    if quarantine_metadata.st_uid != 0 or quarantine_metadata.st_gid != 0 or stat.S_IMODE(quarantine_metadata.st_mode) != 0o700:
-        raise SystemExit("failed-bootstrap quarantine permissions differ")
-    clean_metadata = exact_directory(standalone, "clean standalone root")
-    if (
-        clean_metadata.st_uid != document["standaloneUid"]
-        or clean_metadata.st_gid != document["standaloneGid"]
-        or stat.S_IMODE(clean_metadata.st_mode) != document["standaloneMode"]
-    ):
-        raise SystemExit("clean standalone metadata differs")
-    allowed = {"ssl"} if document.get("sslRestored") else set()
-    if exact_inventory(standalone, 1, "clean standalone inventory") != allowed:
-        raise SystemExit("clean standalone inventory differs")
-    if document["sslRestored"]:
-        exact_directory(standalone / "ssl", "restored SSL directory")
-    if (quarantine / "ssl").exists() or (quarantine / "ssl").is_symlink():
-        raise SystemExit("quarantined SSL authority was not retired")
-    if pending.exists() or pending.is_symlink():
-        _, pending_document = decode_canonical(pending, "failed-bootstrap pending journal")
+    if terminal_staged is not None:
+        raise SystemExit("failed-bootstrap terminal publication staging is unsafe")
+    validate_completed_runtime(document)
+    pending_record = None
+    if path_exists(pending, "failed-bootstrap pending journal"):
+        pending_raw, pending_document, pending_alias, pending_staged = decode_canonical(
+            pending, "failed-bootstrap pending journal"
+        )
+        pending_candidate = observe_pending_publication(
+            pending_document, pending_alias, pending_staged
+        )
         validate_state(pending_document, {"authority-retired"})
         expected_pending = {key: document[key] for key in base_keys}
         expected_pending["phase"] = "authority-retired"
-        if pending_document != expected_pending:
+        if pending_candidate is not None or pending_document != expected_pending:
             raise SystemExit("failed-bootstrap terminal and pending journals differ")
+        pending_record = pending_raw, pending_document, pending_alias, pending_staged
+    require_recovery_root(False)
+    fsync_directory(terminal.parent)
+    finish_publication_alias(
+        terminal,
+        terminal_alias,
+        terminal_raw,
+        "failed-bootstrap terminal evidence",
+    )
+    if pending_record is not None:
+        pending_raw, pending_document, pending_alias, pending_staged = pending_record
+        reconcile_pending_publication(
+            pending_raw, pending_document, pending_alias, pending_staged
+        )
         pending.unlink()
-        fsync_directory(pending.parent)
+    fsync_directory(pending.parent)
     raise SystemExit(0)
 
-if pending.exists() or pending.is_symlink():
-    _, state = decode_canonical(pending, "failed-bootstrap pending journal")
-    validate_state(state, set(phase_order))
+if terminal_staging_replay is not None:
+    terminal_document, _, pending_document = terminal_staging_replay
+    require_recovery_root(False)
+    fsync_directory(pending.parent)
+    publish(path=terminal, document=terminal_document, create=True)
+    pending.unlink()
+    fsync_directory(pending.parent)
+    raise SystemExit(0)
+
+pending_raw = None
+pending_alias = None
+pending_staged = None
+pending_candidate = None
+if path_exists(pending, "failed-bootstrap pending journal"):
+    pending_raw, state, pending_alias, pending_staged = decode_canonical(
+        pending, "failed-bootstrap pending journal"
+    )
+    pending_candidate = observe_pending_publication(state, pending_alias, pending_staged)
+    if state["phase"] in {"prepared", "runtime-quarantined"}:
+        allowed_authority = {"active"}
+    elif state["phase"] == "clean-boundary":
+        allowed_authority = (
+            {"active", "retiring", "retired"}
+            if pending_candidate is not None
+            and pending_candidate["phase"] == "authority-retired"
+            else {"active"}
+        )
+    else:
+        allowed_authority = {"retired"}
+    authority_state = require_mutation_authority(allowed_authority)
+    pending_candidate = validate_pending_publication_runtime(
+        state, pending_alias, pending_staged
+    )
+    require_recovery_root(False)
+    fsync_directory(pending.parent)
+    candidate_retires_authority = (
+        pending_candidate is not None
+        and pending_candidate["phase"] == "authority-retired"
+    )
+    if candidate_retires_authority:
+        validate_clean_runtime(pending_candidate)
+        if authority_state == "retired":
+            fsync_directory(mutation.parent)
+    if not (
+        candidate_retires_authority
+        and authority_state != "retired"
+    ):
+        state = reconcile_pending_publication(
+            pending_raw, state, pending_alias, pending_staged
+        )
+        pending_alias = None
+        pending_staged = None
+        pending_candidate = None
 else:
-    mutation_raw, _ = decode_canonical(mutation, "deployment mutation journal", mutation_sha)
+    require_mutation_authority({"active"})
+    _, mutation_raw = exact_authority(mutation, "deployment mutation journal", {1})
     standalone_metadata = exact_directory(standalone, "standalone root")
-    if quarantine.exists() or quarantine.is_symlink() or mutation_evidence.exists() or mutation_evidence.is_symlink():
+    if path_exists(quarantine, "failed-bootstrap quarantine"):
         raise SystemExit("failed-bootstrap recovery target already exists")
     ssl_path = standalone / "ssl"
-    ssl_present = ssl_path.exists() or ssl_path.is_symlink()
+    ssl_present = path_exists(ssl_path, "standalone SSL directory")
     if ssl_present:
         exact_directory(ssl_path, "standalone SSL directory")
     stamp = now()
@@ -757,6 +1818,8 @@ else:
         "sslPresent": ssl_present,
     }
     validate_state(state, {"prepared"})
+    validate_prepared_runtime(state)
+    require_recovery_root(True)
     publish(pending, state, True)
 
 def advance(phase):
@@ -766,22 +1829,21 @@ def advance(phase):
     publish(pending, state, False)
 
 if phase_order[state["phase"]] <= phase_order["prepared"]:
-    source_exists = standalone.exists() or standalone.is_symlink()
-    target_exists = quarantine.exists() or quarantine.is_symlink()
-    if source_exists and not target_exists:
-        exact_directory(standalone, "standalone root")
-        os.rename(standalone, quarantine)
-        fsync_directory(shared_root)
-    elif not source_exists and target_exists:
-        exact_directory(quarantine, "failed-bootstrap quarantine")
+    prepared_location = validate_prepared_replay_runtime(state)
+    if prepared_location == "source":
+        durable_directory_move(standalone, quarantine)
+    elif prepared_location == "target":
+        fsync_directory(quarantine.parent)
+        fsync_directory(standalone.parent)
     else:
         raise SystemExit("failed-bootstrap runtime quarantine state is ambiguous")
     os.chown(quarantine, 0, 0)
     os.chmod(quarantine, 0o700)
-    fsync_directory(recovery_root)
+    persist_directory(quarantine)
     advance("runtime-quarantined")
 
 if phase_order[state["phase"]] <= phase_order["runtime-quarantined"]:
+    validate_runtime_quarantined_replay(state)
     if not standalone.exists() and not standalone.is_symlink():
         standalone.mkdir(mode=state["standaloneMode"])
     old_ssl = quarantine / "ssl"
@@ -806,7 +1868,7 @@ if phase_order[state["phase"]] <= phase_order["runtime-quarantined"]:
         raise SystemExit("clean standalone partial inventory differs")
     os.chown(standalone, state["standaloneUid"], state["standaloneGid"])
     os.chmod(standalone, state["standaloneMode"])
-    fsync_directory(shared_root)
+    persist_directory(standalone)
     clean_metadata = exact_directory(standalone, "clean standalone root")
     if (
         clean_metadata.st_uid != state["standaloneUid"]
@@ -817,11 +1879,11 @@ if phase_order[state["phase"]] <= phase_order["runtime-quarantined"]:
     if state["sslPresent"]:
         if (old_ssl.exists() or old_ssl.is_symlink()) and not (new_ssl.exists() or new_ssl.is_symlink()):
             exact_directory(old_ssl, "quarantined SSL directory")
-            os.rename(old_ssl, new_ssl)
-            fsync_directory(quarantine)
-            fsync_directory(standalone)
+            durable_directory_move(old_ssl, new_ssl)
         elif not (old_ssl.exists() or old_ssl.is_symlink()) and (new_ssl.exists() or new_ssl.is_symlink()):
             exact_directory(new_ssl, "restored SSL directory")
+            fsync_directory(new_ssl.parent)
+            fsync_directory(old_ssl.parent)
         else:
             raise SystemExit("failed-bootstrap SSL recovery state is ambiguous")
     elif old_ssl.exists() or old_ssl.is_symlink() or new_ssl.exists() or new_ssl.is_symlink():
@@ -832,35 +1894,50 @@ if phase_order[state["phase"]] <= phase_order["runtime-quarantined"]:
     advance("clean-boundary")
 
 if phase_order[state["phase"]] <= phase_order["clean-boundary"]:
-    mutation_exists = mutation.exists() or mutation.is_symlink()
-    evidence_exists = mutation_evidence.exists() or mutation_evidence.is_symlink()
-    if mutation_exists and not evidence_exists:
-        decode_canonical(mutation, "deployment mutation journal", mutation_sha)
-        os.rename(mutation, mutation_evidence)
-        fsync_directory(mutation.parent)
-        fsync_directory(mutation_evidence.parent)
-    elif not mutation_exists and evidence_exists:
-        decode_canonical(mutation_evidence, "deployment mutation evidence", mutation_sha)
-    else:
-        raise SystemExit("failed-bootstrap journal retirement state is ambiguous")
-    advance("authority-retired")
+    pending_raw, pending_base, pending_alias, pending_staged = decode_canonical(
+        pending, "failed-bootstrap pending journal"
+    )
+    pending_candidate = observe_pending_publication(
+        pending_base, pending_alias, pending_staged
+    )
+    validate_state(pending_base, {"clean-boundary"})
+    validate_clean_runtime(pending_base)
+    if pending_candidate is None:
+        pending_candidate = {
+            **pending_base,
+            "phase": "authority-retired",
+            "updatedAt": now(),
+        }
+        validate_pending_transition(pending_base, pending_candidate)
+        publish(pending, pending_candidate, False, defer_update=True)
+        pending_raw, pending_base, pending_alias, pending_staged = decode_canonical(
+            pending, "failed-bootstrap pending journal"
+        )
+        if pending_alias is not None:
+            raise SystemExit("failed-bootstrap pending publication transition differs")
+        observed_candidate = observe_pending_publication(
+            pending_base, pending_alias, pending_staged
+        )
+        if observed_candidate != pending_candidate:
+            raise SystemExit("failed-bootstrap pending publication transition differs")
+    elif pending_candidate["phase"] != "authority-retired":
+        raise SystemExit("failed-bootstrap pending publication transition differs")
 
-decode_canonical(mutation_evidence, "deployment mutation evidence", mutation_sha)
-quarantine_metadata = exact_directory(quarantine, "failed-bootstrap quarantine")
-if quarantine_metadata.st_uid != 0 or quarantine_metadata.st_gid != 0 or stat.S_IMODE(quarantine_metadata.st_mode) != 0o700:
-    raise SystemExit("failed-bootstrap quarantine permissions differ")
-clean_metadata = exact_directory(standalone, "clean standalone root")
-if (
-    clean_metadata.st_uid != state["standaloneUid"]
-    or clean_metadata.st_gid != state["standaloneGid"]
-    or stat.S_IMODE(clean_metadata.st_mode) != state["standaloneMode"]
-):
-    raise SystemExit("clean standalone metadata differs")
-expected_inventory = {"ssl"} if state["sslPresent"] else set()
-if exact_inventory(standalone, 1, "clean standalone inventory") != expected_inventory:
-    raise SystemExit("clean standalone inventory differs")
-if (quarantine / "ssl").exists() or (quarantine / "ssl").is_symlink():
-    raise SystemExit("quarantined SSL authority was not retired")
+    authority_state = require_mutation_authority({"active", "retiring", "retired"})
+    if authority_state == "active":
+        os.link(mutation, mutation_evidence, follow_symlinks=False)
+        fsync_directory(mutation_evidence.parent)
+        mutation.unlink()
+    elif authority_state == "retiring":
+        finish_mutation_evidence_alias(mutation, mutation_evidence, mutation_sha)
+    require_mutation_authority({"retired"})
+    fsync_directory(mutation.parent)
+    state = reconcile_pending_publication(
+        pending_raw, pending_base, pending_alias, pending_staged
+    )
+    validate_state(state, {"authority-retired"})
+
+validate_completed_runtime(state)
 terminal_document = {
     **state,
     "phase": "complete",

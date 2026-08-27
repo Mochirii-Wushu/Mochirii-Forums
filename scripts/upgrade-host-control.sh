@@ -20,6 +20,9 @@ readonly reviewed_acme_reload_privacy_recovery_child_commit="591d96484369ae29a8f
 readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"
 readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"
 readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"
+readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"
+readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"
+readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -185,6 +188,9 @@ select_reviewed_failed_bootstrap_recovery_commit() {
     "${reviewed_acme_webroot_failed_bootstrap_commit}")
       printf '%s\n' "${reviewed_acme_webroot_recovery_commit}"
       ;;
+    "${reviewed_acme_material_failed_bootstrap_commit}")
+      printf '%s\n' "${reviewed_acme_material_recovery_commit}"
+      ;;
     *) return 1 ;;
   esac
 }
@@ -248,6 +254,53 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
   )
+  local -ar acme_material_repair_expected_paths=(
+    config/immutable-letsencrypt.fragment.yml
+    scripts/test-contracts.py
+    scripts/validate-repository.py
+  )
+  local -ar acme_material_review_authority_expected_paths=(
+    .gitattributes
+    .github/CODEOWNERS
+    .github/workflows/open-reviewed-source-pr.yml
+    CONTRIBUTING.md
+    docs/adr/0001-clean-initialization-and-canonical-ownership.md
+    scripts/test-contracts.py
+    scripts/validate-repository.py
+  )
+  local -ar acme_material_current_expected_paths=(
+    .github/workflows/validate-repository.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
+  local -ar acme_material_expected_paths=(
+    .gitattributes
+    .github/CODEOWNERS
+    .github/workflows/open-reviewed-source-pr.yml
+    .github/workflows/validate-repository.yml
+    CONTRIBUTING.md
+    config/immutable-letsencrypt.fragment.yml
+    docs/adr/0001-clean-initialization-and-canonical-ownership.md
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
+  local actual_path_output
   local -a actual_paths expected_paths
   case "${pending_commit}" in
     "${reviewed_legacy_failed_bootstrap_commit}") expected_paths=("${legacy_expected_paths[@]}") ;;
@@ -256,9 +309,35 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     "${reviewed_quarantine_output_failed_bootstrap_commit}") expected_paths=("${quarantine_output_expected_paths[@]}") ;;
     "${reviewed_acme_reload_privacy_failed_bootstrap_commit}") expected_paths=("${acme_reload_privacy_expected_paths[@]}") ;;
     "${reviewed_acme_webroot_failed_bootstrap_commit}") expected_paths=("${acme_webroot_expected_paths[@]}") ;;
+    "${reviewed_acme_material_failed_bootstrap_commit}") expected_paths=("${acme_material_expected_paths[@]}") ;;
     *) return 1 ;;
   esac
-  mapfile -t actual_paths < <(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}") || return 1
+  if [[ ${pending_commit} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
+    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${reviewed_acme_material_recovery_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_material_repair_expected_paths[@]} ]] || return 1
+    for index in "${!acme_material_repair_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_material_repair_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_material_recovery_commit}" "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_material_review_authority_expected_paths[@]} ]] || return 1
+    for index in "${!acme_material_review_authority_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_material_review_authority_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_material_review_authority_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_material_current_expected_paths[@]} ]] || return 1
+    for index in "${!acme_material_current_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_material_current_expected_paths[$index]}" ]] || return 1
+    done
+  fi
+  actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+  (( ${#actual_path_output} <= 65536 )) || return 1
+  mapfile -t actual_paths <<< "${actual_path_output}"
   [[ ${#actual_paths[@]} -eq ${#expected_paths[@]} ]] || return 1
   for index in "${!expected_paths[@]}"; do
     [[ ${actual_paths[$index]} == "${expected_paths[$index]}" ]] || return 1
@@ -272,13 +351,18 @@ bind_invoked_canonical_successor() {
   if [[ ${pending_commit} == "${reviewed_acme_reload_privacy_failed_bootstrap_commit}" ]]; then
     requested_parent_commit="${reviewed_acme_reload_privacy_launcher_child_commit}"
   fi
+  if [[ ${pending_commit} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
+    requested_parent_commit="${reviewed_acme_material_review_authority_commit}"
+  fi
   [[ -f $0 && ! -L $0 ]] || return 1
   invocation_script="$(realpath -e -- "$0")" || return 1
   invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
   [[ -d ${invocation_source_root}/.git && ! -L ${invocation_source_root}/.git ]] || return 1
-  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_REPLACE_REF_BASE
   unset GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_PROTOCOL_FROM_USER
-  export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0
+  export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1
+  [[ ! -e ${invocation_source_root}/.git/commondir && ! -L ${invocation_source_root}/.git/commondir ]] || return 1
+  [[ ! -e ${invocation_source_root}/.git/info/grafts && ! -L ${invocation_source_root}/.git/info/grafts ]] || return 1
   [[ "$(git -C "${invocation_source_root}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${requested_commit}" ]] || return 1
   [[ "$(git -C "${invocation_source_root}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
   status_output="$(git -c core.fsmonitor=false -C "${invocation_source_root}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || return 1
@@ -292,6 +376,10 @@ bind_invoked_canonical_successor() {
     [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_launcher_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_launcher_child_commit} ${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
     [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
     [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit} ${reviewed_recovery_commit}" ]] || return 1
+  fi
+  if [[ ${pending_commit} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
+    [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" == "${reviewed_acme_material_review_authority_commit} ${reviewed_recovery_commit}" ]] || return 1
   fi
   [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
   [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${pending_commit}" ]] || return 1
@@ -1297,7 +1385,7 @@ trusted_tree="$(git "${trusted_git_options[@]}" -C "${bare}" rev-parse --verify 
 [[ ${trusted_tree} =~ ^[0-9a-f]{40}$ ]] || fail "Canonical host-control main tree is malformed."
 git "${trusted_git_options[@]}" -c tar.umask=0002 -C "${bare}" archive --format=tar --output="${archive}" "${trusted_commit}" >/dev/null 2>&1 || fail "Canonical host-control archive construction failed."
 tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}" || fail "Canonical host-control archive extraction failed."
-bounded 300s python3 -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}" >/dev/null 2>&1 || fail "Canonical host-control repository validation failed."
+bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}" >/dev/null 2>&1 || fail "Canonical host-control repository validation failed."
 mapfile -t records < <(manifest_records "${candidate}") || fail "Canonical host-control manifest validation failed."
 [[ ${#records[@]} -ge 20 ]] || fail "Canonical host-control target inventory is incomplete."
 previous_state_output=""

@@ -7,6 +7,34 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath $RepositoryRoot).Path
+$expectedValidatorSha256 = 'd7b359b5540ba0cd8bd003efb8171f95431bd39376b36fbcf157ba491593e3a4'
+$expectedContractSha256 = 'ef22482ebf77b46b779638e255f8e235ee27b81463b62065ded425c32d01eada'
+$expectedPythonAcceptanceRootSha256 = '49ddf0f7cea78cc8bd6f8656fb0a16bbdc27e6b58dc2bb0a4ecda27c4b77e6ac'
+
+function Get-PythonAcceptanceRootSha256 {
+    param(
+        [Parameter(Mandatory)][string]$ValidatorSha256,
+        [Parameter(Mandatory)][string]$ContractSha256
+    )
+    $material = [Text.Encoding]::ASCII.GetBytes(
+        'mochirii-forums-python-acceptance-root-v1' +
+        [char]0 + $ValidatorSha256 + [char]0 + $ContractSha256 + [char]10
+    )
+    return [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($material)
+    ).ToLowerInvariant()
+}
+
+function Assert-ExactPythonSource {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Sha256)
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.PSIsContainer -or $null -ne $item.LinkType -or $item.Length -le 0 -or $item.Length -gt 1048576) {
+        throw 'Trusted Python source is absent, linked, special, or oversized.'
+    }
+    if ((Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Sha256) {
+        throw 'Trusted Python source digest differs.'
+    }
+}
 
 function Invoke-Checked {
     param([Parameter(Mandatory)][string]$Command, [Parameter(Mandatory)][string[]]$Arguments)
@@ -18,8 +46,13 @@ function Invoke-Checked {
 
 Push-Location -LiteralPath $root
 try {
-    Invoke-Checked -Command 'python' -Arguments @('-B', 'scripts/validate-repository.py')
-    Invoke-Checked -Command 'python' -Arguments @('-B', 'scripts/test-contracts.py')
+    if ((Get-PythonAcceptanceRootSha256 -ValidatorSha256 $expectedValidatorSha256 -ContractSha256 $expectedContractSha256) -ne $expectedPythonAcceptanceRootSha256) {
+        throw 'Trusted Python acceptance root differs.'
+    }
+    Assert-ExactPythonSource -Path (Join-Path $root 'scripts/validate-repository.py') -Sha256 $expectedValidatorSha256
+    Assert-ExactPythonSource -Path (Join-Path $root 'scripts/test-contracts.py') -Sha256 $expectedContractSha256
+    Invoke-Checked -Command 'python' -Arguments @('-I', '-S', '-B', 'scripts/validate-repository.py')
+    Invoke-Checked -Command 'python' -Arguments @('-I', '-S', '-B', 'scripts/test-contracts.py')
 
     $pinArguments = @('-B', 'scripts/verify-pinned-source.py')
     if ($Online) {
