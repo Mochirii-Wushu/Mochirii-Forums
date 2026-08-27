@@ -3,6 +3,83 @@
 
 from __future__ import annotations
 
+import sys
+
+
+def _require_isolated_python() -> bool:
+    if (
+        sys.flags.isolated != 1
+        or sys.flags.no_site != 1
+        or sys.flags.dont_write_bytecode != 1
+        or getattr(sys.flags, "safe_path", False) is not True
+        or (
+            __name__ == "__main__"
+            and any(
+                name in sys.modules
+                for name in ("ast", "hashlib", "os", "pathlib", "site")
+            )
+        )
+    ):
+        raise SystemExit("Trusted Python startup boundary is unavailable.")
+    return True
+
+
+def _normalize_import_path(value: str) -> str:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise RuntimeError("Trusted Python import path is malformed.")
+    candidate = value.replace("\\", "/")
+    windows = (
+        len(candidate) >= 3
+        and candidate[0].isalpha()
+        and candidate[1] == ":"
+        and candidate[2] == "/"
+    )
+    if windows:
+        root = candidate[:3]
+        remainder = candidate[3:]
+    elif candidate.startswith("/"):
+        root = "/"
+        remainder = candidate[1:]
+    else:
+        raise RuntimeError("Trusted Python import path is not absolute.")
+    components = remainder.split("/") if remainder else []
+    if any(component in {"", ".", ".."} for component in components):
+        raise RuntimeError("Trusted Python import path is not lexical.")
+    normalized = root + "/".join(components)
+    return normalized.casefold() if windows else normalized
+
+
+def _restrict_import_path() -> bool:
+    trusted_prefixes: list[str] = []
+    for value in (sys.base_prefix, sys.exec_prefix):
+        try:
+            normalized = _normalize_import_path(value)
+        except RuntimeError:
+            raise SystemExit("Trusted Python import path is unavailable.") from None
+        if normalized and normalized not in trusted_prefixes:
+            trusted_prefixes.append(normalized)
+    accepted: list[str] = []
+    for entry in sys.path:
+        if not isinstance(entry, str) or not entry:
+            continue
+        try:
+            normalized = _normalize_import_path(entry)
+        except RuntimeError:
+            raise SystemExit("Trusted Python import path is unavailable.") from None
+        if any(
+            normalized == prefix or normalized.startswith(f"{prefix}/")
+            for prefix in trusted_prefixes
+        ):
+            accepted.append(entry)
+    if not accepted:
+        raise SystemExit("Trusted Python import path is unavailable.")
+    sys.path[:] = accepted
+    return True
+
+
+_PYTHON_STARTUP_RESTRICTED = _require_isolated_python()
+_IMPORT_PATH_RESTRICTED = _restrict_import_path()
+
 import argparse
 import ast
 import base64
@@ -652,6 +729,799 @@ JSON_SHAPE_SHA256 = {
 
 def fail(message: str) -> None:
     raise RuntimeError(message)
+
+
+PYTHON_ACCEPTANCE_ROOT_PREFIX = b"mochirii-forums-python-acceptance-root-v1\0"
+PYTHON_ACCEPTANCE_ROOT_PATTERNS = {
+    ".github/workflows/validate-repository.yml": (
+        r"(?m)^      MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256: ([0-9a-f]{64})$"
+    ),
+    "scripts/check-repository.ps1": (
+        r"(?m)^\$expectedPythonAcceptanceRootSha256 = '([0-9a-f]{64})'$"
+    ),
+    "scripts/check-source-introduction.ps1": (
+        r"(?m)^\$expectedPythonAcceptanceRootSha256 = '([0-9a-f]{64})'$"
+    ),
+    "scripts/test-source-introduction.ps1": (
+        r"(?m)^\$expectedPythonAcceptanceRootSha256 = '([0-9a-f]{64})'$"
+    ),
+    "scripts/host-deploy.sh": (
+        r'(?m)^readonly repository_python_acceptance_root_sha256="([0-9a-f]{64})"$'
+    ),
+}
+
+
+def python_acceptance_root_sha256(validator_source: str, contract_source: str) -> str:
+    if not isinstance(validator_source, str) or not isinstance(contract_source, str):
+        fail("Trusted Python source inventory differs.")
+    material = (
+        PYTHON_ACCEPTANCE_ROOT_PREFIX
+        + hashlib.sha256(validator_source.encode("utf-8")).hexdigest().encode("ascii")
+        + b"\0"
+        + hashlib.sha256(contract_source.encode("utf-8")).hexdigest().encode("ascii")
+        + b"\n"
+    )
+    return hashlib.sha256(material).hexdigest()
+
+
+def validate_python_acceptance_root(
+    validator_source: str,
+    contract_source: str,
+    consumer_sources: dict[str, str],
+) -> str:
+    expected = python_acceptance_root_sha256(validator_source, contract_source)
+    observed: list[str] = []
+    for relative, pattern in PYTHON_ACCEPTANCE_ROOT_PATTERNS.items():
+        source = consumer_sources.get(relative)
+        if not isinstance(source, str):
+            fail("Trusted Python acceptance-root consumer inventory differs.")
+        matches = re.findall(pattern, source)
+        if len(matches) != 1:
+            fail("Trusted Python acceptance-root binding differs.")
+        observed.append(matches[0])
+    if observed != [expected] * len(PYTHON_ACCEPTANCE_ROOT_PATTERNS):
+        fail("Trusted Python acceptance root differs.")
+    return expected
+
+
+def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
+    validator_source = text_files.get("scripts/validate-repository.py")
+    contract_source = text_files.get("scripts/test-contracts.py")
+    if not isinstance(validator_source, str) or not isinstance(contract_source, str):
+        fail("Trusted Python source inventory differs.")
+    validator_sha256 = hashlib.sha256(validator_source.encode("utf-8")).hexdigest()
+    contract_sha256 = hashlib.sha256(contract_source.encode("utf-8")).hexdigest()
+    acceptance_root_sha256 = validate_python_acceptance_root(
+        validator_source, contract_source, text_files
+    )
+    powershell_root_function = '''function Get-PythonAcceptanceRootSha256 {
+    param(
+        [Parameter(Mandatory)][string]$ValidatorSha256,
+        [Parameter(Mandatory)][string]$ContractSha256
+    )
+    $material = [Text.Encoding]::ASCII.GetBytes(
+        'mochirii-forums-python-acceptance-root-v1' +
+        [char]0 + $ValidatorSha256 + [char]0 + $ContractSha256 + [char]10
+    )
+    return [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($material)
+    ).ToLowerInvariant()
+}
+'''
+    powershell_root_check = (
+        "if ((Get-PythonAcceptanceRootSha256 -ValidatorSha256 "
+        "$expectedValidatorSha256 -ContractSha256 $expectedContractSha256) "
+        "-ne $expectedPythonAcceptanceRootSha256) {"
+    )
+    exact_requirements = {
+        "scripts/check-repository.ps1": (
+            f"$expectedValidatorSha256 = '{validator_sha256}'",
+            f"$expectedContractSha256 = '{contract_sha256}'",
+            f"$expectedPythonAcceptanceRootSha256 = '{acceptance_root_sha256}'",
+            powershell_root_function,
+            powershell_root_check,
+            "Invoke-Checked -Command 'python' -Arguments @('-I', '-S', '-B', 'scripts/validate-repository.py')",
+            "Invoke-Checked -Command 'python' -Arguments @('-I', '-S', '-B', 'scripts/test-contracts.py')",
+        ),
+        "scripts/check-source-introduction.ps1": (
+            f"$expectedValidatorSha256 = '{validator_sha256}'",
+            f"$expectedContractSha256 = '{contract_sha256}'",
+            f"$expectedPythonAcceptanceRootSha256 = '{acceptance_root_sha256}'",
+            powershell_root_function,
+            powershell_root_check,
+            "& python -I -S -B $validator.FullName",
+        ),
+        "scripts/test-source-introduction.ps1": (
+            f"$expectedValidatorSha256 = '{validator_sha256}'",
+            f"$expectedContractSha256 = '{contract_sha256}'",
+            f"$expectedPythonAcceptanceRootSha256 = '{acceptance_root_sha256}'",
+            powershell_root_function,
+            powershell_root_check,
+            "& python -I -S -B $contract.FullName",
+        ),
+        "scripts/host-deploy.sh": (
+            f'readonly repository_validator_sha256="{validator_sha256}"',
+            f'readonly repository_contract_tests_sha256="{contract_sha256}"',
+            f'readonly repository_python_acceptance_root_sha256="{acceptance_root_sha256}"',
+            "observed_python_acceptance_root_sha256=\"$(printf "
+            "'mochirii-forums-python-acceptance-root-v1\\0%s\\0%s\\n' "
+            '"${repository_validator_sha256}" "${repository_contract_tests_sha256}" '
+            "| sha256sum | awk '{print $1}')\"",
+            '[[ "${observed_python_acceptance_root_sha256}" == "${repository_python_acceptance_root_sha256}" ]] || fail "Trusted Python acceptance root differs."',
+            'python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"',
+            'python3 -I -S -B "${candidate}/scripts/test-contracts.py"',
+        ),
+        "scripts/upgrade-host-control.sh": (
+            'bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"',
+        ),
+        "scripts/test-contracts.py": (
+            '[sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]',
+            '                    sys.executable,\n'
+            '                    "-I",\n'
+            '                    "-S",\n'
+            '                    "-B",\n'
+            '                    str(root / "scripts/validate-repository.py"),',
+        ),
+    }
+    for relative, requirements in exact_requirements.items():
+        source = text_files.get(relative)
+        if not isinstance(source, str):
+            fail("Trusted Python caller inventory or isolated startup flags differ.")
+        for value in requirements:
+            expected_count = (
+                2
+                if relative == "scripts/test-contracts.py"
+                and value
+                == '[sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]'
+                else 1
+            )
+            if source.count(value) != expected_count:
+                fail("Trusted Python caller inventory or isolated startup flags differ.")
+
+    workflow = text_files.get(".github/workflows/validate-repository.yml")
+    root_contract = f'''      - name: Run required root Linux quarantine transaction contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          validator_sha256="$(sha256sum -- scripts/validate-repository.py | awk '{{print $1}}')"
+          contract_sha256="$(sha256sum -- scripts/test-contracts.py | awk '{{print $1}}')"
+          [[ "$validator_sha256" == {validator_sha256} ]]
+          [[ "$contract_sha256" == {contract_sha256} ]]
+          observed_python_acceptance_root_sha256="$(printf 'mochirii-forums-python-acceptance-root-v1\\0%s\\0%s\\n' "$validator_sha256" "$contract_sha256" | sha256sum | awk '{{print $1}}')"
+          [[ "$observed_python_acceptance_root_sha256" == "$MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256" ]]
+          sudo -n env -i \\
+            HOME=/root \\
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
+            LC_ALL=C.UTF-8 \\
+            /usr/bin/python3 -I -S -B scripts/test-contracts.py
+'''
+    if (
+        not isinstance(workflow, str)
+        or workflow.count("    timeout-minutes: 30\n") != 1
+        or workflow.count(root_contract) != 1
+        or workflow.index(root_contract) < workflow.index(
+            "      - name: Run fail-closed offline repository contract"
+        )
+    ):
+        fail("Required root Linux quarantine acceptance job differs.")
+
+
+VALIDATOR_CLI_SOURCE_SHA256 = "2f9da6f53b135a31e2129d51550582a007e0d03dbd255f93c25d7347f9129246"
+CONTRACT_TEST_SOURCE_SHA256 = "ef22482ebf77b46b779638e255f8e235ee27b81463b62065ded425c32d01eada"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "76e1fc0d46f02dad6dea2c31750c7e981436f8c05839f86efcacafd45d1062f4"
+CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
+FAILED_BOOTSTRAP_TEST_SHA256 = "bea50b165daa8bdff8e658977b7d7742db0df866c06898a92fad1fa8b8a73105"
+
+
+def validate_validator_cli_acceptance_chain(source: str) -> None:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        fail("Repository validator CLI source is not valid Python.")
+    mains = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    ]
+    bootstraps = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_restrict_import_path"
+    ]
+    startup_guards = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_require_isolated_python"
+    ]
+    normalizers = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_normalize_import_path"
+    ]
+    if (
+        len(mains) != 1
+        or len(bootstraps) != 1
+        or len(startup_guards) != 1
+        or len(normalizers) != 1
+        or len(tree.body) < 3
+    ):
+        fail("Repository validator CLI main is absent or duplicated.")
+    main = mains[0]
+    bootstrap = bootstraps[0]
+    startup_guard = startup_guards[0]
+    normalizer = normalizers[0]
+    guard = tree.body[-1]
+    top_level_guards = [node for node in tree.body if isinstance(node, ast.If)]
+    prefix = tree.body[:-2]
+    source_lines = source.splitlines(keepends=True)
+    if (
+        tree.body[-2] is not main
+        or main.decorator_list
+        or bootstrap.decorator_list
+        or startup_guard.decorator_list
+        or normalizer.decorator_list
+        or len(top_level_guards) != 1
+        or not isinstance(prefix[0], ast.Expr)
+        or not isinstance(prefix[0].value, ast.Constant)
+        or not isinstance(prefix[0].value.value, str)
+        or any(
+            not isinstance(
+                node,
+                (ast.Import, ast.ImportFrom, ast.Assign, ast.AnnAssign, ast.FunctionDef),
+            )
+            for node in prefix[1:]
+        )
+        or any(
+            node.decorator_list
+            for node in prefix
+            if isinstance(node, ast.FunctionDef)
+        )
+    ):
+        fail("Repository validator CLI top-level execution boundary differs.")
+    bootstrap_source = "".join(source_lines[bootstrap.lineno - 1 : bootstrap.end_lineno])
+    startup_guard_source = "".join(
+        source_lines[startup_guard.lineno - 1 : startup_guard.end_lineno]
+    )
+    normalizer_source = "".join(
+        source_lines[normalizer.lineno - 1 : normalizer.end_lineno]
+    )
+    if (
+        hashlib.sha256(bootstrap_source.encode("utf-8")).hexdigest()
+        != "1fc799aeac795776b404ee7fd7179ca07aaacdcdc7f6e90b1b3da4cc997d2ccc"
+        or hashlib.sha256(startup_guard_source.encode("utf-8")).hexdigest()
+        != "b75c9b3d91b7e93659b3962e16c5e7c160bf35d823b19380d651ee8ee4ce5263"
+        or hashlib.sha256(normalizer_source.encode("utf-8")).hexdigest()
+        != "449e60a2d1e8492583e18e5d7a366b7f5a36d6a040e0994e7b6565e533b339f0"
+    ):
+        fail("Repository validator import-path bootstrap differs.")
+    imports_source = "".join(
+        "".join(source_lines[node.lineno - 1 : node.end_lineno])
+        for node in prefix
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    )
+    if (
+        hashlib.sha256(imports_source.encode("utf-8")).hexdigest()
+        != "6fdcb8330b583d3fb8d485cf9e335e8494f736c9c117662fcf547e4e09491162"
+    ):
+        fail("Repository validator CLI import boundary differs.")
+    executable_assignments = {
+        "_PYTHON_STARTUP_RESTRICTED": "91f125795440732972fea9b9921f0a53e3f4334553d0dc12cde71d0e88795633",
+        "_IMPORT_PATH_RESTRICTED": "c79c8ef7ffac8557ec250e0b05c3b15939ebb3b728e62315486e24a98e156461",
+        "ROOT": "6c0caf441a1aad2240e7aaccbb2a73915fc5ce62a90eb857836d905c68760c7d",
+        "MANAGED_WEB_SSL_SERVER_OUTLET": "611b3941a610ea9d23805d773cbba7dbf7ce57c06b2355f10d65a8720196c8e0",
+        "EXPECTED_SERVER_TLS_SHA256": "885cfdce0ad10ad670c604584bf51bc0e05027d1e6ab92cf45b35a23209914ce",
+        "ALLOWED_FILES": "2830164c191da98529cb8134eccfc4dd30891049e912e9625e767b2531283661",
+    }
+    protected_seal_names = {
+        "VALIDATOR_CLI_SOURCE_SHA256",
+        "CONTRACT_TEST_SOURCE_SHA256",
+        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256",
+        "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256",
+        "FAILED_BOOTSTRAP_TEST_SHA256",
+    }
+    observed_protected_seals: set[str] = set()
+    for node in prefix:
+        binding_names: set[str] = set()
+        if isinstance(node, ast.Assign):
+            binding_names.update(
+                child.id
+                for target in node.targets
+                for child in ast.walk(target)
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            )
+        elif isinstance(node, ast.AnnAssign):
+            binding_names.update(
+                child.id
+                for child in ast.walk(node.target)
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            binding_names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            binding_names.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
+            )
+        protected_bindings = binding_names & protected_seal_names
+        target = node.targets[0] if isinstance(node, ast.Assign) and node.targets else None
+        if not protected_bindings:
+            continue
+        if (
+            len(protected_bindings) != 1
+            or not isinstance(node, ast.Assign)
+            or len(node.targets) != 1
+            or not isinstance(target, ast.Name)
+            or target.id not in protected_bindings
+            or target.id in observed_protected_seals
+            or not isinstance(node.value, ast.Constant)
+            or not isinstance(node.value.value, str)
+            or re.fullmatch(r"[0-9a-f]{64}", node.value.value) is None
+        ):
+            fail("Repository validator CLI protected seal binding differs.")
+        observed_protected_seals.add(target.id)
+    if observed_protected_seals != protected_seal_names:
+        fail("Repository validator CLI protected seal inventory differs.")
+    observed_executable_assignments = set()
+    forbidden_assignment_nodes = (
+        ast.Await,
+        ast.GeneratorExp,
+        ast.IfExp,
+        ast.Lambda,
+        ast.ListComp,
+        ast.NamedExpr,
+        ast.SetComp,
+        ast.DictComp,
+        ast.Yield,
+        ast.YieldFrom,
+    )
+    for node in prefix:
+        if isinstance(node, ast.FunctionDef):
+            defaults = [*node.args.defaults, *node.args.kw_defaults]
+            if any(
+                isinstance(child, ast.Call)
+                for default in defaults
+                if default is not None
+                for child in ast.walk(default)
+            ):
+                fail("Repository validator CLI function definition executes early.")
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            fail("Repository validator CLI assignment target differs.")
+        target = targets[0].id
+        calls = [child for child in ast.walk(node) if isinstance(child, ast.Call)]
+        if calls:
+            assignment_source = "".join(
+                source_lines[node.lineno - 1 : node.end_lineno]
+            )
+            expected = executable_assignments.get(target)
+            if (
+                expected is None
+                or hashlib.sha256(assignment_source.encode("utf-8")).hexdigest()
+                != expected
+            ):
+                fail("Repository validator CLI executable assignment differs.")
+            observed_executable_assignments.add(target)
+        elif any(isinstance(child, forbidden_assignment_nodes) for child in ast.walk(node)):
+            fail("Repository validator CLI assignment can execute early.")
+    if observed_executable_assignments != set(executable_assignments):
+        fail("Repository validator CLI executable assignment inventory differs.")
+    if (
+        not isinstance(guard, ast.If)
+        or guard.lineno <= main.end_lineno
+        or not isinstance(guard.test, ast.Compare)
+        or not isinstance(guard.test.left, ast.Name)
+        or guard.test.left.id != "__name__"
+        or len(guard.test.ops) != 1
+        or not isinstance(guard.test.ops[0], ast.Eq)
+        or len(guard.test.comparators) != 1
+        or not isinstance(guard.test.comparators[0], ast.Constant)
+        or guard.test.comparators[0].value != "__main__"
+        or len(guard.body) != 1
+        or guard.orelse
+        or not isinstance(guard.body[0], ast.Raise)
+        or not isinstance(guard.body[0].exc, ast.Call)
+        or not isinstance(guard.body[0].exc.func, ast.Name)
+        or guard.body[0].exc.func.id != "SystemExit"
+        or len(guard.body[0].exc.args) != 1
+        or not isinstance(guard.body[0].exc.args[0], ast.Call)
+        or not isinstance(guard.body[0].exc.args[0].func, ast.Name)
+        or guard.body[0].exc.args[0].func.id != "main"
+    ):
+        fail("Repository validator CLI guard differs.")
+    cli_source = "".join(source_lines[main.lineno - 1 : guard.end_lineno])
+    if hashlib.sha256(cli_source.encode("utf-8")).hexdigest() != VALIDATOR_CLI_SOURCE_SHA256:
+        fail("Repository validator CLI exact source seal differs.")
+
+
+def validate_contract_test_acceptance_chain(source: str) -> None:
+    if (
+        hashlib.sha256(source.encode("utf-8")).hexdigest()
+        != CONTRACT_TEST_SOURCE_SHA256
+    ):
+        fail("Hostile fixture complete source seal differs.")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        fail("Hostile fixture acceptance source is not valid Python.")
+    top_level_functions = [
+        node for node in tree.body if isinstance(node, ast.FunctionDef)
+    ]
+    independent_verifiers = [
+        node
+        for node in top_level_functions
+        if node.name == "validate_validator_cli_independently"
+    ]
+    independent_structural_verifiers = [
+        node
+        for node in top_level_functions
+        if node.name == "_validate_validator_cli_structure_independently"
+    ]
+    if (
+        len({node.name for node in top_level_functions}) != len(top_level_functions)
+        or len(independent_verifiers) != 1
+        or len(independent_structural_verifiers) != 1
+    ):
+        fail("Hostile fixture top-level function inventory differs.")
+    inventory_functions = [
+        node
+        for node in top_level_functions
+        if node.name
+        not in {
+            "validate_validator_cli_independently",
+            "_validate_validator_cli_structure_independently",
+        }
+    ]
+    main_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "main"
+    ]
+    main = main_functions[0] if len(main_functions) == 1 else None
+    protected_name = "test_failed_bootstrap_quarantine_contract"
+    failed_bootstrap_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == protected_name
+    ]
+    if (
+        not isinstance(main, ast.FunctionDef)
+        or main.decorator_list
+        or len(tree.body) < 2
+        or tree.body[-2] is not main
+        or len(failed_bootstrap_functions) != 1
+        or not isinstance(failed_bootstrap_functions[0], ast.FunctionDef)
+        or failed_bootstrap_functions[0].decorator_list
+    ):
+        fail("Failed-bootstrap hostile fixture or acceptance main is absent.")
+    failed_bootstrap = failed_bootstrap_functions[0]
+    source_lines = source.splitlines(keepends=True)
+    function_inventory_parts: list[str] = []
+    for function in inventory_functions:
+        function_source = "".join(
+            source_lines[function.lineno - 1 : function.end_lineno]
+        )
+        function_inventory_parts.extend(
+            (
+                function.name,
+                "\0",
+                str(len(function_source.encode("utf-8"))),
+                "\0",
+                function_source,
+                "\0",
+            )
+        )
+    function_inventory_source = "".join(function_inventory_parts)
+    if (
+        hashlib.sha256(function_inventory_source.encode("utf-8")).hexdigest()
+        != CONTRACT_TEST_FUNCTION_INVENTORY_SHA256
+    ):
+        fail("Hostile fixture top-level function source inventory differs.")
+    independent_verifier = independent_verifiers[0]
+    independent_verifier_source = "".join(
+        source_lines[
+            independent_verifier.lineno - 1 : independent_verifier.end_lineno
+        ]
+    )
+    if (
+        hashlib.sha256(independent_verifier_source.encode("utf-8")).hexdigest()
+        != CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256
+    ):
+        fail("Hostile fixture independent verifier source seal differs.")
+    failed_bootstrap_source = "".join(
+        source_lines[failed_bootstrap.lineno - 1 : failed_bootstrap.end_lineno]
+    )
+    if (
+        hashlib.sha256(failed_bootstrap_source.encode("utf-8")).hexdigest()
+        != FAILED_BOOTSTRAP_TEST_SHA256
+    ):
+        fail("Failed-bootstrap hostile fixture exact source seal differs.")
+    main_source = "".join(source_lines[main.lineno - 1 : main.end_lineno])
+    if (
+        hashlib.sha256(main_source.encode("utf-8")).hexdigest()
+        != "d8f1ed651c243b911dab65827c8c12e6201b60c9541f6b1d1c3c25e194d65d71"
+    ):
+        fail("Hostile fixture main exact source seal differs.")
+    module_startup_nodes = [
+        node
+        for node in tree.body[:-2]
+        if not isinstance(node, ast.FunctionDef)
+    ]
+    module_startup_source = "".join(
+        "".join(source_lines[node.lineno - 1 : node.end_lineno])
+        for node in module_startup_nodes
+    )
+    if (
+        hashlib.sha256(module_startup_source.encode("utf-8")).hexdigest()
+        != "f051ee325c09041ba34ebccdd73afcaf197a6a4a28fb715dec87fa43e845740b"
+    ):
+        fail("Hostile fixture module-startup source seal differs.")
+    if any(
+        isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef))
+        for node in tree.body
+    ):
+        fail("Hostile fixture module-startup definition inventory differs.")
+    expected_decorators = {
+        "environment": [
+            "Attribute(value=Name(id='contextlib', ctx=Load()), "
+            "attr='contextmanager', ctx=Load())"
+        ],
+        "process_umask": [
+            "Attribute(value=Name(id='contextlib', ctx=Load()), "
+            "attr='contextmanager', ctx=Load())"
+        ],
+    }
+    expected_defaults = {
+        "expect_render_error": [
+            "Constant(value=None)",
+            "BinOp(left=Constant(value='1'), op=Mult(), right=Constant(value=40))",
+        ],
+    }
+    observed_special_definitions = {
+        name: 0 for name in {*expected_decorators, *expected_defaults}
+    }
+    for function in (
+        node for node in tree.body if isinstance(node, ast.FunctionDef)
+    ):
+        decorators = [
+            ast.dump(node, include_attributes=False)
+            for node in function.decorator_list
+        ]
+        defaults = [
+            ast.dump(node, include_attributes=False)
+            for node in (
+                *function.args.defaults,
+                *(node for node in function.args.kw_defaults if node is not None),
+            )
+        ]
+        if (
+            decorators != expected_decorators.get(function.name, [])
+            or defaults != expected_defaults.get(function.name, [])
+            or getattr(function, "type_params", [])
+        ):
+            fail("Hostile fixture module-startup definition metadata differs.")
+        if function.name in observed_special_definitions:
+            observed_special_definitions[function.name] += 1
+    if any(count != 1 for count in observed_special_definitions.values()):
+        fail("Hostile fixture module-startup definition inventory differs.")
+    if (
+        main.args.posonlyargs
+        or main.args.args
+        or main.args.vararg is not None
+        or main.args.kwonlyargs
+        or main.args.kwarg is not None
+        or main.args.defaults
+        or main.args.kw_defaults
+    ):
+        fail("Hostile fixture main argument contract differs.")
+
+    def call_name(node: ast.Call) -> str | None:
+        if isinstance(node.func, ast.Name):
+            return node.func.id
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            return f"{node.func.value.id}.{node.func.attr}"
+        return None
+
+    top_level_exits = []
+    validator_preflights = []
+    independent_validator_preflights = []
+    trusted_validator_capture_line = None
+    validator_assignment_line = None
+    fixture_assignment_lines = []
+    for statement in tree.body[:-1]:
+        if isinstance(statement, ast.Raise):
+            top_level_exits.append(statement)
+        if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+            name = call_name(statement.value)
+            if name in {"exit", "quit", "sys.exit", "os._exit"}:
+                top_level_exits.append(statement)
+            if name == "require_exact_validator_result":
+                validator_preflights.append(statement)
+            if name == "validate_validator_cli_independently":
+                independent_validator_preflights.append(statement)
+        if isinstance(statement, ast.Assign):
+            assigned_names = {
+                child.id
+                for target in statement.targets
+                for child in ast.walk(target)
+                if isinstance(child, ast.Name)
+            }
+            if assigned_names == {"TRUSTED_VALIDATOR_BYTES", "TRUSTED_VALIDATOR_SOURCE"}:
+                trusted_validator_capture_line = statement.lineno
+        if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "VALIDATOR"
+            for target in statement.targets
+        ):
+            validator_assignment_line = statement.lineno
+        if isinstance(statement, ast.Assign) and any(
+            isinstance(target, ast.Name)
+            and target.id
+            in {
+                "RENDER",
+                "THEME",
+                "ROTATE",
+                "UPSTREAM",
+                "VALIDATOR",
+                "AUTHENTICATION",
+                "CONNECT_FIXTURE",
+                "PRODUCER_PROBE",
+                "PUBLIC_BRANDING",
+            }
+            for target in statement.targets
+        ):
+            fixture_assignment_lines.append(statement.lineno)
+    if (
+        top_level_exits
+        or len(validator_preflights) != 1
+        or len(independent_validator_preflights) != 1
+        or trusted_validator_capture_line is None
+        or validator_assignment_line is None
+        or not fixture_assignment_lines
+        or not (
+            trusted_validator_capture_line
+            < independent_validator_preflights[0].lineno
+            < validator_preflights[0].lineno
+            < min(fixture_assignment_lines)
+            <= validator_assignment_line
+        )
+    ):
+        fail("Hostile fixture validator preflight can exit early or is not live.")
+    validator_assignment = next(
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "VALIDATOR"
+            for target in statement.targets
+        )
+    )
+    if (
+        not isinstance(validator_assignment.value, ast.Call)
+        or call_name(validator_assignment.value) != "module_from_source"
+        or len(validator_assignment.value.args) != 3
+        or not isinstance(validator_assignment.value.args[2], ast.Name)
+        or validator_assignment.value.args[2].id != "TRUSTED_VALIDATOR_BYTES"
+    ):
+        fail("Hostile fixture imports a validator outside the captured source boundary.")
+
+    protected_bindings = {protected_name}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node.name in protected_bindings
+            and node not in {failed_bootstrap, main}
+        ):
+            fail("Failed-bootstrap hostile fixture binding inventory differs.")
+        if (
+            isinstance(node, ast.Name)
+            and node.id in protected_bindings
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            fail("Failed-bootstrap hostile fixture binding inventory differs.")
+        if (
+            isinstance(node, ast.arg)
+            and node.arg in protected_bindings
+        ):
+            fail("Failed-bootstrap hostile fixture binding inventory differs.")
+        if isinstance(node, ast.alias):
+            bound_name = node.asname or node.name.split(".", 1)[0]
+            if bound_name in protected_bindings:
+                fail("Failed-bootstrap hostile fixture binding inventory differs.")
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and protected_bindings.intersection(
+            node.names
+        ):
+            fail("Failed-bootstrap hostile fixture binding inventory differs.")
+        if (
+            isinstance(node, ast.ExceptHandler)
+            and node.name in protected_bindings
+        ):
+            fail("Failed-bootstrap hostile fixture binding inventory differs.")
+        if (
+            isinstance(node, (ast.MatchAs, ast.MatchStar))
+            and node.name in protected_bindings
+        ):
+            fail("Failed-bootstrap hostile fixture binding inventory differs.")
+        if (
+            isinstance(node, ast.MatchMapping)
+            and node.rest in protected_bindings
+        ):
+            fail("Failed-bootstrap hostile fixture binding inventory differs.")
+
+    failed_call_statements = [
+        statement
+        for statement in main.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == protected_name
+        and not statement.value.args
+        and not statement.value.keywords
+    ]
+    failed_calls = [
+        node
+        for node in ast.walk(main)
+        if isinstance(node, ast.Call) and call_name(node) == protected_name
+    ]
+    if (
+        len(failed_call_statements) != 1
+        or len(failed_calls) != 1
+        or len(main.body) < 3
+        or main.body[0] is not failed_call_statements[0]
+    ):
+        fail("Failed-bootstrap hostile fixture call inventory differs.")
+    success_statement = main.body[-2]
+    return_statement = main.body[-1]
+    if (
+        not isinstance(success_statement, ast.Expr)
+        or not isinstance(success_statement.value, ast.Call)
+        or not isinstance(success_statement.value.func, ast.Name)
+        or success_statement.value.func.id != "print"
+        or len(success_statement.value.args) != 1
+        or success_statement.value.keywords
+        or not isinstance(success_statement.value.args[0], ast.Constant)
+        or success_statement.value.args[0].value
+        != "Configuration and theme hostile fixtures passed."
+        or not isinstance(return_statement, ast.Return)
+        or not isinstance(return_statement.value, ast.Constant)
+        or return_statement.value.value != 0
+    ):
+        fail("Failed-bootstrap hostile fixture terminal acceptance differs.")
+    guard = tree.body[-1]
+    if (
+        not isinstance(guard, ast.If)
+        or not isinstance(guard.test, ast.Compare)
+        or not isinstance(guard.test.left, ast.Name)
+        or guard.test.left.id != "__name__"
+        or len(guard.test.ops) != 1
+        or not isinstance(guard.test.ops[0], ast.Eq)
+        or len(guard.test.comparators) != 1
+        or not isinstance(guard.test.comparators[0], ast.Constant)
+        or guard.test.comparators[0].value != "__main__"
+        or len(guard.body) != 1
+        or guard.orelse
+        or not isinstance(guard.body[0], ast.Raise)
+        or not isinstance(guard.body[0].exc, ast.Call)
+        or not isinstance(guard.body[0].exc.func, ast.Name)
+        or guard.body[0].exc.func.id != "SystemExit"
+        or len(guard.body[0].exc.args) != 1
+        or not isinstance(guard.body[0].exc.args[0], ast.Call)
+        or not isinstance(guard.body[0].exc.args[0].func, ast.Name)
+        or guard.body[0].exc.args[0].func.id != "main"
+        or guard.body[0].exc.args[0].args
+        or guard.body[0].exc.args[0].keywords
+    ):
+        fail("Hostile fixture executable main guard differs.")
+    protected_loads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id == protected_name
+    ]
+    if protected_loads != [failed_call_statements[0].value.func]:
+        fail("Failed-bootstrap hostile fixture callable load inventory differs.")
 
 
 def ruby_executable_contract_source(source: str) -> str:
@@ -4847,6 +5717,7 @@ def validate_secrets_and_workflows() -> None:
         text_files[".github/CODEOWNERS"],
         text_files[REVIEW_AUTHORITY_WORKFLOW_PATH],
     )
+    validate_python_acceptance_launchers(text_files)
     trusted_marker = "  trusted-online-pins:"
     if trusted_marker not in validation_workflow:
         fail("Trusted authenticated online pin gate is absent.")
@@ -5313,7 +6184,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     ):
         fail("Deployment recovery claims or relies on an unproved launcher stop.")
     trust_cmp = host_deploy.index('cmp -s -- "${trusted_archive}" "${quarantine}"')
-    candidate_validation = host_deploy.index('python3 "${candidate}/scripts/validate-repository.py"')
+    candidate_validation = host_deploy.index('python3 -I -S -B "${candidate}/scripts/validate-repository.py"')
     if trust_cmp >= candidate_validation:
         fail("Candidate-controlled source can execute before canonical-main byte comparison.")
     launcher_body = re.search(r"(?ms)^run_launcher\(\) \{.*?^\}", host_deploy)
@@ -6216,9 +7087,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     operation_lock_fixture = read("scripts/test-host-operation-lock.py")
     if (
         hashlib.sha256(failed_bootstrap_quarantine.encode("utf-8")).hexdigest()
-        != "7a18ed6f5f522dcd090663f036d65b8af3d9b42e7745e68f191b578c0b1b5de1"
+        != "1792bf339b590c98a9bb5423fa0fd539e29c20c58dd5381be9670bdf0fcdde57"
         or hashlib.sha256(control_upgrade.encode("utf-8")).hexdigest()
-        != "96b27fb1f9f6e0ce45d4e5c1ab146aad3ddfe673793bd7c41a9fe38807902a2b"
+        != "041168ece778a3e60d001b82707216a2b5c785bd3e1ece9d12c0f6e6ba3c91c4"
     ):
         fail("Failed-bootstrap production control source seal differs.")
     if operator_sudoers.splitlines() != [
@@ -6875,15 +7746,28 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
             'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
             'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
+            'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
+            'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
+            'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
             'rev-parse --verify "${requested_commit}^1"',
             'rev-list --parents -n 1 "${requested_commit}"',
+            'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
+            'rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}"',
             'rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1"',
             'rev-list --parents -n 1 "${reviewed_acme_reload_privacy_launcher_child_commit}"',
             'rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1"',
             'rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}"',
             'rev-parse --verify "${reviewed_recovery_commit}^1"',
             'rev-list --parents -n 1 "${reviewed_recovery_commit}"',
+            'acme_material_repair_expected_paths=(',
+            'acme_material_review_authority_expected_paths=(',
+            'acme_material_current_expected_paths=(',
+            'acme_material_expected_paths=(',
             'diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}"',
+            'GIT_NO_REPLACE_OBJECTS=1',
+            '${invocation_source_root}/.git/commondir',
+            '${invocation_source_root}/.git/info/grafts',
+            'actual_path_output="$(git -C "${invocation_source_root}" diff-tree',
             '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
             'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
             'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -6913,14 +7797,23 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
             'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
             'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
+            'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
+            'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
+            'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
             'rev-parse --verify "${current}^1"',
             'rev-list --parents -n 1 "${current}"',
+            'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
+            'rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}"',
             'rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1"',
             'rev-list --parents -n 1 "${reviewed_acme_reload_privacy_launcher_child_commit}"',
             'rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1"',
             'rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}"',
             'rev-parse --verify "${reviewed_recovery_commit}^1"',
             'rev-list --parents -n 1 "${reviewed_recovery_commit}"',
+            'GIT_NO_REPLACE_OBJECTS=1',
+            '${source_root}/.git/commondir',
+            '${source_root}/.git/info/grafts',
+            'actual_path_output="$(git -C "${source_root}" diff-tree',
             'legacy_expected_paths=(',
             ".github/workflows/deploy-forums.yml",
             "config/host-control-manifest.v1.json",
@@ -6937,6 +7830,10 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'quarantine_output_expected_paths=(',
             'acme_reload_privacy_expected_paths=(',
             'acme_webroot_expected_paths=(',
+            'acme_material_repair_expected_paths=(',
+            'acme_material_review_authority_expected_paths=(',
+            'acme_material_current_expected_paths=(',
+            'acme_material_expected_paths=(',
             'object_pairs_hook=reject_duplicate',
             'metadata.st_uid != 0',
             'metadata.st_gid != 0',
@@ -6944,19 +7841,42 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "list(itertools.islice(evidence.iterdir(), 4097))",
             "validate_quarantine_environment() {",
             "read_quarantine_identity() {",
+            "def observe_authority(document, candidate=None):",
+            '"${standalone_root}" "${recovery_root}" "${deployment_journal}"',
+            "type(mutation_sha) is str",
+            'document.get("standalonePath") == str(standalone)',
+            'document.get("quarantinePath") == str(recovery / f"{failed}-{mutation_sha}")',
+            'document.get("mutationEvidencePath") == str(',
             'if [[ ${1:-} == --upgrade-preflight ]]',
             "QUARANTINE FAILED MOCHIRII FORUMS BOOTSTRAP",
             "assert-held --locks primary,media",
             "run --locks primary,media",
             "# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
             'phase_order = {"prepared": 0, "runtime-quarantined": 1, "clean-boundary": 2, "authority-retired": 3}',
-            "decode_canonical(pending, \"failed-bootstrap pending journal\")",
+            "def observe_pending_publication(document, alias, staged):",
+            "def require_mutation_authority(allowed):",
+            "def validate_prepared_runtime(document):",
+            "def validate_quarantined_runtime(document):",
+            "def validate_clean_runtime(document):",
+            "def preflight_pending_staging():",
+            "def preflight_terminal_staging():",
             "def exact_inventory(path, maximum, label):",
             "list(itertools.islice(path.iterdir(), maximum + 1))",
-            "decode_canonical(mutation, \"deployment mutation journal\", mutation_sha)",
-            "os.rename(standalone, quarantine)",
-            "os.rename(old_ssl, new_ssl)",
-            "os.rename(mutation, mutation_evidence)",
+            "exact_authority(mutation, \"deployment mutation journal\", {1})",
+            "def persist_directory(path):",
+            "def durable_directory_move(source, destination):",
+            "def finish_publication_update(path, staging, previous_raw, replacement_raw, label):",
+            "def finish_mutation_evidence_alias(source, destination, expected_sha):",
+            "def link_unnamed_staging(descriptor, staging):",
+            'raise SystemExit("failed-bootstrap terminal publication staging is unsafe")',
+            "os.O_RDWR | os.O_TMPFILE | os.O_NOFOLLOW",
+            "link_unnamed_staging(descriptor, staging)",
+            "durable_directory_move(standalone, quarantine)",
+            "durable_directory_move(old_ssl, new_ssl)",
+            "os.link(mutation, mutation_evidence, follow_symlinks=False)",
+            "fsync_directory(mutation_evidence.parent)",
+            "mutation.unlink()",
+            "fsync_directory(mutation.parent)",
             'expected_inventory = {"ssl"} if state["sslPresent"] else set()',
             'validate_state(state, {"prepared"})',
             "validate_state(state, {phase})",
@@ -6982,11 +7902,32 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         if len(definitions) != 1 or definitions[0].group(0) != marker:
             fail(f"{label} function is absent, duplicated, or noncanonical.")
         start = definitions[0].start()
-        try:
-            end = script_source.index("\n}\n", start) + 3
-        except ValueError:
-            fail(f"{label} function is unterminated.")
-        return script_source[start:end]
+        cursor = start
+        heredoc: tuple[str, bool] | None = None
+        heredoc_pattern = re.compile(
+            r"(?<!<)<<(?P<strip>-)?[ \t]*(?:'(?P<single>[^']+)'|\"(?P<double>[^\"]+)\"|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))"
+        )
+        while cursor < len(script_source):
+            line_end = script_source.find("\n", cursor)
+            if line_end < 0:
+                fail(f"{label} function is unterminated.")
+            line_end += 1
+            line = script_source[cursor:line_end]
+            body = line[:-1]
+            if heredoc is not None:
+                delimiter, strip_tabs = heredoc
+                candidate = body.lstrip("\t") if strip_tabs else body
+                if candidate == delimiter:
+                    heredoc = None
+            else:
+                if line == "}\n":
+                    return script_source[start:line_end]
+                match = heredoc_pattern.search(body)
+                if match is not None:
+                    delimiter = match.group("single") or match.group("double") or match.group("bare")
+                    heredoc = (delimiter, match.group("strip") is not None)
+            cursor = line_end
+        fail(f"{label} function is unterminated.")
 
     def require_exact_live_line(block: str, line: str, label: str) -> None:
         if block.splitlines().count(line) != 1:
@@ -7037,27 +7978,50 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "Failed-bootstrap retained-state lineage call",
         ),
         (
+            quarantine_state,
+            '  terminal_staging="${evidence_root}/.${failed}-${journal_sha}-failed-bootstrap-quarantine.json.publish"',
+            "Failed-bootstrap retained-state terminal staging derivation",
+        ),
+        (
             quarantine_preflight,
             '  readarray -t preflight < <(validate_failed_bootstrap_state "$2") || fail "Failed-bootstrap upgrade preflight rejected the retained state."',
             "Failed-bootstrap upgrade-preflight state call",
         ),
         (
             quarantine_recovery,
-            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs."',
-            "Failed-bootstrap pending-recovery lineage call",
-        ),
-        (
-            quarantine_recovery,
             '  readarray -t preflight < <(validate_failed_bootstrap_state "${current_commit}") || fail "Failed-bootstrap quarantine rejected the retained state."',
             "Failed-bootstrap active-journal state call",
         ),
-        (
-            quarantine_recovery,
-            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs."',
-            "Failed-bootstrap terminal-recovery lineage call",
-        ),
     ):
         require_exact_live_line(block, line, label)
+
+    for label, ordered_lines in (
+        (
+            "pending",
+            (
+                '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs before identity repair."',
+                '  readarray -t recovery_identity < <(read_quarantine_identity pending "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap pending recovery identity was rejected."',
+                '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs after identity repair."',
+            ),
+        ),
+        (
+            "terminal",
+            (
+                '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs before identity repair."',
+                '  readarray -t recovery_identity < <(read_quarantine_identity terminal "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap terminal recovery identity was rejected."',
+                '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs after identity repair."',
+            ),
+        ),
+    ):
+        for line in ordered_lines:
+            require_exact_live_line(
+                quarantine_recovery,
+                line,
+                f"Failed-bootstrap {label} recovery authority line",
+            )
+        offsets = tuple(quarantine_recovery.index(line) for line in ordered_lines)
+        if offsets != tuple(sorted(offsets)):
+            fail(f"Failed-bootstrap {label} recovery can mutate before source authority.")
 
     upgrade_bind = exact_shell_function(
         control_upgrade,
@@ -7093,18 +8057,18 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         control_upgrade.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."'):
     ]
     exact_section_sha256 = {
-        "quarantine-lineage": "5664cab82a15c6e1bebf567a16f0537347c9022b27718746b3393aeee1cfb4ce",
-        "quarantine-state": "df91f3b80c769445be74dde7ad48ddbc2fc7ac364178a1bfcea8a802e56a6b3f",
-        "quarantine-identity": "0fbfc024186b764aeda3f06972706fdc8e0a3158b9e0c2be19c8434c3c0b5ba2",
+        "quarantine-lineage": "f560af0212226cd5499191e7ad91b152e7e4ed3ad3fc0bb490818159ef81b0dc",
+        "quarantine-state": "c81b2fc822775b576c4f408a5f49e079923774e08569e2c43d42a9ca5db2bcc1",
+        "quarantine-identity": "8ea0576bac3f50f2ea87ff993d9e1f171c23940dba1dd6dd5b6bbe9c23d8e4b3",
         "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
-        "quarantine-recovery": "b376df77881d87ecfb32b1ccfa57b64c1cc9aad5bccd0f01084c9088c3582c59",
-        "upgrade-selector": "bc916459809376bf402e4637b607e1b7888ba12b1377ec792007dfe4556851cf",
-        "upgrade-path-validator": "fb0c43523264cf31afcc0d8122dc9500d43cab249aa7d82d6d68982f98a5a36e",
-        "upgrade-binder": "dae6ab03616bf9df78d91f869e49836dbb7e827b6737b7f7d9c6a57aa2a377c8",
+        "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
+        "upgrade-selector": "544ba5ce5a8dbb9e2f1772eafa0d6aa9b6de06bf683d58aedc7314d4eb30bf93",
+        "upgrade-path-validator": "c49fb1f5da2906d58642819c6a8bcdd81c48d419963bb321a05691e90b652896",
+        "upgrade-binder": "7b9a240168ec90ac2ea3f95e42e29236e9a6396d95d421801912334eef4a983b",
         "upgrade-exception": "6ea0d4ff36175b26333ce78608d1f12092da953a192170897c33340411f5dbe3",
         "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
         "upgrade-signal": "e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f",
-        "upgrade-main": "330c799924dc01eb499fe639ed9e4f99606f6b64dcba352c7d2de6a84bf56488",
+        "upgrade-main": "ce155567c0b81494cf94f8a9a0b52c981d28b50c30215d460ec93c85cfd2e12a",
     }
     exact_sections = {
         "quarantine-lineage": quarantine_lineage,
@@ -7168,34 +8132,193 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "shutil.rmtree",
             "rm -rf",
             "find ${quarantine} -delete",
-            "mutation.unlink()",
             "mutation_evidence.unlink()",
             "quarantine.rmdir()",
         )
     ):
         fail("Failed-bootstrap quarantine gained a destructive retained-evidence path.")
+    if failed_bootstrap_quarantine.count("mutation.unlink()") != 1:
+        fail("Failed-bootstrap mutation authority retirement count differs.")
     if "{entry.name for entry in standalone.iterdir()}" in failed_bootstrap_quarantine:
         fail("Failed-bootstrap clean-boundary inventory is not bounded.")
     if (
         failed_bootstrap_quarantine.count("# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION") != 1
         or failed_bootstrap_quarantine.count("# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION") != 1
-        or failed_bootstrap_quarantine.count("pending.unlink()") != 2
+        or failed_bootstrap_quarantine.count("pending.unlink()") != 3
     ):
         fail("Failed-bootstrap quarantine transaction or exact journal retirement count differs.")
+    transaction_match = re.search(
+        r"(?ms)^# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION\n(.*?)^# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION$",
+        failed_bootstrap_quarantine,
+    )
+    if transaction_match is None:
+        fail("Failed-bootstrap transaction source could not be extracted exactly.")
+    transaction = transaction_match.group(1)
+
+    def require_durable_order(block: str, ordered: tuple[str, ...], label: str) -> None:
+        normalized = [line.strip() for line in block.splitlines()]
+        if any(normalized.count(line.strip()) != 1 for line in ordered):
+            fail(f"Failed-bootstrap {label} durability statement inventory differs.")
+        offsets = tuple(block.index(line) for line in ordered)
+        if offsets != tuple(sorted(offsets)):
+            fail(f"Failed-bootstrap {label} durability order differs.")
+
+    move_start = transaction.index("def durable_directory_move(source, destination):")
+    move_end = transaction.index("\ndef exact_directory", move_start)
+    require_durable_order(
+        transaction[move_start:move_end],
+        (
+            "os.rename(source, destination)",
+            "fsync_directory(destination.parent)",
+            "fsync_directory(source.parent)",
+        ),
+        "directory move",
+    )
+    persist_start = transaction.index("def persist_directory(path):")
+    persist_end = transaction.index("\ndef durable_directory_move", persist_start)
+    require_durable_order(
+        transaction[persist_start:persist_end],
+        ("fsync_directory(path)", "fsync_directory(path.parent)"),
+        "directory metadata",
+    )
+    transaction_retirement_start = transaction.index(
+        "os.link(mutation, mutation_evidence, follow_symlinks=False)"
+    )
+    transaction_retirement_end = transaction.index(
+        "    state = reconcile_pending_publication(\n"
+        "        pending_raw, pending_base, pending_alias, pending_staged\n"
+        "    )",
+        transaction_retirement_start,
+    )
+    require_durable_order(
+        transaction[transaction_retirement_start:transaction_retirement_end],
+        (
+            "os.link(mutation, mutation_evidence, follow_symlinks=False)",
+            "fsync_directory(mutation_evidence.parent)",
+            "mutation.unlink()",
+            "fsync_directory(mutation.parent)",
+        ),
+        "mutation retirement",
+    )
+    preflight_start = transaction.index("def preflight_pending_staging():")
+    preflight_end = transaction.index("\nexact_directory(shared_root", preflight_start)
+    publication_staging_preflight = transaction[preflight_start:preflight_end]
+    require_text(
+        publication_staging_preflight,
+        [
+            'if not path_exists(staging, "failed-bootstrap pending publication staging"):',
+            'if path_exists(pending, "failed-bootstrap pending journal"):',
+            'if path_exists(terminal, "failed-bootstrap terminal evidence"):',
+            'validate_state(staging_document, {"prepared"})',
+            "validate_prepared_runtime(staging_document)",
+            'if not path_exists(pending, "failed-bootstrap pending journal"):',
+            "pending_candidate = observe_pending_publication(",
+            'validate_state(pending_document, {"authority-retired"})',
+            "if pending_alias is not None or pending_candidate is not None:",
+            "if staging_document != expected:",
+            "observe_recovery_root()",
+            "validate_completed_runtime(pending_document)",
+        ],
+        "failed-bootstrap publication staging relational preflight",
+    )
+    transaction_live = transaction[preflight_end:]
+    pending_staging_call = transaction_live.index(
+        "pending_staging_replay = preflight_pending_staging()"
+    )
+    terminal_staging_call = transaction_live.index(
+        "terminal_staging_replay = preflight_terminal_staging()"
+    )
+    first_transaction_mutation = min(
+        transaction_live.index("require_recovery_root(True)"),
+        transaction_live.index("durable_directory_move(standalone, quarantine)"),
+    )
+    if not pending_staging_call < terminal_staging_call < first_transaction_mutation:
+        fail("Failed-bootstrap reserved staging is not rejected before mutation.")
+    terminal_live_start = transaction_live.index(
+        'if path_exists(terminal, "failed-bootstrap terminal evidence"):'
+    )
+    terminal_live_end = transaction_live.index(
+        "if terminal_staging_replay is not None:", terminal_live_start
+    )
+    terminal_live = transaction_live[terminal_live_start:terminal_live_end]
+    require_durable_order(
+        terminal_live,
+        (
+            "validate_completed_runtime(document)",
+            "require_recovery_root(False)",
+            "fsync_directory(terminal.parent)",
+            "finish_publication_alias(",
+            "fsync_directory(pending.parent)",
+        ),
+        "terminal replay authority",
+    )
+    pending_live_start = transaction_live.index("pending_raw = None")
+    pending_live_end = transaction_live.index(
+        "\nelse:\n    require_mutation_authority", pending_live_start
+    )
+    pending_live = transaction_live[pending_live_start:pending_live_end]
+    require_durable_order(
+        pending_live,
+        (
+            "pending_candidate = validate_pending_publication_runtime(",
+            "require_recovery_root(False)",
+            "fsync_directory(pending.parent)",
+        ),
+        "pending replay authority",
+    )
+    initial_start = pending_live_end
+    initial_end = transaction_live.index("\ndef advance(phase):", initial_start)
+    initial = transaction_live[initial_start:initial_end]
+    require_durable_order(
+        initial,
+        (
+            "validate_prepared_runtime(state)",
+            "require_recovery_root(True)",
+            "publish(pending, state, True)",
+        ),
+        "initial runtime authority",
+    )
+    require_durable_order(
+        transaction_live,
+        (
+            "prepared_location = validate_prepared_replay_runtime(state)",
+            "durable_directory_move(standalone, quarantine)",
+            'validate_runtime_quarantined_replay(state)',
+            'standalone.mkdir(mode=state["standaloneMode"])',
+            "fsync_directory(new_ssl.parent)",
+            "fsync_directory(old_ssl.parent)",
+        ),
+        "runtime replay validation",
+    )
     quarantine_order = tuple(
         failed_bootstrap_quarantine.index(value)
         for value in (
             "# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
             "publish(pending, state, True)",
-            "os.rename(standalone, quarantine)",
+            "durable_directory_move(standalone, quarantine)",
             "standalone.mkdir(mode=state[\"standaloneMode\"])",
-            "os.rename(mutation, mutation_evidence)",
+            "durable_directory_move(old_ssl, new_ssl)",
+            "os.link(mutation, mutation_evidence, follow_symlinks=False)",
             "publish(terminal, terminal_document, True)",
             "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
         )
     )
     if quarantine_order != tuple(sorted(quarantine_order)):
         fail("Failed-bootstrap quarantine can retire authority before durable runtime preservation.")
+    mutation_retirement = failed_bootstrap_quarantine.index(
+        "os.link(mutation, mutation_evidence, follow_symlinks=False)"
+    )
+    mutation_retirement_order = tuple(
+        failed_bootstrap_quarantine.index(value, mutation_retirement)
+        for value in (
+            "os.link(mutation, mutation_evidence, follow_symlinks=False)",
+            "fsync_directory(mutation_evidence.parent)",
+            "mutation.unlink()",
+            "fsync_directory(mutation.parent)",
+        )
+    )
+    if mutation_retirement_order != tuple(sorted(mutation_retirement_order)):
+        fail("Failed-bootstrap mutation evidence can retire its source before destination durability.")
     upgrade_exception_gate = control_upgrade.index(
         'if [[ -e ${state_root}/deployment-mutation.json || -L ${state_root}/deployment-mutation.json ]]'
     )
@@ -7209,7 +8332,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     if not upgrade_exception_gate < upgrade_first_mutation < upgrade_seal < upgrade_recovery_readback < upgrade_terminal_verifier:
         fail("Failed-bootstrap host-control exception can bypass pre-mutation or terminal verification.")
     candidate_validation = control_upgrade.index(
-        'bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'
+        'bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py"'
     )
     predecessor_binding = control_upgrade.index(
         'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
@@ -7488,6 +8611,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     preparation = read("scripts/prepare-media-certificate.sh")
     certificate_installer = read("scripts/install-media-certificate-renewal.sh")
     contract_tests = read("scripts/test-contracts.py")
+    validate_contract_test_acceptance_chain(contract_tests)
     provider_tls_docs = read("docs/operations/PROVIDER-DNS-TLS.md")
     require_text(
         rotation,
@@ -7978,6 +9102,7 @@ def validate_runtime_rails_execution_contract() -> None:
 
 def main() -> int:
     global ARCHIVE_MODE, ROOT
+    validate_validator_cli_acceptance_chain(Path(__file__).read_text(encoding="utf-8"))
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive-root", type=Path)
     args = parser.parse_args()

@@ -17,9 +17,10 @@ jobs:
   repository-contract:
     name: repository-contract
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256: 49ddf0f7cea78cc8bd6f8656fb0a16bbdc27e6b58dc2bb0a4ecda27c4b77e6ac
     steps:
       - name: Check out exact event head without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,6 +38,22 @@ jobs:
       - name: Run fail-closed offline repository contract
         shell: pwsh
         run: ./scripts/check-repository.ps1
+
+      - name: Run required root Linux quarantine transaction contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          validator_sha256="$(sha256sum -- scripts/validate-repository.py | awk '{print $1}')"
+          contract_sha256="$(sha256sum -- scripts/test-contracts.py | awk '{print $1}')"
+          [[ "$validator_sha256" == d7b359b5540ba0cd8bd003efb8171f95431bd39376b36fbcf157ba491593e3a4 ]]
+          [[ "$contract_sha256" == ef22482ebf77b46b779638e255f8e235ee27b81463b62065ded425c32d01eada ]]
+          observed_python_acceptance_root_sha256="$(printf 'mochirii-forums-python-acceptance-root-v1\0%s\0%s\n' "$validator_sha256" "$contract_sha256" | sha256sum | awk '{print $1}')"
+          [[ "$observed_python_acceptance_root_sha256" == "$MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256" ]]
+          sudo -n env -i \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            LC_ALL=C.UTF-8 \
+            /usr/bin/python3 -I -S -B scripts/test-contracts.py
 
   trusted-online-pins:
     name: trusted-online-pins

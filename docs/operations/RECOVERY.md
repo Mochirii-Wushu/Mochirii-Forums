@@ -658,6 +658,41 @@ different retained-runtime cause. It uses the same root-only,
 evidence-preserving quarantine and requires the next clean bootstrap to target
 the then-current canonical main.
 
+A seventh exact bootstrap-only exception covers the proved ACME
+certificate-material validation boundary. Failed release
+`81e5226e54246686ce0ef80051d4df2cd1b64c5e`, reviewed material repair
+`64e12c2344fbc04d44b10c495cf9651cac5ac0b8`, reviewed source-authority
+commit `af3540426051c94bf26e9661ac68ce8ee720f977`, and one canonical-main
+control/quarantine child must form an exact sole-parent chain. The material,
+source-authority, and recovery-child path segments are each checked separately
+against their exact three-, seven-, and eleven-path inventories. The cumulative
+changed paths from the failed release are only `.gitattributes`,
+`.github/CODEOWNERS`, `.github/workflows/open-reviewed-source-pr.yml`,
+`.github/workflows/validate-repository.yml`, `CONTRIBUTING.md`,
+`config/immutable-letsencrypt.fragment.yml`,
+`docs/adr/0001-clean-initialization-and-canonical-ownership.md`,
+`docs/operations/DEPLOYMENT.md`, `docs/operations/RECOVERY.md`,
+`scripts/check-repository.ps1`, `scripts/check-source-introduction.ps1`,
+`scripts/host-deploy.sh`, `scripts/quarantine-failed-bootstrap.sh`,
+`scripts/test-contracts.py`, `scripts/test-source-introduction.ps1`,
+`scripts/upgrade-host-control.sh`, and `scripts/validate-repository.py`.
+Selection by exact failed commit keeps this lineage separate from all earlier
+exceptions; the final child cannot be another descendant or a merge commit.
+The reviewed repair removes automatic forced reissuance and enforces one-way
+RSA-then-ECC issue, deterministic material validation, and installation with
+ordered cumulative chain, exact public-key algorithm, private diagnostic, and
+certificate/key identity checks. It neither authorizes an identical-byte retry
+nor claims another retained-runtime cause. It uses the same root-only,
+evidence-preserving quarantine and requires the next clean bootstrap to target
+the then-current canonical main.
+
+The acceptance boundary for that final child is external to the mutually
+editable validator and hostile fixture: every direct launcher pins the exact
+bytes, uses Python `-I -S -B`, and both entrypoints reject ambiguous startup
+state before shadowable imports. The required Linux workflow repeats those
+pins and executes the complete hostile fixture as root, binding the actual
+quarantine transaction rather than accepting a Windows-only or non-root run.
+
 ## Primary references
 
 - [Official Discourse backup and restore guidance](https://meta.discourse.org/t/create-download-and-restore-a-backup-of-your-discourse-database/122710)

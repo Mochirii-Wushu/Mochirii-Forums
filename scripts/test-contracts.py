@@ -3,6 +3,83 @@
 
 from __future__ import annotations
 
+import sys
+
+
+def _require_isolated_python() -> bool:
+    if (
+        sys.flags.isolated != 1
+        or sys.flags.no_site != 1
+        or sys.flags.dont_write_bytecode != 1
+        or getattr(sys.flags, "safe_path", False) is not True
+        or (
+            __name__ == "__main__"
+            and any(
+                name in sys.modules
+                for name in ("ast", "hashlib", "os", "pathlib", "site")
+            )
+        )
+    ):
+        raise SystemExit("Trusted Python startup boundary is unavailable.")
+    return True
+
+
+def _normalize_import_path(value: str) -> str:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise RuntimeError("Trusted Python import path is malformed.")
+    candidate = value.replace("\\", "/")
+    windows = (
+        len(candidate) >= 3
+        and candidate[0].isalpha()
+        and candidate[1] == ":"
+        and candidate[2] == "/"
+    )
+    if windows:
+        root = candidate[:3]
+        remainder = candidate[3:]
+    elif candidate.startswith("/"):
+        root = "/"
+        remainder = candidate[1:]
+    else:
+        raise RuntimeError("Trusted Python import path is not absolute.")
+    components = remainder.split("/") if remainder else []
+    if any(component in {"", ".", ".."} for component in components):
+        raise RuntimeError("Trusted Python import path is not lexical.")
+    normalized = root + "/".join(components)
+    return normalized.casefold() if windows else normalized
+
+
+def _restrict_import_path() -> bool:
+    trusted_prefixes: list[str] = []
+    for value in (sys.base_prefix, sys.exec_prefix):
+        try:
+            normalized = _normalize_import_path(value)
+        except RuntimeError:
+            raise SystemExit("Trusted Python import path is unavailable.") from None
+        if normalized and normalized not in trusted_prefixes:
+            trusted_prefixes.append(normalized)
+    accepted: list[str] = []
+    for entry in sys.path:
+        if not isinstance(entry, str) or not entry:
+            continue
+        try:
+            normalized = _normalize_import_path(entry)
+        except RuntimeError:
+            raise SystemExit("Trusted Python import path is unavailable.") from None
+        if any(
+            normalized == prefix or normalized.startswith(f"{prefix}/")
+            for prefix in trusted_prefixes
+        ):
+            accepted.append(entry)
+    if not accepted:
+        raise SystemExit("Trusted Python import path is unavailable.")
+    sys.path[:] = accepted
+    return True
+
+
+_PYTHON_STARTUP_RESTRICTED = _require_isolated_python()
+_IMPORT_PATH_RESTRICTED = _restrict_import_path()
+
 import contextlib
 import ast
 import base64
@@ -17,10 +94,10 @@ import shutil
 import signal
 import stat
 import subprocess
-import sys
 import tarfile
 import tempfile
 import time
+import types
 import urllib.error
 import urllib.request
 import zipfile
@@ -55,15 +132,564 @@ def module_from(relative: str, name: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {relative}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except SystemExit as error:
+        raise RuntimeError(f"{relative} exited during import") from error
     return module
 
 
+def module_from_source(relative: str, name: str, source: bytes):
+    path = ROOT / relative
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__package__ = ""
+    try:
+        exec(compile(source, str(path), "exec"), module.__dict__, module.__dict__)
+    except SystemExit as error:
+        raise RuntimeError(f"{relative} exited during import") from error
+    return module
+
+
+def read_trusted_source(path: Path) -> tuple[bytes, str]:
+    raw = path.read_bytes()
+    if not raw or raw.startswith(b"\xef\xbb\xbf") or b"\x00" in raw or b"\r" in raw or not raw.endswith(b"\n"):
+        raise RuntimeError("Trusted repository source shape differs.")
+    try:
+        source = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise RuntimeError("Trusted repository source encoding differs.") from error
+    if source.encode("utf-8") != raw:
+        raise RuntimeError("Trusted repository source round trip differs.")
+    return raw, source
+
+
+def require_exact_validator_result(completed: subprocess.CompletedProcess[bytes]) -> None:
+    expected_stdout = f"Repository source contract passed.{os.linesep}".encode("ascii")
+    if (
+        completed.returncode != 0
+        or completed.stdout != expected_stdout
+        or completed.stderr
+    ):
+        raise RuntimeError("Repository validator did not complete its exact acceptance chain.")
+
+
+def contract_test_function_inventory_sha256(source: str) -> str:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        raise RuntimeError("Hostile fixture function inventory source is invalid.") from error
+    all_functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    independent_verifiers = [
+        node
+        for node in all_functions
+        if node.name == "validate_validator_cli_independently"
+    ]
+    independent_structural_verifiers = [
+        node
+        for node in all_functions
+        if node.name == "_validate_validator_cli_structure_independently"
+    ]
+    if (
+        len({node.name for node in all_functions}) != len(all_functions)
+        or len(independent_verifiers) != 1
+        or len(independent_structural_verifiers) != 1
+    ):
+        raise RuntimeError("Hostile fixture function inventory is ambiguous.")
+    functions = [
+        node
+        for node in all_functions
+        if node.name
+        not in {
+            "validate_validator_cli_independently",
+            "_validate_validator_cli_structure_independently",
+        }
+    ]
+    source_lines = source.splitlines(keepends=True)
+    parts: list[str] = []
+    for function in functions:
+        function_source = "".join(
+            source_lines[function.lineno - 1 : function.end_lineno]
+        )
+        parts.extend(
+            (
+                function.name,
+                "\0",
+                str(len(function_source.encode("utf-8"))),
+                "\0",
+                function_source,
+                "\0",
+            )
+        )
+    return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
+
+
+def contract_test_function_sha256(source: str, name: str) -> str:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        raise RuntimeError("Hostile fixture function source is invalid.") from error
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    if len(functions) != 1:
+        raise RuntimeError("Hostile fixture function source is ambiguous.")
+    source_lines = source.splitlines(keepends=True)
+    function = functions[0]
+    function_source = "".join(source_lines[function.lineno - 1 : function.end_lineno])
+    return hashlib.sha256(function_source.encode("utf-8")).hexdigest()
+
+
+PYTHON_ACCEPTANCE_ROOT_PREFIX = b"mochirii-forums-python-acceptance-root-v1\0"
+PYTHON_ACCEPTANCE_ROOT_PATTERNS = {
+    ".github/workflows/validate-repository.yml": (
+        r"(?m)^      MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256: ([0-9a-f]{64})$"
+    ),
+    "scripts/check-repository.ps1": (
+        r"(?m)^\$expectedPythonAcceptanceRootSha256 = '([0-9a-f]{64})'$"
+    ),
+    "scripts/check-source-introduction.ps1": (
+        r"(?m)^\$expectedPythonAcceptanceRootSha256 = '([0-9a-f]{64})'$"
+    ),
+    "scripts/test-source-introduction.ps1": (
+        r"(?m)^\$expectedPythonAcceptanceRootSha256 = '([0-9a-f]{64})'$"
+    ),
+    "scripts/host-deploy.sh": (
+        r'(?m)^readonly repository_python_acceptance_root_sha256="([0-9a-f]{64})"$'
+    ),
+}
+
+
+def python_acceptance_root_sha256(validator_source: str, contract_source: str) -> str:
+    if not isinstance(validator_source, str) or not isinstance(contract_source, str):
+        raise RuntimeError("Trusted Python source inventory differs.")
+    material = (
+        PYTHON_ACCEPTANCE_ROOT_PREFIX
+        + hashlib.sha256(validator_source.encode("utf-8")).hexdigest().encode("ascii")
+        + b"\0"
+        + hashlib.sha256(contract_source.encode("utf-8")).hexdigest().encode("ascii")
+        + b"\n"
+    )
+    return hashlib.sha256(material).hexdigest()
+
+
+def validate_python_acceptance_root_independently(
+    validator_source: str,
+    contract_source: str,
+    consumer_sources: dict[str, str],
+) -> None:
+    expected = python_acceptance_root_sha256(validator_source, contract_source)
+    observed: list[str] = []
+    for relative, pattern in PYTHON_ACCEPTANCE_ROOT_PATTERNS.items():
+        source = consumer_sources.get(relative)
+        if not isinstance(source, str):
+            raise RuntimeError("Trusted Python acceptance-root consumer inventory differs.")
+        matches = re.findall(pattern, source)
+        if len(matches) != 1:
+            raise RuntimeError("Trusted Python acceptance-root binding differs.")
+        observed.append(matches[0])
+    if observed != [expected] * len(PYTHON_ACCEPTANCE_ROOT_PATTERNS):
+        raise RuntimeError("Trusted Python acceptance root differs.")
+
+
+def _validate_validator_cli_structure_independently(candidate_source: str) -> None:
+    try:
+        candidate_tree = ast.parse(candidate_source)
+    except SyntaxError as error:
+        raise RuntimeError("Repository validator independent CLI source is invalid.") from error
+    candidate_mains = [
+        node
+        for node in candidate_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    ]
+    candidate_verifiers = [
+        node
+        for node in candidate_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "validate_validator_cli_acceptance_chain"
+    ]
+    candidate_bootstraps = [
+        node
+        for node in candidate_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_restrict_import_path"
+    ]
+    candidate_startup_guards = [
+        node
+        for node in candidate_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_require_isolated_python"
+    ]
+    candidate_normalizers = [
+        node
+        for node in candidate_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_normalize_import_path"
+    ]
+    candidate_contract_verifiers = [
+        node
+        for node in candidate_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "validate_contract_test_acceptance_chain"
+    ]
+    if (
+        len(candidate_mains) != 1
+        or len(candidate_verifiers) != 1
+        or len(candidate_bootstraps) != 1
+        or len(candidate_startup_guards) != 1
+        or len(candidate_normalizers) != 1
+        or len(candidate_contract_verifiers) != 1
+        or len(candidate_tree.body) < 3
+    ):
+        raise RuntimeError("Repository validator independent CLI inventory differs.")
+    protected_seal_names = {
+        "VALIDATOR_CLI_SOURCE_SHA256",
+        "CONTRACT_TEST_SOURCE_SHA256",
+        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256",
+        "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256",
+        "FAILED_BOOTSTRAP_TEST_SHA256",
+    }
+    expected_contract_seals = {
+        "VALIDATOR_CLI_SOURCE_SHA256": (
+            "2f9da6f53b135a31e2129d51550582a007e0d03dbd255f93c25d7347f9129246"
+        ),
+        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
+            "76e1fc0d46f02dad6dea2c31750c7e981436f8c05839f86efcacafd45d1062f4"
+        ),
+        "FAILED_BOOTSTRAP_TEST_SHA256": (
+            "bea50b165daa8bdff8e658977b7d7742db0df866c06898a92fad1fa8b8a73105"
+        ),
+    }
+    observed_contract_seals: dict[str, str] = {}
+    for node in candidate_tree.body:
+        binding_names: set[str] = set()
+        if isinstance(node, ast.Assign):
+            binding_names.update(
+                child.id
+                for target in node.targets
+                for child in ast.walk(target)
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            )
+        elif isinstance(node, ast.AnnAssign):
+            binding_names.update(
+                child.id
+                for child in ast.walk(node.target)
+                if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            binding_names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            binding_names.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
+            )
+        protected_bindings = binding_names & protected_seal_names
+        if not protected_bindings:
+            continue
+        target = node.targets[0] if isinstance(node, ast.Assign) and node.targets else None
+        if (
+            len(protected_bindings) != 1
+            or not isinstance(node, ast.Assign)
+            or len(node.targets) != 1
+            or not isinstance(target, ast.Name)
+            or target.id not in protected_bindings
+            or target.id in observed_contract_seals
+            or not isinstance(node.value, ast.Constant)
+            or not isinstance(node.value.value, str)
+            or re.fullmatch(r"[0-9a-f]{64}", node.value.value) is None
+        ):
+            raise RuntimeError("Repository validator independent contract seal differs.")
+        expected = expected_contract_seals.get(target.id)
+        if expected is not None and node.value.value != expected:
+            raise RuntimeError("Repository validator independent contract seal differs.")
+        observed_contract_seals[target.id] = node.value.value
+    if set(observed_contract_seals) != protected_seal_names:
+        raise RuntimeError("Repository validator independent contract seal inventory differs.")
+    candidate_main = candidate_mains[0]
+    candidate_verifier = candidate_verifiers[0]
+    candidate_bootstrap = candidate_bootstraps[0]
+    candidate_startup_guard = candidate_startup_guards[0]
+    candidate_normalizer = candidate_normalizers[0]
+    candidate_contract_verifier = candidate_contract_verifiers[0]
+    candidate_guard = candidate_tree.body[-1]
+    candidate_prefix = candidate_tree.body[:-2]
+    candidate_lines = candidate_source.splitlines(keepends=True)
+    candidate_top_level_guards = [
+        node for node in candidate_tree.body if isinstance(node, ast.If)
+    ]
+    bootstrap_source = "".join(
+        candidate_lines[candidate_bootstrap.lineno - 1 : candidate_bootstrap.end_lineno]
+    )
+    startup_guard_source = "".join(
+        candidate_lines[
+            candidate_startup_guard.lineno - 1 : candidate_startup_guard.end_lineno
+        ]
+    )
+    normalizer_source = "".join(
+        candidate_lines[candidate_normalizer.lineno - 1 : candidate_normalizer.end_lineno]
+    )
+    if (
+        candidate_tree.body[-2] is not candidate_main
+        or candidate_main.decorator_list
+        or candidate_bootstrap.decorator_list
+        or candidate_startup_guard.decorator_list
+        or candidate_normalizer.decorator_list
+        or hashlib.sha256(bootstrap_source.encode("utf-8")).hexdigest()
+        != "1fc799aeac795776b404ee7fd7179ca07aaacdcdc7f6e90b1b3da4cc997d2ccc"
+        or hashlib.sha256(startup_guard_source.encode("utf-8")).hexdigest()
+        != "b75c9b3d91b7e93659b3962e16c5e7c160bf35d823b19380d651ee8ee4ce5263"
+        or hashlib.sha256(normalizer_source.encode("utf-8")).hexdigest()
+        != "449e60a2d1e8492583e18e5d7a366b7f5a36d6a040e0994e7b6565e533b339f0"
+        or len(candidate_top_level_guards) != 1
+        or not isinstance(candidate_prefix[0], ast.Expr)
+        or not isinstance(candidate_prefix[0].value, ast.Constant)
+        or not isinstance(candidate_prefix[0].value.value, str)
+        or any(
+            not isinstance(
+                node,
+                (ast.Import, ast.ImportFrom, ast.Assign, ast.AnnAssign, ast.FunctionDef),
+            )
+            for node in candidate_prefix[1:]
+        )
+        or any(
+            node.decorator_list
+            for node in candidate_prefix
+            if isinstance(node, ast.FunctionDef)
+        )
+        or not isinstance(candidate_guard, ast.If)
+        or not isinstance(candidate_guard.test, ast.Compare)
+        or not isinstance(candidate_guard.test.left, ast.Name)
+        or candidate_guard.test.left.id != "__name__"
+        or len(candidate_guard.test.ops) != 1
+        or not isinstance(candidate_guard.test.ops[0], ast.Eq)
+        or len(candidate_guard.test.comparators) != 1
+        or not isinstance(candidate_guard.test.comparators[0], ast.Constant)
+        or candidate_guard.test.comparators[0].value != "__main__"
+        or len(candidate_guard.body) != 1
+        or candidate_guard.orelse
+        or not isinstance(candidate_guard.body[0], ast.Raise)
+        or not isinstance(candidate_guard.body[0].exc, ast.Call)
+        or not isinstance(candidate_guard.body[0].exc.func, ast.Name)
+        or candidate_guard.body[0].exc.func.id != "SystemExit"
+        or len(candidate_guard.body[0].exc.args) != 1
+        or not isinstance(candidate_guard.body[0].exc.args[0], ast.Call)
+        or not isinstance(candidate_guard.body[0].exc.args[0].func, ast.Name)
+        or candidate_guard.body[0].exc.args[0].func.id != "main"
+    ):
+        raise RuntimeError("Repository validator independent CLI structure differs.")
+    imports_source = "".join(
+        "".join(candidate_lines[node.lineno - 1 : node.end_lineno])
+        for node in candidate_prefix
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    )
+    if (
+        hashlib.sha256(imports_source.encode("utf-8")).hexdigest()
+        != "6fdcb8330b583d3fb8d485cf9e335e8494f736c9c117662fcf547e4e09491162"
+    ):
+        raise RuntimeError("Repository validator independent import boundary differs.")
+    executable_assignments = {
+        "_PYTHON_STARTUP_RESTRICTED": "91f125795440732972fea9b9921f0a53e3f4334553d0dc12cde71d0e88795633",
+        "_IMPORT_PATH_RESTRICTED": "c79c8ef7ffac8557ec250e0b05c3b15939ebb3b728e62315486e24a98e156461",
+        "ROOT": "6c0caf441a1aad2240e7aaccbb2a73915fc5ce62a90eb857836d905c68760c7d",
+        "MANAGED_WEB_SSL_SERVER_OUTLET": "611b3941a610ea9d23805d773cbba7dbf7ce57c06b2355f10d65a8720196c8e0",
+        "EXPECTED_SERVER_TLS_SHA256": "885cfdce0ad10ad670c604584bf51bc0e05027d1e6ab92cf45b35a23209914ce",
+        "ALLOWED_FILES": "2830164c191da98529cb8134eccfc4dd30891049e912e9625e767b2531283661",
+    }
+    observed_executable_assignments = set()
+    forbidden_assignment_nodes = (
+        ast.Await,
+        ast.GeneratorExp,
+        ast.IfExp,
+        ast.Lambda,
+        ast.ListComp,
+        ast.NamedExpr,
+        ast.SetComp,
+        ast.DictComp,
+        ast.Yield,
+        ast.YieldFrom,
+    )
+    for node in candidate_prefix:
+        if isinstance(node, ast.FunctionDef):
+            defaults = [*node.args.defaults, *node.args.kw_defaults]
+            if any(
+                isinstance(child, ast.Call)
+                for default in defaults
+                if default is not None
+                for child in ast.walk(default)
+            ):
+                raise RuntimeError(
+                    "Repository validator independent function definition executes early."
+                )
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            raise RuntimeError("Repository validator independent assignment target differs.")
+        target = targets[0].id
+        calls = [child for child in ast.walk(node) if isinstance(child, ast.Call)]
+        if calls:
+            assignment_source = "".join(candidate_lines[node.lineno - 1 : node.end_lineno])
+            expected = executable_assignments.get(target)
+            if (
+                expected is None
+                or hashlib.sha256(assignment_source.encode("utf-8")).hexdigest() != expected
+            ):
+                raise RuntimeError(
+                    "Repository validator independent executable assignment differs."
+                )
+            observed_executable_assignments.add(target)
+        elif any(
+            isinstance(child, forbidden_assignment_nodes) for child in ast.walk(node)
+        ):
+            raise RuntimeError("Repository validator independent assignment can execute early.")
+    if observed_executable_assignments != set(executable_assignments):
+        raise RuntimeError(
+            "Repository validator independent executable assignment inventory differs."
+        )
+    verifier_source = "".join(
+        candidate_lines[candidate_verifier.lineno - 1 : candidate_verifier.end_lineno]
+    )
+    contract_verifier_source = "".join(
+        candidate_lines[
+            candidate_contract_verifier.lineno - 1 : candidate_contract_verifier.end_lineno
+        ]
+    )
+    entrypoint_source = "".join(
+        candidate_lines[candidate_main.lineno - 1 : candidate_guard.end_lineno]
+    )
+    if (
+        hashlib.sha256(verifier_source.encode("utf-8")).hexdigest()
+        != "6668eda049f2d14d63ab7da7421faebe41d94d09f73d8420eec77d81d5f2f284"
+        or hashlib.sha256(contract_verifier_source.encode("utf-8")).hexdigest()
+        != "b4632a5af4955d84dd77235b785cb26b97f251b6eb0c0929cf650104a6749e72"
+        or hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
+        != "2f9da6f53b135a31e2129d51550582a007e0d03dbd255f93c25d7347f9129246"
+    ):
+        raise RuntimeError("Repository validator independent CLI source seal differs.")
+
+
+def validate_validator_cli_independently(
+    candidate_source: str,
+    candidate_contract_source: str,
+    consumer_sources: dict[str, str],
+) -> None:
+    validate_python_acceptance_root_independently(
+        candidate_source, candidate_contract_source, consumer_sources
+    )
+    _validate_validator_cli_structure_independently(candidate_source)
+
+
+EXACT_VALIDATOR_WRAPPER = '''import sys
+path = sys.argv[1]
+source = sys.stdin.buffer.read()
+sys.argv = [path]
+namespace = {"__name__": "__main__", "__file__": path, "__package__": None, "__cached__": None}
+exec(compile(source, path, "exec"), namespace, namespace)
+'''
+
+
+def run_exact_validator(path: Path, source: bytes) -> subprocess.CompletedProcess[bytes]:
+    child_environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_CONFIG_")
+    }
+    child_environment.update(
+        {
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "safe.directory",
+            "GIT_CONFIG_VALUE_0": str(path.parents[1].resolve()),
+        }
+    )
+    return subprocess.run(
+        [sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)],
+        cwd=path.parents[1],
+        env=child_environment,
+        input=source,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=300,
+        check=False,
+    )
+
+
+TRUSTED_QUARANTINE_BYTES, TRUSTED_QUARANTINE_SOURCE = read_trusted_source(
+    ROOT / "scripts/quarantine-failed-bootstrap.sh"
+)
+TRUSTED_UPGRADER_BYTES, TRUSTED_UPGRADER_SOURCE = read_trusted_source(
+    ROOT / "scripts/upgrade-host-control.sh"
+)
+TRUSTED_VALIDATOR_BYTES, TRUSTED_VALIDATOR_SOURCE = read_trusted_source(
+    ROOT / "scripts/validate-repository.py"
+)
+TRUSTED_CONTRACT_BYTES, TRUSTED_CONTRACT_SOURCE = read_trusted_source(
+    ROOT / "scripts/test-contracts.py"
+)
+TRUSTED_PYTHON_ACCEPTANCE_CONSUMER_SOURCES = {
+    ".github/workflows/validate-repository.yml": read_trusted_source(
+        ROOT / ".github/workflows/validate-repository.yml"
+    )[1],
+    "scripts/check-repository.ps1": read_trusted_source(
+        ROOT / "scripts/check-repository.ps1"
+    )[1],
+    "scripts/check-source-introduction.ps1": read_trusted_source(
+        ROOT / "scripts/check-source-introduction.ps1"
+    )[1],
+    "scripts/test-source-introduction.ps1": read_trusted_source(
+        ROOT / "scripts/test-source-introduction.ps1"
+    )[1],
+    "scripts/host-deploy.sh": read_trusted_source(ROOT / "scripts/host-deploy.sh")[1],
+}
+TRUSTED_WORKFLOW_BYTES, TRUSTED_WORKFLOW_SOURCE = read_trusted_source(
+    ROOT / ".github/workflows/deploy-forums.yml"
+)
+TRUSTED_MANIFEST_BYTES, TRUSTED_MANIFEST_SOURCE = read_trusted_source(
+    ROOT / "config/host-control-manifest.v1.json"
+)
+validate_validator_cli_independently(
+    TRUSTED_VALIDATOR_SOURCE,
+    TRUSTED_CONTRACT_SOURCE,
+    TRUSTED_PYTHON_ACCEPTANCE_CONSUMER_SOURCES,
+)
+require_exact_validator_result(
+    run_exact_validator(ROOT / "scripts/validate-repository.py", TRUSTED_VALIDATOR_BYTES)
+)
 RENDER = module_from("scripts/render-app-config.py", "render_app_config")
 THEME = module_from("scripts/build-theme-archive.py", "build_theme_archive")
 ROTATE = module_from("scripts/rotate-media-certificate.py", "rotate_media_certificate")
 UPSTREAM = module_from("scripts/verify-pinned-source.py", "verify_pinned_source")
-VALIDATOR = module_from("scripts/validate-repository.py", "validate_repository")
+VALIDATOR = module_from_source(
+    "scripts/validate-repository.py", "validate_repository", TRUSTED_VALIDATOR_BYTES
+)
+if (
+    VALIDATOR.CONTRACT_TEST_SOURCE_SHA256
+    != hashlib.sha256(TRUSTED_CONTRACT_BYTES).hexdigest()
+    or VALIDATOR.CONTRACT_TEST_FUNCTION_INVENTORY_SHA256
+    != contract_test_function_inventory_sha256(TRUSTED_CONTRACT_SOURCE)
+    or VALIDATOR.CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256
+    != contract_test_function_sha256(
+        TRUSTED_CONTRACT_SOURCE, "validate_validator_cli_independently"
+    )
+    or VALIDATOR.FAILED_BOOTSTRAP_TEST_SHA256
+    != hashlib.sha256(
+        "".join(
+            TRUSTED_CONTRACT_SOURCE.splitlines(keepends=True)[
+                next(
+                    node.lineno
+                    for node in ast.parse(TRUSTED_CONTRACT_SOURCE).body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == "test_failed_bootstrap_quarantine_contract"
+                )
+                - 1 : next(
+                    node.end_lineno
+                    for node in ast.parse(TRUSTED_CONTRACT_SOURCE).body
+                    if isinstance(node, ast.FunctionDef)
+                    and node.name == "test_failed_bootstrap_quarantine_contract"
+                )
+            ]
+        ).encode("utf-8")
+    ).hexdigest()
+):
+    raise RuntimeError("Repository validator hostile-fixture source seals differ.")
 AUTHENTICATION = module_from("scripts/authentication-state.py", "authentication_state")
 CONNECT_FIXTURE = module_from("scripts/verify-discourse-connect.py", "verify_discourse_connect")
 PRODUCER_PROBE = module_from("scripts/probe-website-forums-producer.py", "probe_website_forums_producer")
@@ -6507,7 +7133,15 @@ def test_extracted_archive_governance() -> None:
 
         def archive_validation(root: Path) -> subprocess.CompletedProcess[bytes]:
             return subprocess.run(
-                [sys.executable, "-B", str(root / "scripts/validate-repository.py"), "--archive-root", str(root)],
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(root / "scripts/validate-repository.py"),
+                    "--archive-root",
+                    str(root),
+                ],
                 cwd=root,
                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
                 stdin=subprocess.DEVNULL,
@@ -10781,6 +11415,10 @@ def test_host_security_control_plane_contract() -> None:
             'bind_invoked_canonical_successor() {',
             'rev-parse --verify "${requested_commit}^1"',
             'ls-remote --refs "${canonical_repository}" refs/heads/main',
+            'GIT_NO_REPLACE_OBJECTS=1',
+            '${invocation_source_root}/.git/commondir',
+            '${invocation_source_root}/.git/info/grafts',
+            'actual_path_output="$(git -C "${invocation_source_root}" diff-tree',
             'bind_invoked_canonical_successor "${requested_commit}" "${commit}"',
             'recovery_continue=true',
             '[[ ${recovery_continue} == true ]] || exit 0',
@@ -10827,7 +11465,7 @@ def test_host_security_control_plane_contract() -> None:
             if positions != sorted(positions) or "systemctl enable --now ssh.socket" in block:
                 raise RuntimeError("SSH socket-predecessor restoration ordering can conflict with the active service listener.")
 
-        candidate_validation = upgrade_source.index('bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"')
+        candidate_validation = upgrade_source.index('bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py"')
         predecessor_gate = upgrade_source.index('ssh_predecessor="$(ssh_activation_predecessor)"', candidate_validation)
         recovery_gate = upgrade_source.index('--socket-activation-recovery', predecessor_gate)
         journal_position = upgrade_source.index('os.link(candidate, journal_path, follow_symlinks=False)', recovery_gate)
@@ -10986,6 +11624,9 @@ reviewed_acme_reload_privacy_recovery_child_commit=591d96484369ae29a8fa4e61219b3
 reviewed_acme_reload_privacy_launcher_child_commit=a71bbe8070ca6dadeff3c4966e81bd97fee83cf7
 reviewed_acme_webroot_failed_bootstrap_commit=9110568e09bda4d572eaf2c27a768b9c053048f9
 reviewed_acme_webroot_recovery_commit=bb891aa65ebe8470fa04cdd639185afdad7372f7
+reviewed_acme_material_failed_bootstrap_commit=81e5226e54246686ce0ef80051d4df2cd1b64c5e
+reviewed_acme_material_recovery_commit=64e12c2344fbc04d44b10c495cf9651cac5ac0b8
+reviewed_acme_material_review_authority_commit=af3540426051c94bf26e9661ac68ce8ee720f977
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -10993,15 +11634,17 @@ case "${{BINDER_LINEAGE:-legacy}}" in
   quarantine) pending="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
   reload_privacy) pending="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
   webroot) pending="$reviewed_acme_webroot_failed_bootstrap_commit"; reviewed="$reviewed_acme_webroot_recovery_commit" ;;
+  material) pending="$reviewed_acme_material_failed_bootstrap_commit"; reviewed="$reviewed_acme_material_recovery_commit" ;;
   unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) return 84 ;;
 esac
 requested_parent="$reviewed"
 [[ ${{BINDER_LINEAGE:-legacy}} != reload_privacy ]] || requested_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
+[[ ${{BINDER_LINEAGE:-legacy}} != material ]] || requested_parent="$reviewed_acme_material_review_authority_commit"
 source_root={source_root.as_posix()}
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 git() {{
-  [[ -z ${{GIT_DIR+x}} && -z ${{GIT_WORK_TREE+x}} && -z ${{GIT_CONFIG_SYSTEM+x}} ]] || return 81
+  [[ -z ${{GIT_DIR+x}} && -z ${{GIT_WORK_TREE+x}} && -z ${{GIT_INDEX_FILE+x}} && -z ${{GIT_OBJECT_DIRECTORY+x}} && -z ${{GIT_ALTERNATE_OBJECT_DIRECTORIES+x}} && -z ${{GIT_COMMON_DIR+x}} && -z ${{GIT_REPLACE_REF_BASE+x}} && -z ${{GIT_ASKPASS+x}} && -z ${{SSH_ASKPASS+x}} && -z ${{GIT_SSH+x}} && -z ${{GIT_SSH_COMMAND+x}} && -z ${{GIT_CONFIG_PARAMETERS+x}} && -z ${{GIT_CONFIG_SYSTEM+x}} && -z ${{GIT_PROTOCOL_FROM_USER+x}} && ${{GIT_TERMINAL_PROMPT:-}} == 0 && ${{GIT_CONFIG_NOSYSTEM:-}} == 1 && ${{GIT_CONFIG_GLOBAL:-}} == /dev/null && ${{GIT_CONFIG_COUNT:-}} == 0 && ${{GIT_NO_REPLACE_OBJECTS:-}} == 1 ]] || return 81
   case "$*" in
     "-C ${{source_root}} rev-parse --verify HEAD^{{commit}}") [[ ${{BINDER_MUTATION:-none}} != head ]] && printf '%s\n' "$requested" || printf '%s\n' other ;;
     "-C ${{source_root}} symbolic-ref --short -q HEAD") [[ ${{BINDER_MUTATION:-none}} != branch ]] && printf '%s\n' main || printf '%s\n' topic ;;
@@ -11016,9 +11659,44 @@ git() {{
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_launcher_child_commit}}") [[ ${{BINDER_MUTATION:-none}} != launcher-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_reload_privacy_recovery_child_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != recovery-child-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{BINDER_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_material_review_authority_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != review-authority-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_material_review_authority_commit}}") [[ ${{BINDER_MUTATION:-none}} != review-authority-parents ]] && printf '%s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{BINDER_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$pending" || printf '%s %s %s\n' "$reviewed" "$pending" unrelated ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{BINDER_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$requested" || printf '%s\trefs/heads/main\n' unrelated ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_failed_bootstrap_commit}} ${{reviewed_acme_material_recovery_commit}}")
+      printf '%s\n' \
+        config/immutable-letsencrypt.fragment.yml \
+        scripts/test-contracts.py
+      [[ ${{BINDER_MUTATION:-none}} == material-repair-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{BINDER_MUTATION:-none}} != material-repair-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_recovery_commit}} ${{reviewed_acme_material_review_authority_commit}}")
+      printf '%s\n' \
+        .gitattributes \
+        .github/CODEOWNERS \
+        .github/workflows/open-reviewed-source-pr.yml \
+        CONTRIBUTING.md \
+        docs/adr/0001-clean-initialization-and-canonical-ownership.md \
+        scripts/test-contracts.py
+      [[ ${{BINDER_MUTATION:-none}} == material-authority-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{BINDER_MUTATION:-none}} != material-authority-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_review_authority_commit}} ${{requested}}")
+      printf '%s\n' \
+        .github/workflows/validate-repository.yml \
+        docs/operations/DEPLOYMENT.md \
+        docs/operations/RECOVERY.md \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/host-deploy.sh \
+        scripts/quarantine-failed-bootstrap.sh \
+        scripts/test-contracts.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/upgrade-host-control.sh
+      [[ ${{BINDER_MUTATION:-none}} == material-current-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{BINDER_MUTATION:-none}} != material-current-status ]] || return 83
+      ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{pending}} ${{requested}}")
       case "${{BINDER_LINEAGE:-legacy}}" in
         active)
@@ -11073,6 +11751,26 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        material)
+          printf '%s\n' \
+            .gitattributes \
+            .github/CODEOWNERS \
+            .github/workflows/open-reviewed-source-pr.yml \
+            .github/workflows/validate-repository.yml \
+            CONTRIBUTING.md \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/adr/0001-clean-initialization-and-canonical-ownership.md \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/check-repository.ps1 \
+            scripts/check-source-introduction.ps1 \
+            scripts/host-deploy.sh \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/test-source-introduction.ps1 \
+            scripts/upgrade-host-control.sh
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -11085,6 +11783,7 @@ git() {{
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
       esac
+      [[ ${{BINDER_MUTATION:-none}} != paths-status ]] || return 83
       ;;
     *) return 82 ;;
   esac
@@ -11099,10 +11798,11 @@ bind_invoked_canonical_successor "$requested" "$pending"
                 ("status-fail", False), ("origin", False), ("recovery-parent", False),
                 ("current-parents", False), ("failed-parent", False),
                 ("recovery-parents", False), ("remote", False), ("paths", False),
+                ("paths-status", False),
             )
             binder_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot", "material")
                 for mutation, should_pass in mutation_cases
             ]
             binder_cases.extend(
@@ -11112,8 +11812,29 @@ bind_invoked_canonical_successor "$requested" "$pending"
                     "recovery-child-parent", "recovery-child-parents",
                 )
             )
+            binder_cases.extend(
+                ("material", mutation, False)
+                for mutation in (
+                    "review-authority-parent", "review-authority-parents",
+                    "material-repair-paths", "material-repair-status",
+                    "material-authority-paths", "material-authority-status",
+                    "material-current-paths", "material-current-status",
+                )
+            )
+            binder_cases.extend(("legacy", mutation, False) for mutation in ("grafts", "commondir"))
             binder_cases.append(("unknown", "none", False))
+            grafts_path = source_root / ".git" / "info" / "grafts"
+            commondir_path = source_root / ".git" / "commondir"
             for lineage, mutation, should_pass in binder_cases:
+                grafts_path.unlink(missing_ok=True)
+                commondir_path.unlink(missing_ok=True)
+                if mutation == "grafts":
+                    grafts_path.parent.mkdir(parents=True, exist_ok=True)
+                    grafts_path.write_text(
+                        "c" * 40 + " " + "a" * 40 + "\n", encoding="ascii", newline="\n"
+                    )
+                elif mutation == "commondir":
+                    commondir_path.write_text("../hostile\n", encoding="ascii", newline="\n")
                 completed = subprocess.run(
                     [bash, "-c", binder_harness, str(entrypoint)],
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -11124,6 +11845,25 @@ bind_invoked_canonical_successor "$requested" "$pending"
                         "BINDER_MUTATION": mutation,
                         "GIT_DIR": "/hostile",
                         "GIT_WORK_TREE": "/hostile",
+                        "GIT_INDEX_FILE": "/hostile",
+                        "GIT_OBJECT_DIRECTORY": "/hostile",
+                        "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/hostile",
+                        "GIT_COMMON_DIR": "/hostile",
+                        "GIT_REPLACE_REF_BASE": "refs/hostile",
+                        "GIT_ASKPASS": "/hostile",
+                        "SSH_ASKPASS": "/hostile",
+                        "GIT_SSH": "/hostile",
+                        "GIT_SSH_COMMAND": "/hostile",
+                        "GIT_CONFIG_PARAMETERS": "hostile",
+                        "GIT_CONFIG_SYSTEM": "/hostile",
+                        "GIT_CONFIG_GLOBAL": "/hostile",
+                        "GIT_CONFIG_NOSYSTEM": "0",
+                        "GIT_CONFIG_COUNT": "1",
+                        "GIT_CONFIG_KEY_0": "core.replaceRefs",
+                        "GIT_CONFIG_VALUE_0": "true",
+                        "GIT_PROTOCOL_FROM_USER": "1",
+                        "GIT_TERMINAL_PROMPT": "1",
+                        "GIT_NO_REPLACE_OBJECTS": "0",
                     },
                 )
                 if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
@@ -11352,7 +12092,7 @@ printf 'continue:%s\n' "${recovery_continue}"
     ):
         if required not in upgrade:
             raise RuntimeError("Transactional canonical control-upgrade boundary differs.")
-    if upgrade.index('fetch --no-tags --depth=1 --refmap= origin refs/heads/main') > upgrade.index('bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'):
+    if upgrade.index('fetch --no-tags --depth=1 --refmap= origin refs/heads/main') > upgrade.index('bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py"'):
         raise RuntimeError("Candidate-controlled source can run before canonical-main control binding.")
     binder_start = upgrade.index("bind_invoked_canonical_successor() {")
     binder = upgrade[binder_start : upgrade.index("\n}\n", binder_start) + 3]
@@ -11439,7 +12179,7 @@ def test_host_control_predecessor_archive_binding() -> None:
         if '/opt/mochirii/forums/releases/${previous_commit}' in source:
             raise RuntimeError("Host-control upgrade still assumes an application release for its predecessor.")
         candidate_validation = source.index(
-            'bounded 300s python3 -B "${candidate}/scripts/validate-repository.py"'
+            'bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py"'
         )
         predecessor_prepare = source.index(
             'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
@@ -12001,17 +12741,811 @@ def test_effective_allow_users_parser_contract() -> None:
 
 
 def test_failed_bootstrap_quarantine_contract() -> None:
-    source = (ROOT / "scripts/quarantine-failed-bootstrap.sh").read_text(encoding="utf-8")
-    upgrader = (ROOT / "scripts/upgrade-host-control.sh").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/deploy-forums.yml").read_text(encoding="utf-8")
-    manifest = json.loads((ROOT / "config/host-control-manifest.v1.json").read_text(encoding="utf-8"))
+    source = TRUSTED_QUARANTINE_SOURCE
+    upgrader = TRUSTED_UPGRADER_SOURCE
+    validator_source = TRUSTED_VALIDATOR_SOURCE
+    contract_source = TRUSTED_CONTRACT_SOURCE
+    workflow = TRUSTED_WORKFLOW_SOURCE
+    manifest = json.loads(TRUSTED_MANIFEST_SOURCE)
     if (
         hashlib.sha256(source.encode("utf-8")).hexdigest()
-        != "7a18ed6f5f522dcd090663f036d65b8af3d9b42e7745e68f191b578c0b1b5de1"
+        != "1792bf339b590c98a9bb5423fa0fd539e29c20c58dd5381be9670bdf0fcdde57"
         or hashlib.sha256(upgrader.encode("utf-8")).hexdigest()
-        != "96b27fb1f9f6e0ce45d4e5c1ab146aad3ddfe673793bd7c41a9fe38807902a2b"
+        != "041168ece778a3e60d001b82707216a2b5c785bd3e1ece9d12c0f6e6ba3c91c4"
     ):
         raise RuntimeError("Failed-bootstrap production control source seal differs.")
+
+    def rebase_validator_cli_digest(candidate_source: str) -> str:
+        candidate_tree = ast.parse(candidate_source)
+        candidate_main = next(
+            node
+            for node in candidate_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "main"
+        )
+        candidate_guard = candidate_tree.body[-1]
+        candidate_lines = candidate_source.splitlines(keepends=True)
+        entrypoint_source = "".join(
+            candidate_lines[candidate_main.lineno - 1 : candidate_guard.end_lineno]
+        )
+        digest = hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
+        rebased, replacements = re.subn(
+            r'VALIDATOR_CLI_SOURCE_SHA256 = "[0-9a-f]{64}"',
+            f'VALIDATOR_CLI_SOURCE_SHA256 = "{digest}"',
+            candidate_source,
+            count=1,
+        )
+        if replacements != 1:
+            raise RuntimeError("Repository validator self-digest rebase anchor differs.")
+        return rebased
+
+    def rebase_contract_test_digest(
+        candidate_validator_source: str, candidate_contract_source: str
+    ) -> str:
+        digest = hashlib.sha256(candidate_contract_source.encode("utf-8")).hexdigest()
+        rebased, replacements = re.subn(
+            r'CONTRACT_TEST_SOURCE_SHA256 = "[0-9a-f]{64}"',
+            f'CONTRACT_TEST_SOURCE_SHA256 = "{digest}"',
+            candidate_validator_source,
+            count=1,
+        )
+        if replacements != 1:
+            raise RuntimeError("Hostile fixture digest rebase anchor differs.")
+        return rebased
+
+    def rebase_contract_test_function_inventory_digest(
+        candidate_validator_source: str, candidate_contract_source: str
+    ) -> str:
+        digest = contract_test_function_inventory_sha256(candidate_contract_source)
+        rebased, replacements = re.subn(
+            r'CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "[0-9a-f]{64}"',
+            f'CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "{digest}"',
+            candidate_validator_source,
+            count=1,
+        )
+        if replacements != 1:
+            raise RuntimeError("Hostile fixture function inventory rebase anchor differs.")
+        return rebased
+
+    def rebase_failed_bootstrap_test_digest(
+        candidate_validator_source: str, candidate_contract_source: str
+    ) -> str:
+        digest = contract_test_function_sha256(
+            candidate_contract_source, "test_failed_bootstrap_quarantine_contract"
+        )
+        rebased, replacements = re.subn(
+            r'FAILED_BOOTSTRAP_TEST_SHA256 = "[0-9a-f]{64}"',
+            f'FAILED_BOOTSTRAP_TEST_SHA256 = "{digest}"',
+            candidate_validator_source,
+            count=1,
+        )
+        if replacements != 1:
+            raise RuntimeError("Failed-bootstrap fixture digest rebase anchor differs.")
+        return rebased
+
+    def rebase_independent_verifier_digest(
+        candidate_validator_source: str, candidate_contract_source: str
+    ) -> str:
+        digest = contract_test_function_sha256(
+            candidate_contract_source, "validate_validator_cli_independently"
+        )
+        rebased, replacements = re.subn(
+            r'CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "[0-9a-f]{64}"',
+            f'CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "{digest}"',
+            candidate_validator_source,
+            count=1,
+        )
+        if replacements != 1:
+            raise RuntimeError("Independent verifier digest rebase anchor differs.")
+        return rebased
+
+    def rebase_independent_verifier_expected_seal(
+        candidate_contract_source: str, name: str, digest: str
+    ) -> str:
+        pattern = (
+            rf'("{re.escape(name)}": \(\n\s*")[0-9a-f]{{64}}("\n\s*\),)'
+        )
+        rebased, replacements = re.subn(
+            pattern,
+            rf"\g<1>{digest}\g<2>",
+            candidate_contract_source,
+            count=1,
+        )
+        if replacements != 1:
+            raise RuntimeError("Independent verifier expected-seal rebase anchor differs.")
+        return rebased
+
+    VALIDATOR.validate_contract_test_acceptance_chain(contract_source)
+    VALIDATOR.validate_validator_cli_acceptance_chain(validator_source)
+    validate_validator_cli_independently(
+        validator_source, contract_source, TRUSTED_PYTHON_ACCEPTANCE_CONSUMER_SOURCES
+    )
+    acceptance_mutants = (
+        contract_source.replace(
+            "def test_failed_bootstrap_quarantine_contract() -> None:\n",
+            "def test_failed_bootstrap_quarantine_contract() -> None:\n    return\n",
+            1,
+        ),
+        contract_source.replace(
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            "    return 0\n    test_failed_bootstrap_quarantine_contract()\n",
+            1,
+        ),
+        contract_source.replace(
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            "    pass\n",
+            1,
+        ),
+        contract_source.replace(
+            "from __future__ import annotations\n",
+            "from __future__ import annotations\nraise SystemExit(0)\n",
+            1,
+        ),
+        contract_source.replace(
+            "def run_exact_validator(path: Path, source: bytes) -> subprocess.CompletedProcess[bytes]:\n",
+            "def run_exact_validator(path: Path, source: bytes) -> subprocess.CompletedProcess[bytes]:\n    raise SystemExit(0)\n",
+            1,
+        ),
+        contract_source.replace(
+            'require_exact_validator_result(\n    run_exact_validator(ROOT / "scripts/validate-repository.py", TRUSTED_VALIDATOR_BYTES)\n)\nRENDER = ',
+            'RENDER = ',
+            1,
+        ),
+    )
+    for mutant in acceptance_mutants:
+        expect_validation_failure(
+            lambda mutant=mutant: VALIDATOR.validate_contract_test_acceptance_chain(mutant),
+            "failed-bootstrap early-success acceptance mutant",
+        )
+
+    resealed_acceptance_mutants = (
+        contract_source.replace(
+            "def main() -> int:\n"
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            "def main() -> int:\n"
+            "    if False:\n"
+            "        test_failed_bootstrap_quarantine_contract()\n",
+            1,
+        ),
+        contract_source.replace(
+            "\n\ndef main() -> int:\n",
+            "\n\ntest_failed_bootstrap_quarantine_contract = lambda: None\n\n\n"
+            "def main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            '    return 0\n\n\nif __name__ == "__main__":\n',
+            '    return 0\n\n\nmain = lambda: 0\n\n\nif __name__ == "__main__":\n',
+            1,
+        ),
+        contract_source.replace(
+            "\n\ndef main() -> int:\n",
+            '\n\nglobals()["test_failed_bootstrap_quarantine_contract"] = lambda: None\n\n\n'
+            "def main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            "def test_failed_bootstrap_quarantine_contract() -> None:\n",
+            "def _failed_bootstrap_acceptance_noop(_function):\n"
+            "    return lambda: None\n\n\n"
+            "@_failed_bootstrap_acceptance_noop\n"
+            "def test_failed_bootstrap_quarantine_contract() -> None:\n",
+            1,
+        ),
+        contract_source.replace(
+            "def main() -> int:\n",
+            "def _main_acceptance_noop(_function):\n"
+            "    return lambda: 0\n\n\n"
+            "@_main_acceptance_noop\n"
+            "def main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            "\n\ndef main() -> int:\n",
+            "\n\nsys.modules[__name__].test_failed_bootstrap_quarantine_contract = "
+            "lambda: None\n\n\ndef main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            '    return 0\n\n\nif __name__ == "__main__":\n',
+            '    return 0\n\n\nsys.modules[__name__].main = lambda: 0\n\n\n'
+            'if __name__ == "__main__":\n',
+            1,
+        ),
+        contract_source.replace(
+            "def main() -> int:\n"
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            "def main() -> int:\n"
+            "    test_failed_bootstrap_quarantine_contract.__globals__.update(\n"
+            '        {"test_failed_bootstrap_quarantine_contract": lambda: None}\n'
+            "    )\n"
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            1,
+        ),
+        contract_source.replace(
+            "def main() -> int:\n"
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            "def main() -> int:\n"
+            "    test_failed_bootstrap_quarantine_contract = lambda: None\n"
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            1,
+        ),
+        contract_source.replace(
+            "def main() -> int:\n",
+            "def main(test_failed_bootstrap_quarantine_contract=lambda: None) -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            "\n\ndef main() -> int:\n",
+            "\n\ntest_failed_bootstrap_quarantine_contract.__code__ = "
+            "(lambda: None).__code__\n\n\ndef main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            "def main() -> int:\n"
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            "def main() -> int:\n"
+            "    os.geteuid = lambda: 1\n"
+            "    test_failed_bootstrap_quarantine_contract()\n",
+            1,
+        ),
+        contract_source.replace(
+            "\n\ndef main() -> int:\n",
+            '\n\nexec("test_failed_bootstrap_" + "quarantine_contract = lambda: None")'
+            "\n\n\ndef main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            "\n\ndef main() -> int:\n",
+            "\n\nsys.modules[__name__].__dict__.__setitem__(\n"
+            '    "test_failed_bootstrap_quarantine_contract", lambda: None\n'
+            ")\n\n\ndef main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            "\n\ndef main() -> int:\n",
+            "\n\ndef expect_validation_failure(action, label: str) -> None:\n"
+            "    return None\n\n\ndef main() -> int:\n",
+            1,
+        ),
+        contract_source.replace(
+            "def expect_validation_failure(action, label: str) -> None:\n"
+            "    try:\n"
+            "        action()\n"
+            "    except RuntimeError:\n"
+            "        return\n"
+            '    raise RuntimeError(f"Repository governance accepted hostile fixture: {label}")\n',
+            "def expect_validation_failure(action, label: str) -> None:\n"
+            "    return None\n",
+            1,
+        ),
+    )
+    for label, mutant in zip(
+        (
+            "conditional call",
+            "protected-symbol rebinding",
+            "main rebinding",
+            "reflective protected-symbol rebinding",
+            "protected-symbol decorator",
+            "main decorator",
+            "module-attribute protected-symbol rebinding",
+            "module-attribute main rebinding",
+            "protected globals mapping mutation",
+            "local protected-symbol shadowing",
+            "default-argument protected-symbol shadowing",
+            "protected function-code mutation",
+            "root-gate dependency mutation",
+            "computed dynamic execution",
+            "module-dictionary mapping mutation",
+            "duplicate hostile-assertion helper",
+            "modified hostile-assertion helper",
+        ),
+        resealed_acceptance_mutants,
+        strict=True,
+    ):
+        if mutant == contract_source:
+            raise RuntimeError(f"Failed-bootstrap {label} mutant anchor differs.")
+        resealed_validator_source = rebase_contract_test_digest(validator_source, mutant)
+        _validate_validator_cli_structure_independently(resealed_validator_source)
+        resealed_validator = module_from_source(
+            "scripts/validate-repository.py",
+            f"validate_repository_resealed_{label.replace('-', '_').replace(' ', '_')}",
+            resealed_validator_source.encode("utf-8"),
+        )
+        expect_validation_failure(
+            lambda resealed_validator=resealed_validator, mutant=mutant: (
+                resealed_validator.validate_contract_test_acceptance_chain(mutant)
+            ),
+            f"failed-bootstrap resealed {label} acceptance mutant",
+        )
+    fully_resealed_helper_validator = rebase_contract_test_function_inventory_digest(
+        rebase_contract_test_digest(validator_source, resealed_acceptance_mutants[-1]),
+        resealed_acceptance_mutants[-1],
+    )
+    expect_validation_failure(
+        lambda: _validate_validator_cli_structure_independently(
+            fully_resealed_helper_validator
+        ),
+        "independent verifier fully resealed hostile-helper mutant",
+    )
+    fully_resealed_protected_validator = rebase_failed_bootstrap_test_digest(
+        rebase_contract_test_function_inventory_digest(
+            rebase_contract_test_digest(validator_source, acceptance_mutants[0]),
+            acceptance_mutants[0],
+        ),
+        acceptance_mutants[0],
+    )
+    expect_validation_failure(
+        lambda: _validate_validator_cli_structure_independently(
+            fully_resealed_protected_validator
+        ),
+        "independent verifier fully resealed protected-fixture mutant",
+    )
+    annotated_override_validator = rebase_contract_test_digest(
+        validator_source, acceptance_mutants[0]
+    ).replace(
+        "\n\ndef main() -> int:\n",
+        "\n\nCONTRACT_TEST_FUNCTION_INVENTORY_SHA256: str = \""
+        + contract_test_function_inventory_sha256(acceptance_mutants[0])
+        + "\"\nFAILED_BOOTSTRAP_TEST_SHA256: str = \""
+        + contract_test_function_sha256(
+            acceptance_mutants[0], "test_failed_bootstrap_quarantine_contract"
+        )
+        + "\"\n\n\ndef main() -> int:\n",
+        1,
+    )
+    if annotated_override_validator == validator_source:
+        raise RuntimeError("Repository validator annotated override anchor differs.")
+    expect_validation_failure(
+        lambda: _validate_validator_cli_structure_independently(
+            annotated_override_validator
+        ),
+        "independent verifier annotated protected-seal override",
+    )
+    annotated_override_module = module_from_source(
+        "scripts/validate-repository.py",
+        "validate_repository_annotated_protected_seal_override",
+        annotated_override_validator.encode("utf-8"),
+    )
+    expect_validation_failure(
+        lambda: annotated_override_module.validate_validator_cli_acceptance_chain(
+            annotated_override_validator
+        ),
+        "validator annotated protected-seal override",
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-validator-early-success-"
+    ) as directory:
+        scripts = Path(directory) / "scripts"
+        scripts.mkdir(parents=True)
+        validator = scripts / "validate-repository.py"
+        validator.write_text(
+            validator_source.replace(
+                "from __future__ import annotations\n",
+                "from __future__ import annotations\nraise SystemExit(0)\n",
+                1,
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        try:
+            require_exact_validator_result(run_exact_validator(validator, validator.read_bytes()))
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Early-success repository validator passed its actual acceptance wrapper.")
+
+    validator_success_decoy = validator_source.replace(
+        "def main() -> int:\n"
+        "    global ARCHIVE_MODE, ROOT\n"
+        "    validate_validator_cli_acceptance_chain(Path(__file__).read_text(encoding=\"utf-8\"))\n",
+        "def main() -> int:\n"
+        "    global ARCHIVE_MODE, ROOT\n"
+        "    print(\"Repository source contract passed.\")\n"
+        "    return 0\n"
+        "    validate_validator_cli_acceptance_chain(Path(__file__).read_text(encoding=\"utf-8\"))\n",
+        1,
+    )
+    if validator_success_decoy == validator_source:
+        raise RuntimeError("Repository validator exact-success decoy anchor differs.")
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-validator-exact-success-decoy-"
+    ) as directory:
+        scripts = Path(directory) / "scripts"
+        scripts.mkdir(parents=True)
+        validator = scripts / "validate-repository.py"
+        validator.write_text(
+            validator_success_decoy,
+            encoding="utf-8",
+            newline="\n",
+        )
+        require_exact_validator_result(
+            run_exact_validator(validator, validator_success_decoy.encode("utf-8"))
+        )
+    expect_validation_failure(
+        lambda: VALIDATOR.validate_validator_cli_acceptance_chain(validator_success_decoy),
+        "repository validator exact-success decoy",
+    )
+    try:
+        _validate_validator_cli_structure_independently(validator_success_decoy)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Repository validator independent CLI accepted an exact-success decoy.")
+
+    validator_guard_decoy = validator_source.replace(
+        "def main() -> int:\n",
+        'if __name__ == "__main__":\n'
+        '    print("Repository source contract passed.")\n'
+        "    raise SystemExit(0)\n\n\n"
+        "def main() -> int:\n",
+        1,
+    )
+    validator_decorator_decoy = validator_source.replace(
+        "def main() -> int:\n",
+        "def exact_success_decorator(function):\n"
+        '    if __name__ == "__main__":\n'
+        '        print("Repository source contract passed.")\n'
+        "        raise SystemExit(0)\n"
+        "    return function\n\n\n"
+        "@exact_success_decorator\n"
+        "def main() -> int:\n",
+        1,
+    )
+    validator_rebased_decoy = rebase_validator_cli_digest(
+        validator_source.replace(
+            '    validate_validator_cli_acceptance_chain(Path(__file__).read_text(encoding="utf-8"))\n',
+            '    validate_validator_cli_acceptance_chain(Path(__file__).read_text(encoding="utf-8"))\n'
+            '    print("Repository source contract passed.")\n'
+            "    return 0\n",
+            1,
+        )
+    )
+    validator_assignment_decoy = validator_source.replace(
+        "ROOT = Path(__file__).resolve().parents[1]\n",
+        "ROOT = Path(__file__).resolve().parents[1]\n"
+        "VALIDATOR_EARLY_SUCCESS = (\n"
+        '    print("Repository source contract passed."),\n'
+        "    __import__(\"sys\").exit(0),\n"
+        ') if __name__ == "__main__" else None\n',
+        1,
+    )
+    for label, decoy in (
+        ("earlier main guard", validator_guard_decoy),
+        ("main decorator", validator_decorator_decoy),
+        ("rebased self-digest", validator_rebased_decoy),
+        ("top-level executable assignment", validator_assignment_decoy),
+    ):
+        if decoy == validator_source:
+            raise RuntimeError(f"Repository validator {label} decoy anchor differs.")
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-validator-independent-decoy-"
+        ) as directory:
+            scripts = Path(directory) / "scripts"
+            scripts.mkdir(parents=True)
+            validator = scripts / "validate-repository.py"
+            validator.write_text(decoy, encoding="utf-8", newline="\n")
+            require_exact_validator_result(run_exact_validator(validator, decoy.encode("utf-8")))
+        try:
+            _validate_validator_cli_structure_independently(decoy)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(f"Repository validator independent CLI accepted {label}.")
+
+    validator_sanitizer_decoy = validator_source.replace(
+        "from pathlib import Path\n",
+        "from pathlib import Path\n"
+        "_ORIGINAL_PATH_READ_TEXT = Path.read_text\n"
+        "def _sanitized_path_read_text(path, *args, **kwargs):\n"
+        "    observed = _ORIGINAL_PATH_READ_TEXT(path, *args, **kwargs)\n"
+        "    return observed.replace('print(\"Repository source contract passed.\")\\n    raise SystemExit(0)\\n', '')\n"
+        "Path.read_text = _sanitized_path_read_text\n"
+        "if __name__ == \"__main__\":\n"
+        "    print(\"Repository source contract passed.\")\n"
+        "    raise SystemExit(0)\n",
+        1,
+    )
+    if validator_sanitizer_decoy == validator_source:
+        raise RuntimeError("Repository validator source-sanitizer decoy anchor differs.")
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-validator-source-sanitizer-"
+    ) as directory:
+        scripts = Path(directory) / "scripts"
+        scripts.mkdir(parents=True)
+        validator = scripts / "validate-repository.py"
+        validator.write_text(validator_sanitizer_decoy, encoding="utf-8", newline="\n")
+        require_exact_validator_result(
+            run_exact_validator(validator, validator_sanitizer_decoy.encode("utf-8"))
+        )
+    try:
+        _validate_validator_cli_structure_independently(validator_sanitizer_decoy)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Repository validator independent CLI accepted a source sanitizer.")
+
+    validator_contract_acceptance_decoy = validator_source.replace(
+        "def validate_contract_test_acceptance_chain(source: str) -> None:\n",
+        "def validate_contract_test_acceptance_chain(source: str) -> None:\n    return\n",
+        1,
+    )
+    if validator_contract_acceptance_decoy == validator_source:
+        raise RuntimeError("Repository validator contract-acceptance decoy anchor differs.")
+    contract_acceptance_decoy_module = module_from_source(
+        "scripts/validate-repository.py",
+        "validate_repository_contract_acceptance_decoy",
+        validator_contract_acceptance_decoy.encode("utf-8"),
+    )
+    contract_acceptance_decoy_module.validate_contract_test_acceptance_chain(
+        "not valid Python and not the accepted hostile fixture"
+    )
+    try:
+        _validate_validator_cli_structure_independently(
+            validator_contract_acceptance_decoy
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError(
+            "Repository validator independent CLI accepted a disabled contract acceptance gate."
+        )
+
+    for normalizer in (_normalize_import_path, VALIDATOR._normalize_import_path):
+        for hostile_path in (
+            "/usr/local/../tmp/untrusted-candidate",
+            "/usr/local//tmp/untrusted-candidate",
+            "relative/untrusted-candidate",
+            "C:/trusted/./untrusted-candidate",
+        ):
+            try:
+                normalizer(hostile_path)
+            except RuntimeError:
+                continue
+            raise RuntimeError("Python import-path normalizer accepted lexical ambiguity.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-python-startup-"
+    ) as directory:
+        startup_root = Path(directory)
+        sentinel = startup_root / "sitecustomize-loaded"
+        (startup_root / "sitecustomize.py").write_text(
+            "import os\n"
+            "from pathlib import Path\n"
+            "Path(os.environ['MOCHIRII_STARTUP_SENTINEL']).write_bytes(b'loaded')\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        environment = {
+            **os.environ,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(startup_root),
+            "MOCHIRII_STARTUP_SENTINEL": str(sentinel),
+        }
+        startup_error = f"Trusted Python startup boundary is unavailable.{os.linesep}".encode(
+            "ascii"
+        )
+        actual_entries = (
+            ROOT / "scripts/validate-repository.py",
+            ROOT / "scripts/test-contracts.py",
+        )
+        for candidate in actual_entries:
+            sentinel.unlink(missing_ok=True)
+            unsafe = subprocess.run(
+                [sys.executable, "-B", str(candidate)],
+                cwd=ROOT,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=20,
+                check=False,
+            )
+            if (
+                unsafe.returncode == 0
+                or unsafe.stdout
+                or unsafe.stderr != startup_error
+                or not sentinel.is_file()
+            ):
+                raise RuntimeError("Ordinary Python startup bypass was not rejected categorically.")
+
+        sentinel.unlink(missing_ok=True)
+        safe_validator = subprocess.run(
+            [sys.executable, "-I", "-S", "-B", str(actual_entries[0])],
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300,
+            check=False,
+        )
+        require_exact_validator_result(safe_validator)
+        if sentinel.exists():
+            raise RuntimeError("Isolated validator startup executed sitecustomize.")
+
+        safe_contract_probe = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                "-c",
+                "import runpy,sys; runpy.run_path(sys.argv[1], run_name='mochirii_contract_probe')",
+                str(actual_entries[1]),
+            ],
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=300,
+            check=False,
+        )
+        if (
+            safe_contract_probe.returncode != 0
+            or safe_contract_probe.stdout
+            or safe_contract_probe.stderr
+            or sentinel.exists()
+        ):
+            raise RuntimeError("Isolated hostile-fixture startup boundary differs.")
+
+        for candidate in actual_entries:
+            missing_no_site = subprocess.run(
+                [sys.executable, "-I", "-B", str(candidate)],
+                cwd=ROOT,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=20,
+                check=False,
+            )
+            if (
+                missing_no_site.returncode == 0
+                or missing_no_site.stdout
+                or missing_no_site.stderr != startup_error
+            ):
+                raise RuntimeError("Python no-site startup requirement is not live.")
+
+        preloaded = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                "-c",
+                "import runpy,sys,types; sys.modules['ast']=types.ModuleType('ast'); runpy.run_path(sys.argv[1], run_name='__main__')",
+                str(actual_entries[0]),
+            ],
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=20,
+            check=False,
+        )
+        if (
+            preloaded.returncode == 0
+            or preloaded.stdout
+            or preloaded.stderr != startup_error
+        ):
+            raise RuntimeError("Preloaded Python module bypass was not rejected categorically.")
+
+    launcher_paths = (
+        ".github/workflows/validate-repository.yml",
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/host-deploy.sh",
+        "scripts/test-contracts.py",
+        "scripts/test-source-introduction.ps1",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
+    launcher_sources = {
+        relative: (ROOT / relative).read_text(encoding="utf-8")
+        for relative in launcher_paths
+    }
+    VALIDATOR.validate_python_acceptance_launchers(launcher_sources)
+    fully_rebased_contract = acceptance_mutants[0]
+    fully_rebased_contract = rebase_independent_verifier_expected_seal(
+        fully_rebased_contract,
+        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256",
+        contract_test_function_inventory_sha256(fully_rebased_contract),
+    )
+    fully_rebased_contract = rebase_independent_verifier_expected_seal(
+        fully_rebased_contract,
+        "FAILED_BOOTSTRAP_TEST_SHA256",
+        contract_test_function_sha256(
+            fully_rebased_contract, "test_failed_bootstrap_quarantine_contract"
+        ),
+    )
+    fully_rebased_validator = rebase_contract_test_digest(
+        validator_source, fully_rebased_contract
+    )
+    fully_rebased_validator = rebase_contract_test_function_inventory_digest(
+        fully_rebased_validator, fully_rebased_contract
+    )
+    fully_rebased_validator = rebase_independent_verifier_digest(
+        fully_rebased_validator, fully_rebased_contract
+    )
+    fully_rebased_validator = rebase_failed_bootstrap_test_digest(
+        fully_rebased_validator, fully_rebased_contract
+    )
+    fully_rebased_module = module_from_source(
+        "scripts/validate-repository.py",
+        "validate_repository_complete_pair_rebase",
+        fully_rebased_validator.encode("utf-8"),
+    )
+    fully_rebased_module.validate_validator_cli_acceptance_chain(
+        fully_rebased_validator
+    )
+    fully_rebased_module.validate_contract_test_acceptance_chain(
+        fully_rebased_contract
+    )
+    fully_rebased_launchers = dict(launcher_sources)
+    fully_rebased_launchers["scripts/validate-repository.py"] = fully_rebased_validator
+    fully_rebased_launchers["scripts/test-contracts.py"] = fully_rebased_contract
+    expect_validation_failure(
+        lambda: fully_rebased_module.validate_python_acceptance_launchers(
+            fully_rebased_launchers
+        ),
+        "externally rooted complete validator and hostile-suite rebase",
+    )
+    expect_validation_failure(
+        lambda: validate_validator_cli_independently(
+            fully_rebased_validator,
+            fully_rebased_contract,
+            TRUSTED_PYTHON_ACCEPTANCE_CONSUMER_SOURCES,
+        ),
+        "independent verifier complete validator and hostile-suite rebase",
+    )
+    launcher_mutations = {
+        ".github/workflows/validate-repository.yml": (
+            "/usr/bin/python3 -I -S -B scripts/test-contracts.py",
+            "/usr/bin/python3 -I -B scripts/test-contracts.py",
+        ),
+        "scripts/check-repository.ps1": (
+            "@('-I', '-S', '-B', 'scripts/validate-repository.py')",
+            "@('-I', '-B', 'scripts/validate-repository.py')",
+        ),
+        "scripts/check-source-introduction.ps1": (
+            "python -I -S -B",
+            "python -I -B",
+        ),
+        "scripts/host-deploy.sh": (
+            'python3 -I -S -B "${candidate}/scripts/test-contracts.py"',
+            'python3 -I -B "${candidate}/scripts/test-contracts.py"',
+        ),
+        "scripts/test-contracts.py": (
+            '[sys.executable, "-I", "-S", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]',
+            '[sys.executable, "-I", "-B", "-c", EXACT_VALIDATOR_WRAPPER, str(path)]',
+        ),
+        "scripts/test-source-introduction.ps1": (
+            "python -I -S -B",
+            "python -I -B",
+        ),
+        "scripts/upgrade-host-control.sh": (
+            'python3 -I -S -B "${candidate}/scripts/validate-repository.py"',
+            'python3 -I -B "${candidate}/scripts/validate-repository.py"',
+        ),
+    }
+    for relative, (before, after) in launcher_mutations.items():
+        mutant = dict(launcher_sources)
+        mutant[relative] = mutant[relative].replace(before, after, 1)
+        if mutant[relative] == launcher_sources[relative]:
+            raise RuntimeError("Trusted Python caller mutation anchor differs.")
+        expect_validation_failure(
+            lambda mutant=mutant: VALIDATOR.validate_python_acceptance_launchers(mutant),
+            "trusted Python caller startup flags",
+        )
+    for relative in ("scripts/validate-repository.py", "scripts/test-contracts.py"):
+        mutant = dict(launcher_sources)
+        mutant[relative] = f"{mutant[relative]}# exact-success decoy\n"
+        expect_validation_failure(
+            lambda mutant=mutant: VALIDATOR.validate_python_acceptance_launchers(mutant),
+            "trusted Python caller source digest",
+        )
 
     def exact_shell_function(script_source: str, name: str) -> str:
         marker = f"{name}() {{"
@@ -12024,11 +13558,32 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         if len(definitions) != 1 or definitions[0].group(0) != marker:
             raise RuntimeError(f"Shell function {name} is absent, duplicated, or noncanonical.")
         start = definitions[0].start()
-        try:
-            end = script_source.index("\n}\n", start) + 3
-        except ValueError as error:
-            raise RuntimeError(f"Shell function {name} is unterminated.") from error
-        return script_source[start:end]
+        cursor = start
+        heredoc: tuple[str, bool] | None = None
+        heredoc_pattern = re.compile(
+            r"(?<!<)<<(?P<strip>-)?[ \t]*(?:'(?P<single>[^']+)'|\"(?P<double>[^\"]+)\"|(?P<bare>[A-Za-z_][A-Za-z0-9_]*))"
+        )
+        while cursor < len(script_source):
+            line_end = script_source.find("\n", cursor)
+            if line_end < 0:
+                raise RuntimeError(f"Shell function {name} is unterminated.")
+            line_end += 1
+            line = script_source[cursor:line_end]
+            body = line[:-1]
+            if heredoc is not None:
+                delimiter, strip_tabs = heredoc
+                candidate = body.lstrip("\t") if strip_tabs else body
+                if candidate == delimiter:
+                    heredoc = None
+            else:
+                if line == "}\n":
+                    return script_source[start:line_end]
+                match = heredoc_pattern.search(body)
+                if match is not None:
+                    delimiter = match.group("single") or match.group("double") or match.group("bare")
+                    heredoc = (delimiter, match.group("strip") is not None)
+            cursor = line_end
+        raise RuntimeError(f"Shell function {name} is unterminated.")
 
     def require_exact_line(block: str, line: str, label: str) -> None:
         if block.splitlines().count(line) != 1:
@@ -12058,24 +13613,40 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             "Failed-bootstrap retained-state lineage call",
         )
         require_exact_line(
+            state,
+            '  terminal_staging="${evidence_root}/.${failed}-${journal_sha}-failed-bootstrap-quarantine.json.publish"',
+            "Failed-bootstrap retained-state terminal staging derivation",
+        )
+        require_exact_line(
             preflight,
             '  readarray -t preflight < <(validate_failed_bootstrap_state "$2") || fail "Failed-bootstrap upgrade preflight rejected the retained state."',
             "Failed-bootstrap upgrade-preflight state call",
         )
-        require_exact_line(
-            recovery,
-            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs."',
-            "Failed-bootstrap pending-recovery lineage call",
+        pending_recovery_order = (
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs before identity repair."',
+            '  readarray -t recovery_identity < <(read_quarantine_identity pending "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap pending recovery identity was rejected."',
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs after identity repair."',
         )
+        terminal_recovery_order = (
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs before identity repair."',
+            '  readarray -t recovery_identity < <(read_quarantine_identity terminal "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap terminal recovery identity was rejected."',
+            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs after identity repair."',
+        )
+        for label, ordered_lines in (
+            ("pending", pending_recovery_order),
+            ("terminal", terminal_recovery_order),
+        ):
+            for line in ordered_lines:
+                require_exact_line(recovery, line, f"Failed-bootstrap {label} recovery authority line")
+            offsets = tuple(recovery.index(line) for line in ordered_lines)
+            if offsets != tuple(sorted(offsets)):
+                raise RuntimeError(
+                    f"Failed-bootstrap {label} recovery can mutate before source authority."
+                )
         require_exact_line(
             recovery,
             '  readarray -t preflight < <(validate_failed_bootstrap_state "${current_commit}") || fail "Failed-bootstrap quarantine rejected the retained state."',
             "Failed-bootstrap active-journal state call",
-        )
-        require_exact_line(
-            recovery,
-            '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs."',
-            "Failed-bootstrap terminal-recovery lineage call",
         )
 
         bind = exact_shell_function(upgrade_source, "bind_invoked_canonical_successor")
@@ -12087,18 +13658,18 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         main_start = upgrade_source.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."')
         main = upgrade_source[main_start:]
         exact_section_sha256 = {
-            "quarantine-lineage": "5664cab82a15c6e1bebf567a16f0537347c9022b27718746b3393aeee1cfb4ce",
-            "quarantine-state": "df91f3b80c769445be74dde7ad48ddbc2fc7ac364178a1bfcea8a802e56a6b3f",
-            "quarantine-identity": "0fbfc024186b764aeda3f06972706fdc8e0a3158b9e0c2be19c8434c3c0b5ba2",
+            "quarantine-lineage": "f560af0212226cd5499191e7ad91b152e7e4ed3ad3fc0bb490818159ef81b0dc",
+            "quarantine-state": "c81b2fc822775b576c4f408a5f49e079923774e08569e2c43d42a9ca5db2bcc1",
+            "quarantine-identity": "8ea0576bac3f50f2ea87ff993d9e1f171c23940dba1dd6dd5b6bbe9c23d8e4b3",
             "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
-            "quarantine-recovery": "b376df77881d87ecfb32b1ccfa57b64c1cc9aad5bccd0f01084c9088c3582c59",
-            "upgrade-selector": "bc916459809376bf402e4637b607e1b7888ba12b1377ec792007dfe4556851cf",
-            "upgrade-path-validator": "fb0c43523264cf31afcc0d8122dc9500d43cab249aa7d82d6d68982f98a5a36e",
-            "upgrade-binder": "dae6ab03616bf9df78d91f869e49836dbb7e827b6737b7f7d9c6a57aa2a377c8",
+            "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
+            "upgrade-selector": "544ba5ce5a8dbb9e2f1772eafa0d6aa9b6de06bf683d58aedc7314d4eb30bf93",
+            "upgrade-path-validator": "c49fb1f5da2906d58642819c6a8bcdd81c48d419963bb321a05691e90b652896",
+            "upgrade-binder": "7b9a240168ec90ac2ea3f95e42e29236e9a6396d95d421801912334eef4a983b",
             "upgrade-exception": "6ea0d4ff36175b26333ce78608d1f12092da953a192170897c33340411f5dbe3",
             "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
             "upgrade-signal": "e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f",
-            "upgrade-main": "330c799924dc01eb499fe639ed9e4f99606f6b64dcba352c7d2de6a84bf56488",
+            "upgrade-main": "ce155567c0b81494cf94f8a9a0b52c981d28b50c30215d460ec93c85cfd2e12a",
         }
         exact_sections = {
             "quarantine-lineage": lineage,
@@ -12173,9 +13744,13 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     quarantine_calls = (
         '  validate_source_lineage "${current}" "${failed}" || return 1',
         '  readarray -t preflight < <(validate_failed_bootstrap_state "$2") || fail "Failed-bootstrap upgrade preflight rejected the retained state."',
-        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs."',
+        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs before identity repair."',
+        '  readarray -t recovery_identity < <(read_quarantine_identity pending "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap pending recovery identity was rejected."',
+        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap pending recovery source lineage differs after identity repair."',
         '  readarray -t preflight < <(validate_failed_bootstrap_state "${current_commit}") || fail "Failed-bootstrap quarantine rejected the retained state."',
-        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs."',
+        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs before identity repair."',
+        '  readarray -t recovery_identity < <(read_quarantine_identity terminal "${current_commit}" "${failed_commit}") || fail "Failed-bootstrap terminal recovery identity was rejected."',
+        '  validate_source_lineage "${current_commit}" "${failed_commit}" || fail "Failed-bootstrap terminal recovery source lineage differs after identity repair."',
     )
     for index, call in enumerate(quarantine_calls):
         require_binding_rejection(
@@ -12265,10 +13840,19 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
         'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
         'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
+        'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
+        'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
+        'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
+        'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
+        'rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}"',
         'rev-parse --verify "${reviewed_recovery_commit}^1"',
         'rev-list --parents -n 1 "${reviewed_recovery_commit}"',
+        'GIT_NO_REPLACE_OBJECTS=1',
+        '${source_root}/.git/commondir',
+        '${source_root}/.git/info/grafts',
+        'actual_path_output="$(git -C "${source_root}" diff-tree',
         "validate_quarantine_environment() {",
         "read_quarantine_identity() {",
         'if [[ ${1:-} == --upgrade-preflight ]]',
@@ -12279,15 +13863,52 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "list(itertools.islice(evidence.iterdir(), 4097))",
         "def exact_inventory(path, maximum, label):",
         "list(itertools.islice(path.iterdir(), maximum + 1))",
+        "def publication_staging(path):",
+        "def publication_alias(path, metadata, allow_candidate):",
+        "def observe_authority(document, candidate=None):",
+        '"${standalone_root}" "${recovery_root}" "${deployment_journal}"',
+        "def read_candidate(path):",
+        "type(mutation_sha) is str",
+        'document.get("standalonePath") == str(standalone)',
+        'document.get("quarantinePath") == str(recovery / f"{failed}-{mutation_sha}")',
+        'document.get("mutationEvidencePath") == str(',
+        "def publication_alias(path, metadata, label):",
+        "def finish_publication_alias(path, staging, raw, label):",
+        "def finish_publication_update(path, staging, previous_raw, replacement_raw, label):",
+        "def finish_mutation_evidence_alias(source, destination, expected_sha):",
+        "def observe_pending_publication(document, alias, staged):",
+        "def require_mutation_authority(allowed):",
+        "def validate_prepared_runtime(document):",
+        "def validate_prepared_replay_runtime(document):",
+        "def validate_quarantined_runtime(document):",
+        "def validate_runtime_quarantined_replay(document):",
+        "def validate_clean_runtime(document):",
+        "def validate_pending_publication_runtime(document, alias, staged):",
+        "def observe_recovery_root():",
+        "def preflight_pending_staging():",
+        "def preflight_terminal_staging():",
+        "def persist_directory(path):",
+        "def durable_directory_move(source, destination):",
+        "def link_unnamed_staging(descriptor, staging):",
+        'raise SystemExit("failed-bootstrap terminal publication staging is unsafe")',
+        "os.O_RDWR | os.O_TMPFILE | os.O_NOFOLLOW",
+        "link_unnamed_staging(descriptor, staging)",
+        "os.link(staging, path, follow_symlinks=False)",
         "# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
         'phase_order = {"prepared": 0, "runtime-quarantined": 1, "clean-boundary": 2, "authority-retired": 3}',
-        "os.rename(standalone, quarantine)",
-        "os.rename(old_ssl, new_ssl)",
-        "os.rename(mutation, mutation_evidence)",
+        "durable_directory_move(standalone, quarantine)",
+        "durable_directory_move(old_ssl, new_ssl)",
+        "os.link(mutation, mutation_evidence, follow_symlinks=False)",
+        "fsync_directory(mutation_evidence.parent)",
+        "mutation.unlink()",
+        "fsync_directory(mutation.parent)",
         'validate_state(state, {"prepared"})',
         "validate_state(state, {phase})",
         'validate_state(terminal_document, {"complete"}, terminal_state=True)',
         "publish(terminal, terminal_document, True)",
+        "fsync_directory(terminal.parent)",
+        "fsync_directory(new_ssl.parent)",
+        "fsync_directory(old_ssl.parent)",
         "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
     )
     if any(value not in source for value in required_source):
@@ -12349,6 +13970,52 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "scripts/upgrade-host-control.sh",
         "scripts/validate-repository.py",
     )
+    acme_material_repair_expected_paths = (
+        "config/immutable-letsencrypt.fragment.yml",
+        "scripts/test-contracts.py",
+        "scripts/validate-repository.py",
+    )
+    acme_material_review_authority_expected_paths = (
+        ".gitattributes",
+        ".github/CODEOWNERS",
+        ".github/workflows/open-reviewed-source-pr.yml",
+        "CONTRIBUTING.md",
+        "docs/adr/0001-clean-initialization-and-canonical-ownership.md",
+        "scripts/test-contracts.py",
+        "scripts/validate-repository.py",
+    )
+    acme_material_current_expected_paths = (
+        ".github/workflows/validate-repository.yml",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/host-deploy.sh",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/test-source-introduction.ps1",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
+    acme_material_expected_paths = (
+        ".gitattributes",
+        ".github/CODEOWNERS",
+        ".github/workflows/open-reviewed-source-pr.yml",
+        ".github/workflows/validate-repository.yml",
+        "CONTRIBUTING.md",
+        "config/immutable-letsencrypt.fragment.yml",
+        "docs/adr/0001-clean-initialization-and-canonical-ownership.md",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/host-deploy.sh",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/test-source-introduction.ps1",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
         ("active_swap_expected_paths", active_swap_expected_paths),
@@ -12356,6 +14023,13 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         ("quarantine_output_expected_paths", quarantine_output_expected_paths),
         ("acme_reload_privacy_expected_paths", acme_reload_privacy_expected_paths),
         ("acme_webroot_expected_paths", acme_webroot_expected_paths),
+        ("acme_material_repair_expected_paths", acme_material_repair_expected_paths),
+        (
+            "acme_material_review_authority_expected_paths",
+            acme_material_review_authority_expected_paths,
+        ),
+        ("acme_material_current_expected_paths", acme_material_current_expected_paths),
+        ("acme_material_expected_paths", acme_material_expected_paths),
     ):
         marker = f"local -ar {name}=("
         block_start = source.index(marker)
@@ -12367,12 +14041,13 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         for value in (
             "rm -rf",
             "shutil.rmtree",
-            "mutation.unlink()",
             "mutation_evidence.unlink()",
             "quarantine.rmdir()",
         )
     ):
         raise RuntimeError("Failed-bootstrap quarantine gained retained-evidence deletion authority.")
+    if source.count("mutation.unlink()") != 1:
+        raise RuntimeError("Failed-bootstrap mutation authority retirement count differs.")
     for value in (
         "validate_failed_bootstrap_upgrade_exception() {",
         "select_reviewed_failed_bootstrap_recovery_commit() {",
@@ -12391,6 +14066,9 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_reload_privacy_launcher_child_commit="a71bbe8070ca6dadeff3c4966e81bd97fee83cf7"',
         'readonly reviewed_acme_webroot_failed_bootstrap_commit="9110568e09bda4d572eaf2c27a768b9c053048f9"',
         'readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afdad7372f7"',
+        'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
+        'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
+        'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -12472,6 +14150,9 @@ reviewed_acme_reload_privacy_recovery_child_commit=591d96484369ae29a8fa4e61219b3
 reviewed_acme_reload_privacy_launcher_child_commit=a71bbe8070ca6dadeff3c4966e81bd97fee83cf7
 reviewed_acme_webroot_failed_bootstrap_commit=9110568e09bda4d572eaf2c27a768b9c053048f9
 reviewed_acme_webroot_recovery_commit=bb891aa65ebe8470fa04cdd639185afdad7372f7
+reviewed_acme_material_failed_bootstrap_commit=81e5226e54246686ce0ef80051d4df2cd1b64c5e
+reviewed_acme_material_recovery_commit=64e12c2344fbc04d44b10c495cf9651cac5ac0b8
+reviewed_acme_material_review_authority_commit=af3540426051c94bf26e9661ac68ce8ee720f977
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -12479,13 +14160,16 @@ case "${{LINEAGE_KIND:-legacy}}" in
   quarantine) failed="$reviewed_quarantine_output_failed_bootstrap_commit"; reviewed="$reviewed_quarantine_output_recovery_commit" ;;
   reload_privacy) failed="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
   webroot) failed="$reviewed_acme_webroot_failed_bootstrap_commit"; reviewed="$reviewed_acme_webroot_recovery_commit" ;;
+  material) failed="$reviewed_acme_material_failed_bootstrap_commit"; reviewed="$reviewed_acme_material_recovery_commit" ;;
   unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) exit 84 ;;
 esac
 current_parent="$reviewed"
 [[ ${{LINEAGE_KIND:-legacy}} != reload_privacy ]] || current_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
+[[ ${{LINEAGE_KIND:-legacy}} != material ]] || current_parent="$reviewed_acme_material_review_authority_commit"
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 git() {{
+  [[ -z ${{GIT_DIR+x}} && -z ${{GIT_WORK_TREE+x}} && -z ${{GIT_INDEX_FILE+x}} && -z ${{GIT_OBJECT_DIRECTORY+x}} && -z ${{GIT_ALTERNATE_OBJECT_DIRECTORIES+x}} && -z ${{GIT_COMMON_DIR+x}} && -z ${{GIT_REPLACE_REF_BASE+x}} && -z ${{GIT_ASKPASS+x}} && -z ${{SSH_ASKPASS+x}} && -z ${{GIT_SSH+x}} && -z ${{GIT_SSH_COMMAND+x}} && -z ${{GIT_CONFIG_PARAMETERS+x}} && -z ${{GIT_CONFIG_SYSTEM+x}} && -z ${{GIT_PROTOCOL_FROM_USER+x}} && ${{GIT_TERMINAL_PROMPT:-}} == 0 && ${{GIT_CONFIG_NOSYSTEM:-}} == 1 && ${{GIT_CONFIG_GLOBAL:-}} == /dev/null && ${{GIT_CONFIG_COUNT:-}} == 0 && ${{GIT_NO_REPLACE_OBJECTS:-}} == 1 ]] || return 81
   case "$*" in
     "-C ${{source_root}} rev-parse --verify HEAD^{{commit}}") [[ ${{LINEAGE_MUTATION:-none}} != head ]] && printf '%s\n' "$current" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} symbolic-ref --short -q HEAD") [[ ${{LINEAGE_MUTATION:-none}} != branch ]] && printf '%s\n' main || printf '%s\n' topic ;;
@@ -12495,6 +14179,8 @@ git() {{
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_launcher_child_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != launcher-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_launcher_child_commit" "$reviewed_acme_reload_privacy_recovery_child_commit" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_reload_privacy_recovery_child_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != recovery-child-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_material_review_authority_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != review-authority-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_material_review_authority_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != review-authority-parents ]] && printf '%s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{LINEAGE_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$failed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$failed" || printf '%s %s %s\n' "$reviewed" "$failed" unrelated ;;
     "-c core.fsmonitor=false -C ${{source_root}} status --porcelain=v1 --untracked-files=all")
@@ -12503,6 +14189,39 @@ git() {{
       ;;
     "-C ${{source_root}} remote get-url origin") [[ ${{LINEAGE_MUTATION:-none}} != origin ]] && printf '%s\n' "$canonical_repository" || printf '%s\n' https://example.invalid/other.git ;;
     *"ls-remote --refs ${{canonical_repository}} refs/heads/main") [[ ${{LINEAGE_MUTATION:-none}} != remote ]] && printf '%s\trefs/heads/main\n' "$current" || printf '%s\trefs/heads/main\n' unrelated ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_failed_bootstrap_commit}} ${{reviewed_acme_material_recovery_commit}}")
+      printf '%s\n' \
+        config/immutable-letsencrypt.fragment.yml \
+        scripts/test-contracts.py
+      [[ ${{LINEAGE_MUTATION:-none}} == material-repair-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{LINEAGE_MUTATION:-none}} != material-repair-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_recovery_commit}} ${{reviewed_acme_material_review_authority_commit}}")
+      printf '%s\n' \
+        .gitattributes \
+        .github/CODEOWNERS \
+        .github/workflows/open-reviewed-source-pr.yml \
+        CONTRIBUTING.md \
+        docs/adr/0001-clean-initialization-and-canonical-ownership.md \
+        scripts/test-contracts.py
+      [[ ${{LINEAGE_MUTATION:-none}} == material-authority-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{LINEAGE_MUTATION:-none}} != material-authority-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_review_authority_commit}} ${{current}}")
+      printf '%s\n' \
+        .github/workflows/validate-repository.yml \
+        docs/operations/DEPLOYMENT.md \
+        docs/operations/RECOVERY.md \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/host-deploy.sh \
+        scripts/quarantine-failed-bootstrap.sh \
+        scripts/test-contracts.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/upgrade-host-control.sh
+      [[ ${{LINEAGE_MUTATION:-none}} == material-current-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{LINEAGE_MUTATION:-none}} != material-current-status ]] || return 83
+      ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{failed}} ${{current}}")
       case "${{LINEAGE_KIND:-legacy}}" in
         active)
@@ -12557,6 +14276,26 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        material)
+          printf '%s\n' \
+            .gitattributes \
+            .github/CODEOWNERS \
+            .github/workflows/open-reviewed-source-pr.yml \
+            .github/workflows/validate-repository.yml \
+            CONTRIBUTING.md \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/adr/0001-clean-initialization-and-canonical-ownership.md \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/check-repository.ps1 \
+            scripts/check-source-introduction.ps1 \
+            scripts/host-deploy.sh \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/test-source-introduction.ps1 \
+            scripts/upgrade-host-control.sh
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -12569,6 +14308,7 @@ git() {{
           [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
       esac
+      [[ ${{LINEAGE_MUTATION:-none}} != paths-status ]] || return 83
       ;;
     *) return 82 ;;
   esac
@@ -12581,11 +14321,11 @@ validate_source_lineage "$current" "$failed"
                 ("recovery-parent", False), ("current-parents", False),
                 ("failed-parent", False), ("recovery-parents", False),
                 ("status-fail", False), ("dirty", False), ("origin", False),
-                ("remote", False), ("paths", False),
+                ("remote", False), ("paths", False), ("paths-status", False),
             )
             lineage_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot", "material")
                 for mutation, should_pass in mutation_cases
             ]
             lineage_cases.extend(
@@ -12595,8 +14335,29 @@ validate_source_lineage "$current" "$failed"
                     "recovery-child-parent", "recovery-child-parents",
                 )
             )
+            lineage_cases.extend(
+                ("material", mutation, False)
+                for mutation in (
+                    "review-authority-parent", "review-authority-parents",
+                    "material-repair-paths", "material-repair-status",
+                    "material-authority-paths", "material-authority-status",
+                    "material-current-paths", "material-current-status",
+                )
+            )
+            lineage_cases.extend(("legacy", mutation, False) for mutation in ("grafts", "commondir"))
             lineage_cases.append(("unknown", "none", False))
+            grafts_path = lineage_root / ".git" / "info" / "grafts"
+            commondir_path = lineage_root / ".git" / "commondir"
             for lineage, mutation, should_pass in lineage_cases:
+                grafts_path.unlink(missing_ok=True)
+                commondir_path.unlink(missing_ok=True)
+                if mutation == "grafts":
+                    grafts_path.parent.mkdir(parents=True, exist_ok=True)
+                    grafts_path.write_text(
+                        "c" * 40 + " " + "a" * 40 + "\n", encoding="ascii", newline="\n"
+                    )
+                elif mutation == "commondir":
+                    commondir_path.write_text("../hostile\n", encoding="ascii", newline="\n")
                 completed = subprocess.run(
                     [bash, "-c", lineage_harness],
                     stdin=subprocess.DEVNULL,
@@ -12609,6 +14370,27 @@ validate_source_lineage "$current" "$failed"
                         **os.environ,
                         "LINEAGE_KIND": lineage,
                         "LINEAGE_MUTATION": mutation,
+                        "GIT_DIR": "/hostile",
+                        "GIT_WORK_TREE": "/hostile",
+                        "GIT_INDEX_FILE": "/hostile",
+                        "GIT_OBJECT_DIRECTORY": "/hostile",
+                        "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/hostile",
+                        "GIT_COMMON_DIR": "/hostile",
+                        "GIT_REPLACE_REF_BASE": "refs/hostile",
+                        "GIT_ASKPASS": "/hostile",
+                        "SSH_ASKPASS": "/hostile",
+                        "GIT_SSH": "/hostile",
+                        "GIT_SSH_COMMAND": "/hostile",
+                        "GIT_CONFIG_PARAMETERS": "hostile",
+                        "GIT_CONFIG_SYSTEM": "/hostile",
+                        "GIT_CONFIG_GLOBAL": "/hostile",
+                        "GIT_CONFIG_NOSYSTEM": "0",
+                        "GIT_CONFIG_COUNT": "1",
+                        "GIT_CONFIG_KEY_0": "core.replaceRefs",
+                        "GIT_CONFIG_VALUE_0": "true",
+                        "GIT_PROTOCOL_FROM_USER": "1",
+                        "GIT_TERMINAL_PROMPT": "1",
+                        "GIT_NO_REPLACE_OBJECTS": "0",
                     },
                 )
                 if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
@@ -12627,6 +14409,9 @@ validate_source_lineage "$current" "$failed"
     identity_start = source.index("read_quarantine_identity() {")
     identity_end = source.index("\n}\n\nvalidate_failed_bootstrap_state() {", identity_start) + 2
     identity_function = source[identity_start:identity_end]
+    recovery_start = source.index('if [[ -e ${pending_journal} || -L ${pending_journal} ]]; then')
+    recovery_end = source.index("\nfi\n[[ ${#preflight[@]}", recovery_start) + 3
+    recovery_gate = source[recovery_start:recovery_end]
 
     def exact_reader_body(function: str, prefix: str, label: str) -> str:
         if (
@@ -12642,7 +14427,8 @@ validate_source_lineage "$current" "$failed"
     mutation_prefix = 'read_mutation_identity() {\n  python3 -B - "${deployment_journal}" <<\'PY\'\n'
     identity_prefix = (
         'read_quarantine_identity() {\n  local kind="$1" current="$2" failed="$3"\n'
-        '  python3 -B - "${kind}" "${pending_journal}" "${evidence_root}" "${current}" "${failed}" <<\'PY\'\n'
+        '  python3 -B - "${kind}" "${pending_journal}" "${evidence_root}" "${current}" "${failed}" \\\n'
+        '    "${standalone_root}" "${recovery_root}" "${deployment_journal}" <<\'PY\'\n'
     )
     mutation_reader = exact_reader_body(
         mutation_function, mutation_prefix, "Failed-bootstrap mutation identity reader"
@@ -12674,6 +14460,105 @@ validate_source_lineage "$current" "$failed"
         raise RuntimeError("Failed-bootstrap transaction source could not be extracted exactly.")
     transaction = transaction_match.group(1)
 
+    def assert_transaction_durability_order(code: str) -> None:
+        move_start = code.index("def durable_directory_move(source, destination):")
+        move_end = code.index("\ndef exact_directory", move_start)
+        move = code[move_start:move_end]
+        move_order = (
+            "    os.rename(source, destination)",
+            "    fsync_directory(destination.parent)",
+            "    fsync_directory(source.parent)",
+        )
+        persist_start = code.index("def persist_directory(path):")
+        persist_end = code.index("\ndef durable_directory_move", persist_start)
+        persist = code[persist_start:persist_end]
+        persist_order = (
+            "    fsync_directory(path)",
+            "    fsync_directory(path.parent)",
+        )
+        retirement_start = code.index("os.link(mutation, mutation_evidence, follow_symlinks=False)")
+        retirement_end = code.index(
+            "    state = reconcile_pending_publication(\n"
+            "        pending_raw, pending_base, pending_alias, pending_staged\n"
+            "    )",
+            retirement_start,
+        )
+        retirement = code[retirement_start:retirement_end]
+        retirement_order = (
+            "os.link(mutation, mutation_evidence, follow_symlinks=False)",
+            "fsync_directory(mutation_evidence.parent)",
+            "mutation.unlink()",
+            "fsync_directory(mutation.parent)",
+        )
+        for label, block, ordered in (
+            ("directory move", move, move_order),
+            ("directory metadata", persist, persist_order),
+            ("mutation retirement", retirement, retirement_order),
+        ):
+            normalized = [line.strip() for line in block.splitlines()]
+            if any(normalized.count(line.strip()) != 1 for line in ordered):
+                raise RuntimeError(f"Failed-bootstrap {label} durability statement inventory differs.")
+            offsets = tuple(block.index(line) for line in ordered)
+            if offsets != tuple(sorted(offsets)):
+                raise RuntimeError(f"Failed-bootstrap {label} durability order differs.")
+        preflight_start = code.index("def preflight_pending_staging():")
+        preflight_end = code.index("\nexact_directory(shared_root", preflight_start)
+        preflight = code[preflight_start:preflight_end]
+        preflight_bindings = (
+            'if not path_exists(staging, "failed-bootstrap pending publication staging"):',
+            'if path_exists(pending, "failed-bootstrap pending journal"):',
+            'if path_exists(terminal, "failed-bootstrap terminal evidence"):',
+            'validate_state(staging_document, {"prepared"})',
+            "validate_prepared_runtime(staging_document)",
+            'if not path_exists(pending, "failed-bootstrap pending journal"):',
+            "pending_candidate = observe_pending_publication(",
+            'validate_state(pending_document, {"authority-retired"})',
+            "if pending_alias is not None or pending_candidate is not None:",
+            "if staging_document != expected:",
+            "validate_completed_runtime(pending_document)",
+        )
+        if any(binding not in preflight for binding in preflight_bindings):
+            raise RuntimeError("Failed-bootstrap publication staging relational preflight differs.")
+        live = code[preflight_end:]
+        pending_preflight = live.index(
+            "pending_staging_replay = preflight_pending_staging()"
+        )
+        terminal_preflight = live.index(
+            "terminal_staging_replay = preflight_terminal_staging()"
+        )
+        first_mutation = min(
+            live.index("require_recovery_root(True)"),
+            live.index("durable_directory_move(standalone, quarantine)"),
+        )
+        if not pending_preflight < terminal_preflight < first_mutation:
+            raise RuntimeError("Failed-bootstrap reserved staging is not rejected before mutation.")
+
+    assert_transaction_durability_order(transaction)
+    durability_order_mutants = (
+        transaction.replace(
+            "    fsync_directory(destination.parent)\n    fsync_directory(source.parent)",
+            "    fsync_directory(source.parent)\n    fsync_directory(destination.parent)",
+            1,
+        ),
+        transaction.replace(
+            "    fsync_directory(path)\n    fsync_directory(path.parent)",
+            "    fsync_directory(path.parent)\n    fsync_directory(path)",
+            1,
+        ),
+        transaction.replace(
+            "        fsync_directory(mutation_evidence.parent)\n        mutation.unlink()",
+            "        mutation.unlink()\n        fsync_directory(mutation_evidence.parent)",
+            1,
+        ),
+    )
+    for mutant in durability_order_mutants:
+        try:
+            assert_transaction_durability_order(mutant)
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("Failed-bootstrap reordered durability mutant passed.")
+
     def extract_canonical(code: str, signature: str) -> str:
         start = code.index(signature)
         return code[start : code.index("\ndef reject_duplicate", start)]
@@ -12689,17 +14574,22 @@ validate_source_lineage "$current" "$failed"
         or identity_reader.count("canonical_raw = canonical(document)") != 1
         or transaction.count("if raw != canonical(document, label):") != 1
         or transaction.count('canonical(document, "failed-bootstrap quarantine document")') != 1
+        or transaction.count("def publication_staging(path):") != 1
+        or transaction.count("def publication_alias(path, metadata, label):") != 1
+        or transaction.count("def finish_publication_alias(path, staging, raw, label):") != 1
+        or transaction.count("def preflight_pending_staging():") != 1
+        or transaction.count("def preflight_terminal_staging():") != 1
     ):
         raise RuntimeError("Failed-bootstrap canonicalizer consumer binding differs.")
     crash_anchors = (
         "publish(pending, state, True)",
-        "os.rename(standalone, quarantine)",
+        "durable_directory_move(standalone, quarantine)",
         'advance("runtime-quarantined")',
         'standalone.mkdir(mode=state["standaloneMode"])',
-        "os.rename(old_ssl, new_ssl)",
+        "durable_directory_move(old_ssl, new_ssl)",
         'advance("clean-boundary")',
-        "os.rename(mutation, mutation_evidence)",
-        'advance("authority-retired")',
+        "os.link(mutation, mutation_evidence, follow_symlinks=False)",
+        'validate_state(state, {"authority-retired"})',
         "publish(terminal, terminal_document, True)",
     )
     if any(transaction.count(anchor) != 1 for anchor in crash_anchors):
@@ -12813,6 +14703,27 @@ validate_source_lineage "$current" "$failed"
             "ssl_present": ssl_present,
         }
 
+    def prepared_document(fixture: dict[str, object]) -> dict[str, object]:
+        metadata = fixture["standalone"].stat()
+        stamp = "2026-08-25T20:00:00Z"
+        return {
+            "schemaVersion": 1,
+            "operation": "failed-bootstrap-quarantine",
+            "phase": "prepared",
+            "recordedAt": stamp,
+            "updatedAt": stamp,
+            "currentControlCommit": current,
+            "failedReleaseCommit": failed,
+            "mutationSha256": fixture["mutation_sha"],
+            "standalonePath": str(fixture["standalone"]),
+            "quarantinePath": str(fixture["quarantine"]),
+            "mutationEvidencePath": str(fixture["mutation_evidence"]),
+            "standaloneUid": metadata.st_uid,
+            "standaloneGid": metadata.st_gid,
+            "standaloneMode": stat.S_IMODE(metadata.st_mode),
+            "sslPresent": fixture["ssl_present"],
+        }
+
     def run_transaction(code: str, fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(
             [
@@ -12838,12 +14749,19 @@ validate_source_lineage "$current" "$failed"
             check=False,
         )
 
-    def run_identity_reader(kind: str, fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
+    def run_identity_reader(
+        kind: str,
+        fixture: dict[str, object],
+        function: str = identity_function,
+    ) -> subprocess.CompletedProcess[bytes]:
         shell_source = (
             "set -euo pipefail\n"
             'readonly pending_journal="$2"\n'
             'readonly evidence_root="$3"\n'
-            + identity_function
+            'readonly standalone_root="$6"\n'
+            'readonly recovery_root="$7"\n'
+            'readonly deployment_journal="$8"\n'
+            + function
             + '\nread_quarantine_identity "$1" "$4" "$5"\n'
         )
         return subprocess.run(
@@ -12857,6 +14775,9 @@ validate_source_lineage "$current" "$failed"
                 str(fixture["evidence"]),
                 current,
                 failed,
+                str(fixture["standalone"]),
+                str(fixture["recovery"]),
+                str(fixture["mutation"]),
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -12866,11 +14787,14 @@ validate_source_lineage "$current" "$failed"
             check=False,
         )
 
-    def run_mutation_reader(fixture: dict[str, object]) -> subprocess.CompletedProcess[bytes]:
+    def run_mutation_reader(
+        fixture: dict[str, object],
+        function: str = mutation_function,
+    ) -> subprocess.CompletedProcess[bytes]:
         shell_source = (
             "set -euo pipefail\n"
             'readonly deployment_journal="$1"\n'
-            + mutation_function
+            + function
             + "\nread_mutation_identity\n"
         )
         return subprocess.run(
@@ -12880,6 +14804,53 @@ validate_source_lineage "$current" "$failed"
                 shell_source,
                 "mochirii-failed-bootstrap-mutation-reader",
                 str(fixture["mutation"]),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**child_environment, "PATH": "/usr/bin:/bin"},
+            timeout=20,
+            check=False,
+        )
+
+    def run_recovery_with_rejected_lineage(
+        fixture: dict[str, object],
+        function: str = identity_function,
+        fail_on_lineage_call: int = 1,
+    ) -> subprocess.CompletedProcess[bytes]:
+        shell_source = (
+            "set -euo pipefail\n"
+            'readonly pending_journal="$1"\n'
+            'readonly deployment_journal="$2"\n'
+            'readonly evidence_root="$3"\n'
+            'readonly standalone_root="$4"\n'
+            'readonly recovery_root="$5"\n'
+            'current_commit="$6"\n'
+            'failed_commit="$7"\n'
+            'fail() { printf \'%s\\n\' "$1" >&2; exit 1; }\n'
+            'lineage_calls=0\n'
+            'validate_source_lineage() { lineage_calls=$((lineage_calls + 1)); [[ ${lineage_calls} -ne '
+            + str(fail_on_lineage_call)
+            + ' ]]; }\n'
+            'validate_failed_bootstrap_state() { return 97; }\n'
+            + function
+            + "\n"
+            + recovery_gate
+            + "\n"
+        )
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "-c",
+                shell_source,
+                "mochirii-failed-bootstrap-lineage-first",
+                str(fixture["pending"]),
+                str(fixture["mutation"]),
+                str(fixture["evidence"]),
+                str(fixture["standalone"]),
+                str(fixture["recovery"]),
+                current,
+                failed,
             ],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -12926,6 +14897,22 @@ validate_source_lineage "$current" "$failed"
             "Failed-bootstrap actual identity reader",
         )
 
+    def assert_transaction_io_recovery(
+        hostile: str,
+        fixture: dict[str, object],
+        label: str,
+        expected: bytes = b"failed-bootstrap quarantine transaction failed\n",
+    ) -> None:
+        assert_categorical_failure(
+            run_transaction(hostile, fixture),
+            expected,
+            label,
+        )
+        resumed = run_transaction(transaction, fixture)
+        if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+            raise RuntimeError(f"{label} did not retain a resumable state.")
+        verify_terminal(fixture)
+
     def interrupt_after(code: str, anchor: str) -> str:
         position = code.index(anchor)
         line_start = code.rfind("\n", 0, position) + 1
@@ -12934,6 +14921,155 @@ validate_source_lineage "$current" "$failed"
             raise RuntimeError("Failed-bootstrap crash anchor is not at statement position.")
         insertion = position + len(anchor)
         return code[:insertion] + "\n" + indentation + "raise SystemExit(86)" + code[insertion:]
+
+    def abrupt_function_after(
+        code: str,
+        function_start: str,
+        function_end: str,
+        anchor: str,
+        occurrence: int,
+        guard: str,
+    ) -> str:
+        block_start = code.index(function_start)
+        block_end = code.index(function_end, block_start)
+        block = code[block_start:block_end]
+        positions = [match.start() for match in re.finditer(re.escape(anchor), block)]
+        if occurrence < 1 or len(positions) < occurrence:
+            raise RuntimeError("Failed-bootstrap internal publication crash anchor differs.")
+        position = block_start + positions[occurrence - 1]
+        line_start = code.rfind("\n", 0, position) + 1
+        indentation = code[line_start:position]
+        if indentation.strip():
+            raise RuntimeError("Failed-bootstrap internal publication crash anchor is not at statement position.")
+        insertion = position + len(anchor)
+        injected = f"\n{indentation}if {guard}:\n{indentation}    os._exit(86)"
+        return code[:insertion] + injected + code[insertion:]
+
+    def abrupt_publish_after(
+        code: str, anchor: str, occurrence: int, destination: str, create: bool
+    ) -> str:
+        return abrupt_function_after(
+            code,
+            "def publish(path, document, create, defer_update=False):",
+            "\nexact_directory(shared_root",
+            anchor,
+            occurrence,
+            f"path == {destination} and create is {create}",
+        )
+
+    def function_io_hostile(
+        code: str,
+        function_start: str,
+        function_end: str,
+        anchor: str,
+        occurrence: int,
+        sentinel: str,
+    ) -> str:
+        block_start = code.index(function_start)
+        block_end = code.index(function_end, block_start)
+        block = code[block_start:block_end]
+        positions = [match.start() for match in re.finditer(re.escape(anchor), block)]
+        if occurrence < 1 or len(positions) < occurrence:
+            raise RuntimeError("Failed-bootstrap publisher I/O anchor differs.")
+        position = block_start + positions[occurrence - 1]
+        line_start = code.rfind("\n", 0, position) + 1
+        indentation = code[line_start:position]
+        if indentation.strip():
+            raise RuntimeError("Failed-bootstrap publisher I/O anchor is not at statement position.")
+        replacement = f'raise OSError("{sentinel}")'
+        return code[:position] + replacement + code[position + len(anchor) :]
+
+    def guarded_function_io_hostile(
+        code: str,
+        function_start: str,
+        function_end: str,
+        anchor: str,
+        occurrence: int,
+        guard: str,
+        sentinel: str,
+    ) -> str:
+        block_start = code.index(function_start)
+        block_end = code.index(function_end, block_start)
+        block = code[block_start:block_end]
+        positions = [match.start() for match in re.finditer(re.escape(anchor), block)]
+        if occurrence < 1 or len(positions) < occurrence:
+            raise RuntimeError("Failed-bootstrap guarded publisher I/O anchor differs.")
+        position = block_start + positions[occurrence - 1]
+        line_start = code.rfind("\n", 0, position) + 1
+        indentation = code[line_start:position]
+        if indentation.strip():
+            raise RuntimeError("Failed-bootstrap guarded publisher anchor is not at statement position.")
+        injected = f'if {guard}:\n{indentation}    raise OSError("{sentinel}")\n{indentation}'
+        return code[:position] + injected + code[position:]
+
+    def statement_io_hostile(
+        code: str, anchor: str, occurrence: int, sentinel: str
+    ) -> str:
+        positions = [match.start() for match in re.finditer(re.escape(anchor), code)]
+        if occurrence < 1 or len(positions) < occurrence:
+            raise RuntimeError("Failed-bootstrap transaction I/O anchor differs.")
+        position = positions[occurrence - 1]
+        line_start = code.rfind("\n", 0, position) + 1
+        indentation = code[line_start:position]
+        if indentation.strip():
+            raise RuntimeError("Failed-bootstrap transaction I/O anchor is not at statement position.")
+        replacement = f'raise OSError("{sentinel}")'
+        return code[:position] + replacement + code[position + len(anchor) :]
+
+    def abrupt_after(code: str, anchor: str, occurrence: int = 1) -> str:
+        positions = [match.start() for match in re.finditer(re.escape(anchor), code)]
+        if occurrence < 1 or len(positions) < occurrence:
+            raise RuntimeError("Failed-bootstrap abrupt crash anchor differs.")
+        position = positions[occurrence - 1]
+        line_start = code.rfind("\n", 0, position) + 1
+        indentation = code[line_start:position]
+        if indentation.strip():
+            raise RuntimeError("Failed-bootstrap abrupt crash anchor is not at statement position.")
+        insertion = position + len(anchor)
+        return code[:insertion] + f"\n{indentation}os._exit(86)" + code[insertion:]
+
+    def abrupt_between(
+        code: str,
+        block_start_marker: str,
+        block_end_marker: str,
+        anchor: str,
+        occurrence: int = 1,
+    ) -> str:
+        block_start = code.index(block_start_marker)
+        block_end = code.index(block_end_marker, block_start)
+        block = code[block_start:block_end]
+        positions = [match.start() for match in re.finditer(re.escape(anchor), block)]
+        if occurrence < 1 or len(positions) < occurrence:
+            raise RuntimeError("Failed-bootstrap bounded abrupt crash anchor differs.")
+        position = block_start + positions[occurrence - 1]
+        line_start = code.rfind("\n", 0, position) + 1
+        indentation = code[line_start:position]
+        if indentation.strip():
+            raise RuntimeError("Failed-bootstrap bounded crash anchor is not at statement position.")
+        insertion = position + len(anchor)
+        return code[:insertion] + f"\n{indentation}os._exit(86)" + code[insertion:]
+
+    def regular_identity(path: Path) -> tuple[int, int, int, int, int, int, bytes]:
+        metadata = path.stat()
+        return (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_uid,
+            metadata.st_gid,
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_nlink,
+            path.read_bytes(),
+        )
+
+    def assert_reconciled_identity(
+        path: Path,
+        before: tuple[int, int, int, int, int, int, bytes],
+        label: str,
+    ) -> None:
+        after = regular_identity(path)
+        expected = (*before[:5], 1, before[6])
+        if after != expected:
+            raise RuntimeError(f"{label} altered the publication destination.")
 
     def verify_terminal(fixture: dict[str, object]) -> None:
         pending = fixture["pending"]
@@ -12955,6 +15091,12 @@ validate_source_lineage "$current" "$failed"
             raise RuntimeError("Failed-bootstrap terminal evidence tuple differs.")
         if terminal.stat().st_uid != 0 or stat.S_IMODE(terminal.stat().st_mode) != 0o600:
             raise RuntimeError("Failed-bootstrap terminal evidence ownership differs.")
+        if terminal.stat().st_nlink != 1:
+            raise RuntimeError("Failed-bootstrap terminal evidence link count differs.")
+        for published in (pending, terminal):
+            staging = published.with_name(f".{published.name}.publish")
+            if staging.exists() or staging.is_symlink():
+                raise RuntimeError("Failed-bootstrap publication staging alias was not retired.")
         if mutation_evidence.read_bytes() != fixture["mutation_raw"]:
             raise RuntimeError("Failed-bootstrap retained mutation evidence differs.")
         identity = run_identity_reader("terminal", fixture)
@@ -12994,6 +15136,438 @@ validate_source_lineage "$current" "$failed"
             expected,
             "Failed-bootstrap actual canonicalizer",
         )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-io-categorical-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        mutation_io = mutation_function.replace(
+            "    raw = path.read_bytes()",
+            '    raise OSError("PRIVATE_MUTATION_PATH")',
+            1,
+        )
+        identity_io = identity_function.replace(
+            "        raw = path.read_bytes()",
+            '        raise OSError("PRIVATE_IDENTITY_PATH")',
+            1,
+        )
+        assert_categorical_failure(
+            run_mutation_reader(fixture, mutation_io),
+            b"failed bootstrap journal is unavailable\n",
+            "Failed-bootstrap mutation-reader I/O boundary",
+        )
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        if run_transaction(armed, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap identity I/O fixture did not arm.")
+        assert_categorical_failure(
+            run_identity_reader("pending", fixture, identity_io),
+            b"failed-bootstrap recovery evidence is unavailable\n",
+            "Failed-bootstrap identity-reader I/O boundary",
+        )
+
+    transaction_io_hostiles = (
+        transaction.replace(
+            "durable_directory_move(standalone, quarantine)",
+            'raise OSError("PRIVATE_RUNTIME_PATH")',
+            1,
+        ),
+        transaction.replace(
+            "        os.fsync(descriptor)",
+            '        raise OSError("PRIVATE_FSYNC_PATH")',
+            1,
+        ),
+    )
+    for hostile in transaction_io_hostiles:
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-transaction-io-"
+        ) as directory:
+            assert_categorical_failure(
+                run_transaction(hostile, new_fixture(directory)),
+                b"failed-bootstrap quarantine transaction failed\n",
+                "Failed-bootstrap transaction outer I/O boundary",
+            )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-create-io-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        hostile = function_io_hostile(
+            transaction,
+            "def publish(path, document, create, defer_update=False):",
+            "\nexact_directory(shared_root",
+            "os.link(staging, path, follow_symlinks=False)",
+            1,
+            "PRIVATE_CREATE_PUBLICATION_PATH",
+        )
+        assert_categorical_failure(
+            run_transaction(hostile, fixture),
+            b"failed-bootstrap pending journal publication failed\n",
+            "Failed-bootstrap create publisher I/O boundary",
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-update-io-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        if run_transaction(armed, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap update publisher I/O fixture did not arm.")
+        hostile = function_io_hostile(
+            transaction,
+            "def finish_publication_update(path, staging, previous_raw, replacement_raw, label):",
+            "\ndef finish_mutation_evidence_alias",
+            "os.replace(staging, path)",
+            1,
+            "PRIVATE_UPDATE_PUBLICATION_PATH",
+        )
+        assert_categorical_failure(
+            run_transaction(hostile, fixture),
+            b"failed-bootstrap pending journal publication failed\n",
+            "Failed-bootstrap update publisher I/O boundary",
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-alias-io-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        if run_transaction(armed, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap alias publisher I/O fixture did not arm.")
+        pending = fixture["pending"]
+        staging = pending.with_name(f".{pending.name}.publish")
+        os.link(pending, staging)
+        hostile = function_io_hostile(
+            transaction,
+            "def finish_publication_alias(path, staging, raw, label):",
+            "\ndef finish_publication_update",
+            "staging.unlink()",
+            1,
+            "PRIVATE_ALIAS_PUBLICATION_PATH",
+        )
+        assert_categorical_failure(
+            run_transaction(hostile, fixture),
+            b"failed-bootstrap pending journal is unsafe\n",
+            "Failed-bootstrap alias healer I/O boundary",
+        )
+        if not staging.is_file() or pending.stat().st_nlink != 2:
+            raise RuntimeError("Failed-bootstrap alias healer I/O failure changed publication state.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-mutation-alias-io-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        interrupted = abrupt_after(
+            transaction, "os.link(mutation, mutation_evidence, follow_symlinks=False)"
+        )
+        if run_transaction(interrupted, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap mutation alias I/O fixture did not arm.")
+        hostile = function_io_hostile(
+            transaction,
+            "def finish_mutation_evidence_alias(source, destination, expected_sha):",
+            "\ndef exact_regular",
+            "source.unlink()",
+            1,
+            "PRIVATE_MUTATION_RETIREMENT_PATH",
+        )
+        assert_categorical_failure(
+            run_transaction(hostile, fixture),
+            b"deployment mutation evidence retirement failed\n",
+            "Failed-bootstrap mutation alias retirement I/O boundary",
+        )
+        if not fixture["mutation"].is_file() or not fixture["mutation_evidence"].is_file():
+            raise RuntimeError("Failed-bootstrap mutation alias I/O failure retired authority.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-mutation-retirement-io-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        hostile = transaction.replace(
+            "        mutation.unlink()",
+            '        raise OSError("PRIVATE_MUTATION_UNLINK_PATH")',
+            1,
+        )
+        assert_categorical_failure(
+            run_transaction(hostile, fixture),
+            b"failed-bootstrap quarantine transaction failed\n",
+            "Failed-bootstrap mutation retirement outer I/O boundary",
+        )
+
+    for anchor in ("pending.unlink()", "fsync_directory(pending.parent)"):
+        final_occurrence = 3 if anchor == "pending.unlink()" else 5
+        staging_occurrence = 2 if anchor == "pending.unlink()" else 3
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-final-pending-retirement-io-"
+        ) as directory:
+            hostile = statement_io_hostile(
+                transaction,
+                anchor,
+                final_occurrence,
+                "PRIVATE_FINAL_PENDING_RETIREMENT_PATH",
+            )
+            assert_transaction_io_recovery(
+                hostile,
+                new_fixture(directory),
+                "Failed-bootstrap final pending-retirement I/O boundary",
+            )
+
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-terminal-replay-retirement-io-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            terminal_armed = interrupt_after(
+                transaction, "publish(terminal, terminal_document, True)"
+            )
+            prepared = run_transaction(terminal_armed, fixture)
+            if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+                raise RuntimeError("Failed-bootstrap terminal-replay I/O fixture did not arm.")
+            hostile = statement_io_hostile(
+                transaction,
+                anchor,
+                1,
+                "PRIVATE_REPLAY_PENDING_RETIREMENT_PATH",
+            )
+            assert_transaction_io_recovery(
+                hostile,
+                fixture,
+                "Failed-bootstrap terminal-replay pending-retirement I/O boundary",
+            )
+
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-terminal-staging-retirement-io-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            staging_armed = abrupt_publish_after(
+                transaction,
+                "os.close(descriptor)",
+                1,
+                "terminal",
+                True,
+            )
+            prepared = run_transaction(staging_armed, fixture)
+            if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+                raise RuntimeError("Failed-bootstrap terminal-staging I/O fixture did not arm.")
+            hostile = statement_io_hostile(
+                transaction,
+                anchor,
+                staging_occurrence,
+                "PRIVATE_STAGING_PENDING_RETIREMENT_PATH",
+            )
+            assert_transaction_io_recovery(
+                hostile,
+                fixture,
+                "Failed-bootstrap terminal-staging pending-retirement I/O boundary",
+            )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-terminal-publication-call-io-"
+    ) as directory:
+        hostile = statement_io_hostile(
+            transaction,
+            "publish(terminal, terminal_document, True)",
+            1,
+            "PRIVATE_TERMINAL_PUBLICATION_PATH",
+        )
+        assert_transaction_io_recovery(
+            hostile,
+            new_fixture(directory),
+            "Failed-bootstrap terminal publication-call I/O boundary",
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-terminal-staging-publication-call-io-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        staging_armed = abrupt_publish_after(
+            transaction,
+            "os.close(descriptor)",
+            1,
+            "terminal",
+            True,
+        )
+        prepared = run_transaction(staging_armed, fixture)
+        if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+            raise RuntimeError("Failed-bootstrap terminal-staging publication fixture did not arm.")
+        hostile = statement_io_hostile(
+            transaction,
+            "publish(path=terminal, document=terminal_document, create=True)",
+            1,
+            "PRIVATE_TERMINAL_STAGING_PUBLICATION_PATH",
+        )
+        assert_transaction_io_recovery(
+            hostile,
+            fixture,
+            "Failed-bootstrap terminal-staging publication-call I/O boundary",
+        )
+
+    terminal_publish_io_anchors = (
+        ("os.link(staging, path, follow_symlinks=False)", 1),
+        ("fsync_directory(path.parent)", 2),
+        ("staging.unlink()", 1),
+        ("fsync_directory(path.parent)", 3),
+    )
+    for consumer in ("final", "staging-replay"):
+        for anchor, occurrence in terminal_publish_io_anchors:
+            with tempfile.TemporaryDirectory(
+                prefix=f"mochirii-failed-bootstrap-terminal-publisher-{consumer}-io-"
+            ) as directory:
+                fixture = new_fixture(directory)
+                if consumer == "staging-replay":
+                    staging_armed = abrupt_publish_after(
+                        transaction,
+                        "os.close(descriptor)",
+                        1,
+                        "terminal",
+                        True,
+                    )
+                    prepared = run_transaction(staging_armed, fixture)
+                    if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+                        raise RuntimeError(
+                            "Failed-bootstrap terminal publisher replay fixture did not arm."
+                        )
+                hostile = guarded_function_io_hostile(
+                    transaction,
+                    "def publish(path, document, create, defer_update=False):",
+                    "\nexact_directory(shared_root",
+                    anchor,
+                    occurrence,
+                    "path == terminal and create is True",
+                    "PRIVATE_TERMINAL_PUBLISHER_PATH",
+                )
+                rejected = run_transaction(hostile, fixture)
+                assert_categorical_failure(
+                    rejected,
+                    b"failed-bootstrap terminal evidence publication failed\n",
+                    f"Failed-bootstrap terminal {consumer} publisher I/O boundary",
+                )
+                terminal = fixture["terminal"]
+                terminal_staging = terminal.with_name(f".{terminal.name}.publish")
+                if (
+                    not fixture["pending"].is_file()
+                    or not fixture["mutation_evidence"].is_file()
+                    or (not terminal.is_file() and not terminal_staging.is_file())
+                ):
+                    raise RuntimeError(
+                        "Failed-bootstrap terminal publisher I/O failure lost recovery authority."
+                    )
+                resumed = run_transaction(transaction, fixture)
+                if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap terminal publisher I/O state did not resume."
+                    )
+                verify_terminal(fixture)
+
+    for anchor, occurrence in (
+        ("fsync_directory(mutation_evidence.parent)", 1),
+        ("fsync_directory(mutation.parent)", 2),
+    ):
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-mutation-retirement-fsync-io-"
+        ) as directory:
+            hostile = statement_io_hostile(
+                transaction,
+                anchor,
+                occurrence,
+                "PRIVATE_MUTATION_RETIREMENT_FSYNC_PATH",
+            )
+            assert_transaction_io_recovery(
+                hostile,
+                new_fixture(directory),
+                "Failed-bootstrap mutation-retirement parent-fsync I/O boundary",
+            )
+
+    retired_parent_retry_hostile = statement_io_hostile(
+        transaction,
+        "fsync_directory(mutation.parent)",
+        1,
+        "PRIVATE_RETIRED_SOURCE_PARENT_PATH",
+    )
+    initial_parent_retirement_hostile = statement_io_hostile(
+        transaction,
+        "fsync_directory(mutation.parent)",
+        2,
+        "PRIVATE_INITIAL_SOURCE_PARENT_PATH",
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-retired-source-parent-retry-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        first = run_transaction(initial_parent_retirement_hostile, fixture)
+        assert_categorical_failure(
+            first,
+            b"failed-bootstrap quarantine transaction failed\n",
+            "Failed-bootstrap retired source-parent first durability retry",
+        )
+        pending = fixture["pending"]
+        staging = pending.with_name(f".{pending.name}.publish")
+        if (
+            fixture["mutation"].exists()
+            or not fixture["mutation_evidence"].is_file()
+            or not pending.is_file()
+            or not staging.is_file()
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap retired source-parent first failure lost its replay state."
+            )
+        pending_before = regular_identity(pending)
+        staging_before = regular_identity(staging)
+        second = run_transaction(retired_parent_retry_hostile, fixture)
+        assert_categorical_failure(
+            second,
+            b"failed-bootstrap quarantine transaction failed\n",
+            "Failed-bootstrap retired source-parent second durability retry",
+        )
+        if (
+            regular_identity(pending) != pending_before
+            or regular_identity(staging) != staging_before
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap retired source-parent retry promoted state before durability."
+            )
+        resumed = run_transaction(transaction, fixture)
+        if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+            raise RuntimeError("Failed-bootstrap retired source-parent state did not resume.")
+        verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-alias-source-parent-retry-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        retiring = abrupt_after(
+            transaction, "os.link(mutation, mutation_evidence, follow_symlinks=False)"
+        )
+        armed = run_transaction(retiring, fixture)
+        if armed.returncode != 86 or armed.stdout or armed.stderr:
+            raise RuntimeError("Failed-bootstrap retiring source-parent fixture did not arm.")
+        helper_hostile = function_io_hostile(
+            transaction,
+            "def finish_mutation_evidence_alias(source, destination, expected_sha):",
+            "\ndef exact_regular",
+            "fsync_directory(source.parent)",
+            1,
+            "PRIVATE_ALIAS_SOURCE_PARENT_PATH",
+        )
+        assert_categorical_failure(
+            run_transaction(helper_hostile, fixture),
+            b"deployment mutation evidence retirement failed\n",
+            "Failed-bootstrap alias source-parent durability boundary",
+        )
+        if fixture["mutation"].exists() or not fixture["mutation_evidence"].is_file():
+            raise RuntimeError("Failed-bootstrap alias source-parent failure lost retained authority.")
+        assert_categorical_failure(
+            run_transaction(retired_parent_retry_hostile, fixture),
+            b"failed-bootstrap quarantine transaction failed\n",
+            "Failed-bootstrap alias source-parent replay durability boundary",
+        )
+        if fixture["terminal"].exists():
+            raise RuntimeError(
+                "Failed-bootstrap alias source-parent replay published terminal evidence early."
+            )
+        resumed = run_transaction(transaction, fixture)
+        if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+            raise RuntimeError("Failed-bootstrap alias source-parent state did not resume.")
+        verify_terminal(fixture)
 
     with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-mutation-reader-deep-") as directory:
         fixture = new_fixture(directory)
@@ -13098,6 +15672,347 @@ validate_source_lineage "$current" "$failed"
                 "pending", fixture, b"failed-bootstrap recovery evidence is malformed\n"
             )
 
+    identity_tuple_hostiles = (
+        ("standalonePath", "/unexpected/standalone"),
+        ("quarantinePath", "/unexpected/quarantine"),
+        ("mutationEvidencePath", "/unexpected/mutation-evidence.json"),
+        ("mutationSha256", 7),
+    )
+    for field, value in identity_tuple_hostiles:
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-pending-direct-{field}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = interrupt_after(transaction, "publish(pending, state, True)")
+            if run_transaction(armed, fixture).returncode != 86:
+                raise RuntimeError("Failed-bootstrap pending direct hostile did not arm.")
+            pending = fixture["pending"]
+            document = json.loads(pending.read_text(encoding="utf-8"))
+            document[field] = value
+            publish_json(pending, document)
+            before = regular_identity(pending)
+            assert_identity_reader_failure(
+                "pending", fixture, b"failed-bootstrap pending identity differs\n"
+            )
+            if regular_identity(pending) != before:
+                raise RuntimeError("Failed-bootstrap invalid pending tuple was altered.")
+
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-pending-alias-{field}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = interrupt_after(transaction, "publish(pending, state, True)")
+            if run_transaction(armed, fixture).returncode != 86:
+                raise RuntimeError("Failed-bootstrap pending alias hostile did not arm.")
+            pending = fixture["pending"]
+            document = json.loads(pending.read_text(encoding="utf-8"))
+            document[field] = value
+            publish_json(pending, document)
+            staging = pending.with_name(f".{pending.name}.publish")
+            os.link(pending, staging)
+            pending_before = regular_identity(pending)
+            staging_before = regular_identity(staging)
+            assert_identity_reader_failure(
+                "pending", fixture, b"failed-bootstrap pending identity differs\n"
+            )
+            if (
+                regular_identity(pending) != pending_before
+                or regular_identity(staging) != staging_before
+            ):
+                raise RuntimeError("Failed-bootstrap invalid pending alias was altered.")
+
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-pending-candidate-{field}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = interrupt_after(transaction, "publish(pending, state, True)")
+            if run_transaction(armed, fixture).returncode != 86:
+                raise RuntimeError("Failed-bootstrap pending candidate hostile did not arm.")
+            pending = fixture["pending"]
+            document = json.loads(pending.read_text(encoding="utf-8"))
+            candidate = {
+                **document,
+                "phase": "runtime-quarantined",
+                "updatedAt": "2026-08-25T20:02:00Z",
+                field: value,
+            }
+            staging = pending.with_name(f".{pending.name}.publish")
+            publish_json(staging, candidate)
+            pending_before = regular_identity(pending)
+            staging_before = regular_identity(staging)
+            assert_identity_reader_failure(
+                "pending",
+                fixture,
+                b"failed-bootstrap pending publication transition differs\n",
+            )
+            if (
+                regular_identity(pending) != pending_before
+                or regular_identity(staging) != staging_before
+            ):
+                raise RuntimeError("Failed-bootstrap invalid pending candidate was altered.")
+
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-terminal-alias-{field}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            completed = run_transaction(transaction, fixture)
+            if completed.returncode != 0 or completed.stdout or completed.stderr:
+                raise RuntimeError("Failed-bootstrap terminal alias hostile did not complete.")
+            terminal = fixture["terminal"]
+            document = json.loads(terminal.read_text(encoding="utf-8"))
+            document[field] = value
+            publish_json(terminal, document)
+            staging = terminal.with_name(f".{terminal.name}.publish")
+            os.link(terminal, staging)
+            terminal_before = regular_identity(terminal)
+            staging_before = regular_identity(staging)
+            assert_identity_reader_failure(
+                "terminal", fixture, b"failed-bootstrap terminal identity differs\n"
+            )
+            if (
+                regular_identity(terminal) != terminal_before
+                or regular_identity(staging) != staging_before
+            ):
+                raise RuntimeError("Failed-bootstrap invalid terminal alias was altered.")
+
+    for authority_kind, expected_transaction in (
+        ("missing", b"deployment mutation authority state differs\n"),
+        ("wrong", b"deployment mutation journal differs\n"),
+    ):
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-pending-authority-{authority_kind}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = interrupt_after(transaction, "publish(pending, state, True)")
+            if run_transaction(armed, fixture).returncode != 86:
+                raise RuntimeError("Failed-bootstrap pending-authority fixture did not arm.")
+            pending = fixture["pending"]
+            staging = pending.with_name(f".{pending.name}.publish")
+            os.link(pending, staging)
+            pending_before = regular_identity(pending)
+            staging_before = regular_identity(staging)
+            if authority_kind == "missing":
+                fixture["mutation"].unlink()
+            else:
+                publish_raw(fixture["mutation"], b'{"wrong":true}\n')
+            assert_identity_reader_failure(
+                "pending", fixture, b"failed-bootstrap recovery authority differs\n"
+            )
+            assert_categorical_failure(
+                run_transaction(transaction, fixture),
+                expected_transaction,
+                "Failed-bootstrap pending authority observation",
+            )
+            if (
+                regular_identity(pending) != pending_before
+                or regular_identity(staging) != staging_before
+                or fixture["quarantine"].exists()
+            ):
+                raise RuntimeError("Failed-bootstrap pending authority rejection changed journal state.")
+
+    for authority_kind, expected_transaction in (
+        ("missing", b"deployment mutation authority state differs\n"),
+        ("wrong", b"deployment mutation evidence differs\n"),
+        ("reappeared", b"deployment mutation authority state differs\n"),
+    ):
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-retired-authority-{authority_kind}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            terminal_armed = interrupt_after(
+                transaction, "publish(terminal, terminal_document, True)"
+            )
+            prepared = run_transaction(terminal_armed, fixture)
+            if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+                raise RuntimeError("Failed-bootstrap retired-authority fixture did not arm.")
+            fixture["terminal"].unlink()
+            pending = fixture["pending"]
+            pending_before = regular_identity(pending)
+            if authority_kind == "missing":
+                fixture["mutation_evidence"].unlink()
+            elif authority_kind == "wrong":
+                publish_raw(fixture["mutation_evidence"], b'{"wrong":true}\n')
+            else:
+                os.link(fixture["mutation_evidence"], fixture["mutation"])
+            assert_identity_reader_failure(
+                "pending", fixture, b"failed-bootstrap recovery authority differs\n"
+            )
+            assert_categorical_failure(
+                run_transaction(transaction, fixture),
+                expected_transaction,
+                "Failed-bootstrap retired authority observation",
+            )
+            if (
+                regular_identity(pending) != pending_before
+                or fixture["terminal"].exists()
+            ):
+                raise RuntimeError("Failed-bootstrap retired authority rejection changed journal state.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-terminal-pending-drift-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        terminal_armed = interrupt_after(
+            transaction, "publish(terminal, terminal_document, True)"
+        )
+        prepared = run_transaction(terminal_armed, fixture)
+        if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+            raise RuntimeError("Failed-bootstrap terminal/pending drift fixture did not arm.")
+        terminal = fixture["terminal"]
+        terminal_staging = terminal.with_name(f".{terminal.name}.publish")
+        os.link(terminal, terminal_staging)
+        pending = fixture["pending"]
+        pending_document = json.loads(pending.read_text(encoding="utf-8"))
+        pending_document["updatedAt"] = "2026-08-25T20:09:00Z"
+        publish_json(pending, pending_document)
+        terminal_before = regular_identity(terminal)
+        staging_before = regular_identity(terminal_staging)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap terminal and pending journals differ\n",
+            "Failed-bootstrap terminal/pending cross-record binding",
+        )
+        if (
+            regular_identity(terminal) != terminal_before
+            or regular_identity(terminal_staging) != staging_before
+        ):
+            raise RuntimeError("Failed-bootstrap terminal alias healed before pending agreement.")
+
+    for staging_kind in ("valid", "foreign", "symlink"):
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-terminal-preflight-{staging_kind}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = interrupt_after(transaction, "publish(pending, state, True)")
+            if run_transaction(armed, fixture).returncode != 86:
+                raise RuntimeError("Failed-bootstrap terminal preflight hostile did not arm.")
+            recovery = fixture["recovery"]
+            if not recovery.is_dir() or any(recovery.iterdir()):
+                raise RuntimeError("Failed-bootstrap terminal preflight recovery-root fixture differs.")
+            recovery.rmdir()
+            pending = fixture["pending"]
+            terminal = fixture["terminal"]
+            staging = terminal.with_name(f".{terminal.name}.publish")
+            if staging_kind == "valid":
+                document = json.loads(pending.read_text(encoding="utf-8"))
+                document.update(
+                    phase="complete",
+                    completedAt="2026-08-25T20:03:00Z",
+                    sslRestored=document["sslPresent"],
+                )
+                publish_json(staging, document)
+            elif staging_kind == "foreign":
+                publish_raw(staging, b'{"unexpected":true}\n')
+            else:
+                staging.symlink_to(pending)
+            standalone_before = sorted(path.name for path in fixture["standalone"].iterdir())
+            mutation_before = regular_identity(fixture["mutation"])
+            rejected = run_transaction(transaction, fixture)
+            assert_categorical_failure(
+                rejected,
+                b"failed-bootstrap terminal publication staging is unsafe\n",
+                "Failed-bootstrap terminal-staging preflight",
+            )
+            if (
+                not (staging.exists() or staging.is_symlink())
+                or fixture["quarantine"].exists()
+                or recovery.exists()
+                or regular_identity(fixture["mutation"]) != mutation_before
+                or sorted(path.name for path in fixture["standalone"].iterdir())
+                != standalone_before
+            ):
+                raise RuntimeError("Failed-bootstrap terminal staging crossed the runtime boundary.")
+
+    for staging_kind in ("copy", "symlink"):
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-terminal-one-link-{staging_kind}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            completed = run_transaction(transaction, fixture)
+            if completed.returncode != 0 or completed.stdout or completed.stderr:
+                raise RuntimeError("Failed-bootstrap terminal one-link hostile did not complete.")
+            terminal = fixture["terminal"]
+            staging = terminal.with_name(f".{terminal.name}.publish")
+            if staging_kind == "copy":
+                publish_raw(staging, terminal.read_bytes())
+            else:
+                staging.symlink_to(terminal)
+            terminal_before = regular_identity(terminal)
+            assert_identity_reader_failure(
+                "terminal", fixture, b"failed-bootstrap recovery evidence is unsafe\n"
+            )
+            rejected = run_transaction(transaction, fixture)
+            assert_categorical_failure(
+                rejected,
+                (
+                    b"failed-bootstrap terminal publication staging is unsafe\n"
+                    if staging_kind == "copy"
+                    else b"failed-bootstrap terminal evidence publication staging is unsafe\n"
+                ),
+                "Failed-bootstrap terminal one-link staging",
+            )
+            if (
+                regular_identity(terminal) != terminal_before
+                or not (staging.exists() or staging.is_symlink())
+            ):
+                raise RuntimeError("Failed-bootstrap terminal one-link staging was altered.")
+
+    for kind, fail_on_lineage_call, expected in (
+        (
+            "pending",
+            1,
+            b"Failed-bootstrap pending recovery source lineage differs before identity repair.\n",
+        ),
+        (
+            "terminal",
+            1,
+            b"Failed-bootstrap terminal recovery source lineage differs before identity repair.\n",
+        ),
+        (
+            "pending",
+            2,
+            b"Failed-bootstrap pending recovery source lineage differs after identity repair.\n",
+        ),
+        (
+            "terminal",
+            2,
+            b"Failed-bootstrap terminal recovery source lineage differs after identity repair.\n",
+        ),
+    ):
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-{kind}-lineage-first-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            if kind == "pending":
+                armed = interrupt_after(transaction, "publish(pending, state, True)")
+                if run_transaction(armed, fixture).returncode != 86:
+                    raise RuntimeError("Failed-bootstrap pending lineage-first fixture did not arm.")
+                destination = fixture["pending"]
+            else:
+                completed = run_transaction(transaction, fixture)
+                if completed.returncode != 0 or completed.stdout or completed.stderr:
+                    raise RuntimeError("Failed-bootstrap terminal lineage-first fixture did not complete.")
+                destination = fixture["terminal"]
+            staging = destination.with_name(f".{destination.name}.publish")
+            os.link(destination, staging)
+            destination_before = regular_identity(destination)
+            staging_before = regular_identity(staging)
+            rejected = run_recovery_with_rejected_lineage(
+                fixture, fail_on_lineage_call=fail_on_lineage_call
+            )
+            assert_categorical_failure(
+                rejected,
+                expected,
+                f"Failed-bootstrap {kind} source authority",
+            )
+            if (
+                regular_identity(destination) != destination_before
+                or regular_identity(staging) != staging_before
+            ):
+                raise RuntimeError(
+                    f"Failed-bootstrap {kind} identity mutated before source authority."
+                )
+
     with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-transaction-new-deep-") as directory:
         fixture = new_fixture(directory)
         publish_raw(fixture["mutation"], deep_json)
@@ -13169,6 +16084,64 @@ validate_source_lineage "$current" "$failed"
                 "Failed-bootstrap terminal-replay transaction schema contract",
             )
 
+    for anchor in ("pending.unlink()", "fsync_directory(pending.parent)"):
+        final_occurrence = 3 if anchor == "pending.unlink()" else 5
+        staging_occurrence = 2 if anchor == "pending.unlink()" else 3
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-pending-retirement-final-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            interrupted = abrupt_after(transaction, anchor, final_occurrence)
+            crashed = run_transaction(interrupted, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError("Failed-bootstrap final pending retirement did not stop abruptly.")
+            resumed = run_transaction(transaction, fixture)
+            if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                raise RuntimeError("Failed-bootstrap final pending retirement did not resume.")
+            verify_terminal(fixture)
+
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-pending-retirement-replay-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            terminal_armed = interrupt_after(
+                transaction, "publish(terminal, terminal_document, True)"
+            )
+            prepared = run_transaction(terminal_armed, fixture)
+            if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+                raise RuntimeError("Failed-bootstrap terminal replay retirement did not arm.")
+            interrupted = abrupt_after(transaction, anchor, 1)
+            crashed = run_transaction(interrupted, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError("Failed-bootstrap replay pending retirement did not stop abruptly.")
+            resumed = run_transaction(transaction, fixture)
+            if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                raise RuntimeError("Failed-bootstrap replay pending retirement did not resume.")
+            verify_terminal(fixture)
+
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-pending-retirement-staging-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            staging_armed = abrupt_publish_after(
+                transaction,
+                "os.close(descriptor)",
+                1,
+                "terminal",
+                True,
+            )
+            prepared = run_transaction(staging_armed, fixture)
+            if prepared.returncode != 86 or prepared.stdout or prepared.stderr:
+                raise RuntimeError("Failed-bootstrap staging pending retirement did not arm.")
+            interrupted = abrupt_after(transaction, anchor, staging_occurrence)
+            crashed = run_transaction(interrupted, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError("Failed-bootstrap staging pending retirement did not stop abruptly.")
+            resumed = run_transaction(transaction, fixture)
+            if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                raise RuntimeError("Failed-bootstrap staging pending retirement did not resume.")
+            verify_terminal(fixture)
+
     for anchor in crash_anchors:
         with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-") as directory:
             fixture = new_fixture(directory)
@@ -13189,6 +16162,612 @@ validate_source_lineage "$current" "$failed"
             if repeated.returncode != 0 or repeated.stdout or repeated.stderr:
                 raise RuntimeError("Failed-bootstrap terminal transaction is not idempotent.")
 
+    directory_move_cases = (
+        ("source == standalone", True),
+        ('source == quarantine / "ssl"', True),
+    )
+    for guard, ssl_present in directory_move_cases:
+        for anchor in (
+            "os.rename(source, destination)",
+            "fsync_directory(destination.parent)",
+            "fsync_directory(source.parent)",
+        ):
+            with tempfile.TemporaryDirectory(
+                prefix="mochirii-failed-bootstrap-directory-move-"
+            ) as directory:
+                fixture = new_fixture(directory, ssl_present=ssl_present)
+                interrupted = abrupt_function_after(
+                    transaction,
+                    "def durable_directory_move(source, destination):",
+                    "\ndef exact_directory",
+                    anchor,
+                    1,
+                    guard,
+                )
+                crashed = run_transaction(interrupted, fixture)
+                if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap durable directory move did not stop abruptly."
+                    )
+                resumed = run_transaction(transaction, fixture)
+                if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                    raise RuntimeError("Failed-bootstrap durable directory move did not resume.")
+                verify_terminal(fixture)
+
+    for guard, ssl_present in (
+        ("path == recovery_root", False),
+        ("path == quarantine", False),
+        ("path == standalone", False),
+    ):
+        for anchor in ("fsync_directory(path)", "fsync_directory(path.parent)"):
+            with tempfile.TemporaryDirectory(
+                prefix="mochirii-failed-bootstrap-directory-metadata-"
+            ) as directory:
+                fixture = new_fixture(directory, ssl_present=ssl_present)
+                interrupted = abrupt_function_after(
+                    transaction,
+                    "def persist_directory(path):",
+                    "\ndef durable_directory_move",
+                    anchor,
+                    1,
+                    guard,
+                )
+                crashed = run_transaction(interrupted, fixture)
+                if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap directory-metadata persistence did not stop abruptly."
+                    )
+                resumed = run_transaction(transaction, fixture)
+                if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap directory-metadata persistence did not resume."
+                    )
+                verify_terminal(fixture)
+
+    mutation_retirement_anchors = (
+        ("os.link(mutation, mutation_evidence, follow_symlinks=False)", 1),
+        ("fsync_directory(mutation_evidence.parent)", 1),
+        ("mutation.unlink()", 1),
+        ("fsync_directory(mutation.parent)", 2),
+    )
+    for anchor, occurrence in mutation_retirement_anchors:
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-mutation-retirement-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            interrupted = abrupt_after(transaction, anchor, occurrence)
+            crashed = run_transaction(interrupted, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError("Failed-bootstrap mutation retirement did not stop abruptly.")
+            resumed = run_transaction(transaction, fixture)
+            if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                raise RuntimeError("Failed-bootstrap mutation retirement did not resume.")
+            verify_terminal(fixture)
+
+    publication_crash_anchors = (
+        ("descriptor = os.open(path.parent, flags, 0o600)", 1, False),
+        ("os.fchmod(descriptor, 0o600)", 1, False),
+        ("os.fchown(descriptor, 0, 0)", 1, False),
+        ("written = os.write(descriptor, raw[offset:])", 1, False),
+        ("os.fsync(descriptor)", 1, False),
+        ("link_unnamed_staging(descriptor, staging)", 1, False),
+        ("fsync_directory(path.parent)", 1, False),
+        ("os.close(descriptor)", 1, False),
+        ("os.link(staging, path, follow_symlinks=False)", 1, True),
+        ("fsync_directory(path.parent)", 2, False),
+        ("staging.unlink()", 1, False),
+        ("fsync_directory(path.parent)", 3, False),
+    )
+    for destination in ("pending", "terminal"):
+        for anchor, occurrence, probe_identity_reader in publication_crash_anchors:
+            with tempfile.TemporaryDirectory(
+                prefix=f"mochirii-failed-bootstrap-publication-{destination}-"
+            ) as directory:
+                fixture = new_fixture(directory)
+                interrupted = abrupt_publish_after(
+                    transaction, anchor, occurrence, destination, True
+                )
+                crashed = run_transaction(interrupted, fixture)
+                if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap internal publication crash fixture did not stop abruptly."
+                    )
+                published = fixture[destination]
+                staging = published.with_name(f".{published.name}.publish")
+                if probe_identity_reader:
+                    before_identity = regular_identity(published)
+                    before_staging = regular_identity(staging)
+                    published_metadata = published.stat()
+                    staging_metadata = staging.stat()
+                    if (
+                        published_metadata.st_nlink != 2
+                        or staging_metadata.st_nlink != 2
+                        or published_metadata.st_dev != staging_metadata.st_dev
+                        or published_metadata.st_ino != staging_metadata.st_ino
+                    ):
+                        raise RuntimeError(
+                            "Failed-bootstrap publication alias crash fixture did not retain one exact inode."
+                        )
+                    identity = run_identity_reader(destination, fixture)
+                    expected_identity = (
+                        f"{current}\n{failed}\n{fixture['mutation_sha']}\n"
+                    ).encode("ascii")
+                    if (
+                        identity.returncode != 0
+                        or identity.stdout != expected_identity
+                        or identity.stderr
+                        or regular_identity(published) != before_identity
+                        or regular_identity(staging) != before_staging
+                    ):
+                        raise RuntimeError(
+                            "Failed-bootstrap actual identity reader mutated an exact publication alias."
+                        )
+                resumed = run_transaction(transaction, fixture)
+                if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap internal publication crash state did not resume."
+                    )
+                verify_terminal(fixture)
+                repeated = run_transaction(transaction, fixture)
+                if repeated.returncode != 0 or repeated.stdout or repeated.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap repaired publication is not terminally idempotent."
+                    )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-transaction-reader-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        interrupted = abrupt_publish_after(
+            transaction,
+            "os.link(staging, path, follow_symlinks=False)",
+            1,
+            "pending",
+            True,
+        )
+        crashed = run_transaction(interrupted, fixture)
+        pending = fixture["pending"]
+        staging = pending.with_name(f".{pending.name}.publish")
+        if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+            raise RuntimeError("Failed-bootstrap transaction-reader alias fixture did not arm.")
+        before_identity = regular_identity(pending)
+        reader_only = abrupt_after(
+            transaction,
+            "state = reconcile_pending_publication(\n"
+            "            pending_raw, state, pending_alias, pending_staged\n"
+            "        )",
+        )
+        reconciled = run_transaction(reader_only, fixture)
+        if (
+            reconciled.returncode != 86
+            or reconciled.stdout
+            or reconciled.stderr
+            or staging.exists()
+            or staging.is_symlink()
+        ):
+            raise RuntimeError("Failed-bootstrap transaction reader did not reconcile its exact alias.")
+        assert_reconciled_identity(
+            pending,
+            before_identity,
+            "Failed-bootstrap transaction reader",
+        )
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap transaction-reader fixture did not complete.")
+        verify_terminal(fixture)
+
+    pending_update_creation_anchors = publication_crash_anchors[:8]
+    for anchor, occurrence, _ in pending_update_creation_anchors:
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-publication-pending-update-create-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            interrupted = abrupt_publish_after(
+                transaction, anchor, occurrence, "pending", False
+            )
+            crashed = run_transaction(interrupted, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError(
+                    "Failed-bootstrap pending-update staging crash did not stop abruptly."
+                )
+            resumed = run_transaction(transaction, fixture)
+            if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                raise RuntimeError("Failed-bootstrap pending-update staging did not resume.")
+            verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-pending-update-identity-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        interrupted = abrupt_publish_after(
+            transaction,
+            "os.close(descriptor)",
+            1,
+            "pending",
+            False,
+        )
+        crashed = run_transaction(interrupted, fixture)
+        pending = fixture["pending"]
+        staging = pending.with_name(f".{pending.name}.publish")
+        if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+            raise RuntimeError(
+                "Failed-bootstrap pending-update identity fixture did not stop abruptly."
+            )
+        pending_identity = regular_identity(pending)
+        staging_identity = regular_identity(staging)
+        identity = run_identity_reader("pending", fixture)
+        expected_identity = f"{current}\n{failed}\n{fixture['mutation_sha']}\n".encode("ascii")
+        if identity.returncode != 0 or identity.stdout != expected_identity or identity.stderr:
+            raise RuntimeError(
+                "Failed-bootstrap actual identity reader rejected an exact pending update."
+            )
+        if (
+            regular_identity(pending) != pending_identity
+            or regular_identity(staging) != staging_identity
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap actual identity reader altered an exact pending update."
+            )
+        resumed = run_transaction(transaction, fixture)
+        if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+            raise RuntimeError("Failed-bootstrap pending-update identity state did not resume.")
+        verify_terminal(fixture)
+
+    pending_update_commit_anchors = (
+        ("os.replace(staging, path)", 1),
+        ("descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)", 1),
+        ("os.fsync(descriptor)", 1),
+        ("os.close(descriptor)", 1),
+        ("fsync_directory(path.parent)", 1),
+        ("final_metadata = path.lstat()", 1),
+    )
+    for anchor, occurrence in pending_update_commit_anchors:
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-publication-pending-update-commit-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            interrupted = abrupt_function_after(
+                transaction,
+                "def finish_publication_update(path, staging, previous_raw, replacement_raw, label):",
+                "\ndef finish_mutation_evidence_alias",
+                anchor,
+                occurrence,
+                "path == pending",
+            )
+            crashed = run_transaction(interrupted, fixture)
+            if crashed.returncode != 86 or crashed.stdout or crashed.stderr:
+                raise RuntimeError(
+                    "Failed-bootstrap pending-update commit crash did not stop abruptly."
+                )
+            resumed = run_transaction(transaction, fixture)
+            if resumed.returncode != 0 or resumed.stdout or resumed.stderr:
+                raise RuntimeError("Failed-bootstrap pending-update commit did not resume.")
+            verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-alias-hostile-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        if run_transaction(armed, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap hostile publication fixture did not arm.")
+        pending = fixture["pending"]
+        unrelated = pending.with_name(f".{pending.name}.unrelated")
+        staging = pending.with_name(f".{pending.name}.publish")
+        os.link(pending, unrelated)
+        publish_raw(staging, pending.read_bytes())
+        assert_identity_reader_failure(
+            "pending", fixture, b"failed-bootstrap recovery evidence is unsafe\n"
+        )
+        rejected = run_transaction(transaction, fixture)
+        assert_categorical_failure(
+            rejected,
+            b"failed-bootstrap pending journal is unsafe\n",
+            "Failed-bootstrap mismatched publication alias transaction",
+        )
+        if not unrelated.is_file() or not staging.is_file():
+            raise RuntimeError("Failed-bootstrap mismatched publication alias was altered.")
+
+    for staging_kind in ("foreign", "symlink"):
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-publication-one-link-{staging_kind}-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = interrupt_after(transaction, "publish(pending, state, True)")
+            if run_transaction(armed, fixture).returncode != 86:
+                raise RuntimeError("Failed-bootstrap one-link staging fixture did not arm.")
+            pending = fixture["pending"]
+            staging = pending.with_name(f".{pending.name}.publish")
+            before_identity = regular_identity(pending)
+            if staging_kind == "foreign":
+                publish_raw(staging, b'{"unexpected":true}\n')
+            else:
+                staging.symlink_to(pending)
+            assert_identity_reader_failure(
+                "pending",
+                fixture,
+                (
+                    b"failed-bootstrap pending publication transition differs\n"
+                    if staging_kind == "foreign"
+                    else b"failed-bootstrap recovery evidence is unsafe\n"
+                ),
+            )
+            rejected = run_transaction(transaction, fixture)
+            expected = (
+                b"failed-bootstrap quarantine journal tuple differs\n"
+                if staging_kind == "foreign"
+                else b"failed-bootstrap pending journal publication staging is unsafe\n"
+            )
+            assert_categorical_failure(
+                rejected,
+                expected,
+                "Failed-bootstrap one-link target staging transaction",
+            )
+            if not (staging.exists() or staging.is_symlink()):
+                raise RuntimeError("Failed-bootstrap unsafe one-link staging was removed.")
+            if regular_identity(pending) != before_identity:
+                raise RuntimeError("Failed-bootstrap unsafe one-link staging altered its destination.")
+            if not fixture["standalone"].is_dir() or not fixture["mutation"].is_file():
+                raise RuntimeError("Failed-bootstrap unsafe staging crossed the runtime boundary.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-unknown-orphan-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        pending = fixture["pending"]
+        staging = pending.with_name(f".{pending.name}.publish")
+        publish_raw(staging, b'{"unknown":true}\n')
+        staging_identity = regular_identity(staging)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap pending publication staging is unsafe\n",
+            "Failed-bootstrap unknown publication staging",
+        )
+        if regular_identity(staging) != staging_identity:
+            raise RuntimeError("Failed-bootstrap unknown publication staging was altered.")
+        if (
+            fixture["recovery"].exists()
+            or not fixture["standalone"].is_dir()
+            or not fixture["mutation"].is_file()
+        ):
+            raise RuntimeError("Failed-bootstrap unknown staging crossed the runtime boundary.")
+
+    for recovery_exists in (False, True):
+        with tempfile.TemporaryDirectory(
+            prefix="mochirii-failed-bootstrap-publication-prepared-orphan-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            if recovery_exists:
+                fixture["recovery"].mkdir(mode=0o700)
+                fixture["recovery"].chmod(0o700)
+                os.chown(fixture["recovery"], 0, 0)
+            pending = fixture["pending"]
+            staging = pending.with_name(f".{pending.name}.publish")
+            publish_json(staging, prepared_document(fixture))
+            staging_before = regular_identity(staging)
+            completed = run_transaction(transaction, fixture)
+            if recovery_exists:
+                if completed.returncode != 0 or completed.stdout or completed.stderr:
+                    raise RuntimeError(
+                        "Failed-bootstrap reachable prepared staging did not resume."
+                    )
+                verify_terminal(fixture)
+            else:
+                assert_categorical_failure(
+                    completed,
+                    b"failed-bootstrap pending publication staging is unsafe\n",
+                    "Failed-bootstrap unreachable prepared staging",
+                )
+                if (
+                    fixture["recovery"].exists()
+                    or regular_identity(staging) != staging_before
+                    or not fixture["standalone"].is_dir()
+                    or not fixture["mutation"].is_file()
+                ):
+                    raise RuntimeError(
+                        "Failed-bootstrap unreachable prepared staging mutated its fixture."
+                    )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-completed-orphan-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap completed-orphan fixture did not complete.")
+        terminal_before = regular_identity(fixture["terminal"])
+        pending_staging = fixture["pending"].with_name(
+            f".{fixture['pending'].name}.publish"
+        )
+        publish_raw(pending_staging, b'{"unknown":true}\n')
+        staging_before = regular_identity(pending_staging)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap pending publication staging is unsafe\n",
+            "Failed-bootstrap completed pending-staging orphan",
+        )
+        if (
+            regular_identity(fixture["terminal"]) != terminal_before
+            or regular_identity(pending_staging) != staging_before
+            or fixture["pending"].exists()
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap completed pending-staging orphan altered authority."
+            )
+
+    alias_phase_anchors = (
+        ("runtime-quarantined", 'advance("runtime-quarantined")'),
+        ("clean-boundary", 'advance("clean-boundary")'),
+        ("authority-retired", 'validate_state(state, {"authority-retired"})'),
+    )
+    for phase, anchor in alias_phase_anchors:
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-failed-bootstrap-publication-{phase}-alias-"
+        ) as directory:
+            fixture = new_fixture(directory)
+            armed = run_transaction(interrupt_after(transaction, anchor), fixture)
+            if armed.returncode != 86 or armed.stdout or armed.stderr:
+                raise RuntimeError(f"Failed-bootstrap {phase} alias fixture did not arm.")
+            pending = fixture["pending"]
+            document = json.loads(pending.read_text(encoding="utf-8"))
+            if document.get("phase") != phase:
+                raise RuntimeError(f"Failed-bootstrap {phase} alias phase differs.")
+            staging = pending.with_name(f".{pending.name}.publish")
+            os.link(pending, staging)
+            pending_before = regular_identity(pending)
+            staging_before = regular_identity(staging)
+            assert_identity_reader_failure(
+                "pending",
+                fixture,
+                b"failed-bootstrap pending publication transition differs\n",
+            )
+            assert_categorical_failure(
+                run_transaction(transaction, fixture),
+                b"failed-bootstrap pending publication transition differs\n",
+                f"Failed-bootstrap {phase} publication alias provenance",
+            )
+            if (
+                regular_identity(pending) != pending_before
+                or regular_identity(staging) != staging_before
+                or fixture["terminal"].exists()
+            ):
+                raise RuntimeError(
+                    f"Failed-bootstrap {phase} publication alias was altered."
+                )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-prepared-candidate-runtime-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = run_transaction(
+            interrupt_after(transaction, "publish(pending, state, True)"), fixture
+        )
+        if armed.returncode != 86 or armed.stdout or armed.stderr:
+            raise RuntimeError("Failed-bootstrap prepared candidate fixture did not arm.")
+        pending = fixture["pending"]
+        document = json.loads(pending.read_text(encoding="utf-8"))
+        candidate = {
+            **document,
+            "phase": "runtime-quarantined",
+            "updatedAt": "2026-08-25T20:02:00Z",
+        }
+        staging = pending.with_name(f".{pending.name}.publish")
+        publish_json(staging, candidate)
+        pending_before = regular_identity(pending)
+        staging_before = regular_identity(staging)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap runtime quarantine state is ambiguous\n",
+            "Failed-bootstrap unreachable prepared-to-runtime candidate",
+        )
+        if (
+            regular_identity(pending) != pending_before
+            or regular_identity(staging) != staging_before
+            or not fixture["mutation"].is_file()
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap unreachable prepared-to-runtime candidate was installed."
+            )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-runtime-candidate-clean-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = run_transaction(
+            interrupt_after(transaction, 'advance("runtime-quarantined")'), fixture
+        )
+        if armed.returncode != 86 or armed.stdout or armed.stderr:
+            raise RuntimeError("Failed-bootstrap runtime candidate fixture did not arm.")
+        pending = fixture["pending"]
+        document = json.loads(pending.read_text(encoding="utf-8"))
+        candidate = {
+            **document,
+            "phase": "clean-boundary",
+            "updatedAt": "2026-08-25T20:03:00Z",
+        }
+        staging = pending.with_name(f".{pending.name}.publish")
+        publish_json(staging, candidate)
+        pending_before = regular_identity(pending)
+        staging_before = regular_identity(staging)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap quarantine inventory differs\n",
+            "Failed-bootstrap unreachable runtime-to-clean candidate",
+        )
+        if (
+            regular_identity(pending) != pending_before
+            or regular_identity(staging) != staging_before
+            or not fixture["mutation"].is_file()
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap unreachable runtime-to-clean candidate was installed."
+            )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-clean-candidate-authority-"
+    ) as directory:
+        fixture = new_fixture(directory, ssl_present=False)
+        armed = run_transaction(
+            interrupt_after(transaction, 'advance("clean-boundary")'), fixture
+        )
+        if armed.returncode != 86 or armed.stdout or armed.stderr:
+            raise RuntimeError("Failed-bootstrap clean candidate fixture did not arm.")
+        pending = fixture["pending"]
+        document = json.loads(pending.read_text(encoding="utf-8"))
+        candidate = {
+            **document,
+            "phase": "authority-retired",
+            "updatedAt": "2026-08-25T20:04:00Z",
+        }
+        staging = pending.with_name(f".{pending.name}.publish")
+        publish_json(staging, candidate)
+        (fixture["standalone"] / "unexpected").mkdir()
+        pending_before = regular_identity(pending)
+        staging_before = regular_identity(staging)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"clean standalone inventory differs\n",
+            "Failed-bootstrap unreachable clean-to-authority candidate",
+        )
+        if (
+            regular_identity(pending) != pending_before
+            or regular_identity(staging) != staging_before
+            or not fixture["mutation"].is_file()
+            or fixture["mutation_evidence"].exists()
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap unreachable clean-to-authority candidate retired authority."
+            )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-publication-semantic-alias-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = interrupt_after(transaction, "publish(pending, state, True)")
+        if run_transaction(armed, fixture).returncode != 86:
+            raise RuntimeError("Failed-bootstrap semantic-alias fixture did not arm.")
+        pending = fixture["pending"]
+        document = json.loads(pending.read_text(encoding="utf-8"))
+        document["phase"] = "complete"
+        publish_json(pending, document)
+        staging = pending.with_name(f".{pending.name}.publish")
+        os.link(pending, staging)
+        pending_identity = regular_identity(pending)
+        staging_identity = regular_identity(staging)
+        assert_identity_reader_failure(
+            "pending", fixture, b"failed-bootstrap pending identity differs\n"
+        )
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap quarantine journal tuple differs\n",
+            "Failed-bootstrap semantic-invalid publication alias",
+        )
+        if regular_identity(pending) != pending_identity or regular_identity(staging) != staging_identity:
+            raise RuntimeError("Failed-bootstrap semantic-invalid alias was altered before rejection.")
+
     with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-partial-inventory-") as directory:
         fixture = new_fixture(directory)
         interrupted = interrupt_after(transaction, 'standalone.mkdir(mode=state["standaloneMode"])')
@@ -13208,6 +16787,225 @@ validate_source_lineage "$current" "$failed"
             or stat.S_IMODE(standalone.stat().st_mode) != partial_mode
         ):
             raise RuntimeError("Failed-bootstrap unexpected partial inventory was accepted or changed.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-initial-inventory-bound-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        for index in range(4097):
+            (fixture["standalone"] / f"overflow-{index:04d}").write_bytes(b"")
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"standalone inventory exceeds its bounded inventory\n",
+            "Failed-bootstrap initial inventory bound",
+        )
+        if (
+            fixture["recovery"].exists()
+            or fixture["pending"].exists()
+            or fixture["quarantine"].exists()
+            or not fixture["standalone"].is_dir()
+            or not fixture["mutation"].is_file()
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError("Failed-bootstrap initial inventory drift crossed the authority boundary.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-prepared-runtime-drift-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = run_transaction(
+            interrupt_after(transaction, "publish(pending, state, True)"), fixture
+        )
+        if armed.returncode != 86 or armed.stdout or armed.stderr:
+            raise RuntimeError("Failed-bootstrap prepared runtime drift fixture did not arm.")
+        pending_before = regular_identity(fixture["pending"])
+        fixture["standalone"].chmod(0o700)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"standalone metadata differs\n",
+            "Failed-bootstrap prepared runtime drift",
+        )
+        if (
+            regular_identity(fixture["pending"]) != pending_before
+            or stat.S_IMODE(fixture["standalone"].stat().st_mode) != 0o700
+            or fixture["quarantine"].exists()
+            or not fixture["mutation"].is_file()
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError("Failed-bootstrap prepared runtime drift was mutated before rejection.")
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-runtime-quarantined-drift-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        armed = run_transaction(
+            interrupt_after(transaction, 'advance("runtime-quarantined")'), fixture
+        )
+        if armed.returncode != 86 or armed.stdout or armed.stderr:
+            raise RuntimeError("Failed-bootstrap runtime-quarantined drift fixture did not arm.")
+        pending_before = regular_identity(fixture["pending"])
+        fixture["quarantine"].chmod(0o755)
+        assert_categorical_failure(
+            run_transaction(transaction, fixture),
+            b"failed-bootstrap quarantine permissions differ\n",
+            "Failed-bootstrap runtime-quarantined drift",
+        )
+        if (
+            regular_identity(fixture["pending"]) != pending_before
+            or stat.S_IMODE(fixture["quarantine"].stat().st_mode) != 0o755
+            or fixture["standalone"].exists()
+            or not fixture["mutation"].is_file()
+            or fixture["terminal"].exists()
+        ):
+            raise RuntimeError(
+                "Failed-bootstrap runtime-quarantined drift was mutated before rejection."
+            )
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-recovery-root-retry-"
+    ) as directory:
+        fixture = new_fixture(directory, ssl_present=False)
+        first_crash = abrupt_function_after(
+            transaction,
+            "def persist_directory(path):",
+            "\ndef durable_directory_move",
+            "fsync_directory(path)",
+            1,
+            "path == recovery_root",
+        )
+        first = run_transaction(first_crash, fixture)
+        if (
+            first.returncode != 86
+            or first.stdout
+            or first.stderr
+            or not fixture["recovery"].is_dir()
+            or fixture["pending"].exists()
+        ):
+            raise RuntimeError("Failed-bootstrap recovery-root first crash window differs.")
+        second_crash = abrupt_function_after(
+            transaction,
+            "def persist_directory(path):",
+            "\ndef durable_directory_move",
+            "fsync_directory(path.parent)",
+            1,
+            "path == recovery_root",
+        )
+        second = run_transaction(second_crash, fixture)
+        if (
+            second.returncode != 86
+            or second.stdout
+            or second.stderr
+            or fixture["pending"].exists()
+            or fixture["quarantine"].exists()
+            or not fixture["standalone"].is_dir()
+        ):
+            raise RuntimeError("Failed-bootstrap existing recovery root skipped persistence retry.")
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap recovery-root retry did not resume.")
+        verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-ssl-parent-retry-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        first_crash = abrupt_function_after(
+            transaction,
+            "def durable_directory_move(source, destination):",
+            "\ndef exact_directory",
+            "os.rename(source, destination)",
+            1,
+            'source == quarantine / "ssl"',
+        )
+        first = run_transaction(first_crash, fixture)
+        if first.returncode != 86 or first.stdout or first.stderr:
+            raise RuntimeError("Failed-bootstrap SSL move crash window did not arm.")
+        second = run_transaction(
+            interrupt_after(transaction, "fsync_directory(new_ssl.parent)"), fixture
+        )
+        if second.returncode != 86 or second.stdout or second.stderr:
+            raise RuntimeError("Failed-bootstrap SSL destination-parent retry was skipped.")
+        third = run_transaction(
+            interrupt_after(transaction, "fsync_directory(old_ssl.parent)"), fixture
+        )
+        if third.returncode != 86 or third.stdout or third.stderr:
+            raise RuntimeError("Failed-bootstrap SSL source-parent retry was skipped.")
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap SSL parent retry did not resume.")
+        verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-terminal-parent-retry-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        first_crash = abrupt_publish_after(
+            transaction, "staging.unlink()", 1, "terminal", True
+        )
+        first = run_transaction(first_crash, fixture)
+        terminal_staging = fixture["terminal"].with_name(
+            f".{fixture['terminal'].name}.publish"
+        )
+        if (
+            first.returncode != 86
+            or first.stdout
+            or first.stderr
+            or not fixture["terminal"].is_file()
+            or terminal_staging.exists()
+        ):
+            raise RuntimeError("Failed-bootstrap terminal-parent retry fixture did not arm.")
+        second_crash = abrupt_between(
+            transaction,
+            'if path_exists(terminal, "failed-bootstrap terminal evidence"):',
+            "if terminal_staging_replay is not None:",
+            "fsync_directory(terminal.parent)",
+        )
+        second = run_transaction(second_crash, fixture)
+        if second.returncode != 86 or second.stdout or second.stderr:
+            raise RuntimeError("Failed-bootstrap terminal evidence parent retry was skipped.")
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap terminal evidence parent retry did not resume.")
+        verify_terminal(fixture)
+
+    with tempfile.TemporaryDirectory(
+        prefix="mochirii-failed-bootstrap-pending-parent-retry-"
+    ) as directory:
+        fixture = new_fixture(directory)
+        terminal_armed = run_transaction(
+            interrupt_after(transaction, "publish(terminal, terminal_document, True)"),
+            fixture,
+        )
+        if terminal_armed.returncode != 86 or terminal_armed.stdout or terminal_armed.stderr:
+            raise RuntimeError("Failed-bootstrap pending-parent retry fixture did not arm.")
+        unlink_crash = abrupt_between(
+            transaction,
+            'if path_exists(terminal, "failed-bootstrap terminal evidence"):',
+            "if terminal_staging_replay is not None:",
+            "pending.unlink()",
+        )
+        unlinked = run_transaction(unlink_crash, fixture)
+        if (
+            unlinked.returncode != 86
+            or unlinked.stdout
+            or unlinked.stderr
+            or fixture["pending"].exists()
+            or not fixture["terminal"].is_file()
+        ):
+            raise RuntimeError("Failed-bootstrap pending-parent unlink crash window differs.")
+        fsync_crash = abrupt_between(
+            transaction,
+            'if path_exists(terminal, "failed-bootstrap terminal evidence"):',
+            "if terminal_staging_replay is not None:",
+            "fsync_directory(pending.parent)",
+        )
+        retried = run_transaction(fsync_crash, fixture)
+        if retried.returncode != 86 or retried.stdout or retried.stderr:
+            raise RuntimeError("Failed-bootstrap pending parent durability retry was skipped.")
+        completed = run_transaction(transaction, fixture)
+        if completed.returncode != 0 or completed.stdout or completed.stderr:
+            raise RuntimeError("Failed-bootstrap pending parent retry did not resume.")
+        verify_terminal(fixture)
 
     with tempfile.TemporaryDirectory(prefix="mochirii-failed-bootstrap-no-ssl-") as directory:
         fixture = new_fixture(directory, ssl_present=False)
@@ -13287,6 +17085,7 @@ validate_source_lineage "$current" "$failed"
 
 
 def main() -> int:
+    test_failed_bootstrap_quarantine_contract()
     test_renderer()
     test_acme_install_byte_stability()
     test_opensearch_filter_contract()
@@ -13337,7 +17136,6 @@ def main() -> int:
     test_disposable_restore_command_diagnostics()
     test_disposable_nginx_fixture_final_command_contract()
     test_effective_allow_users_parser_contract()
-    test_failed_bootstrap_quarantine_contract()
     print("Configuration and theme hostile fixtures passed.")
     return 0
 
