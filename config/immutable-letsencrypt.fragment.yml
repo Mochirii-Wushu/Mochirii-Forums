@@ -169,6 +169,7 @@
         readonly cmp_bin="/usr/bin/cmp"
         readonly awk_bin="/usr/bin/awk"
         readonly mktemp_bin="/usr/bin/mktemp"
+        readonly python_bin="/usr/bin/python3"
         readonly rm_bin="/usr/bin/rm"
         readonly rmdir_bin="/usr/bin/rmdir"
         for validator_tool in \
@@ -178,6 +179,7 @@
           "${cmp_bin}" \
           "${awk_bin}" \
           "${mktemp_bin}" \
+          "${python_bin}" \
           "${rm_bin}" \
           "${rmdir_bin}"; do
           if ! test -x "${validator_tool}"; then
@@ -200,6 +202,233 @@
           test ! -L "${private_path}"
           test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
         done
+        [[ "${MOCHIRII_REPOSITORY_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || {
+          printf '%s\n' 'FORUMS_ACME_STAGE_COMMIT_INVALID' >&2
+          exit 1
+        }
+
+        # MOCHIRII ACME STAGE TOOL BEGIN
+        acme_stage_tool() {
+          local mode="$1"
+          local requested_stage="${2:-}"
+          "${python_bin}" -I -S -B - \
+            "${letsencrypt_dir}" "${MOCHIRII_REPOSITORY_COMMIT}" \
+            "${mode}" "${requested_stage}" <<'PY'
+        import os
+        import re
+        import stat
+        import sys
+
+        DIRECTORY_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+        FILE_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+        CREATE_FLAGS = os.O_WRONLY | os.O_CLOEXEC | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        NEXT = {
+            None: {"01-rsa-issue-entered"},
+            "01-rsa-issue-entered": {"02-rsa-issue-completed", "02-rsa-issue-failed"},
+            "02-rsa-issue-completed": {"03-rsa-validation-entered"},
+            "02-rsa-issue-failed": set(),
+            "03-rsa-validation-entered": {"04-rsa-validation-completed", "04-rsa-validation-failed"},
+            "04-rsa-validation-completed": {"05-rsa-install-entered"},
+            "04-rsa-validation-failed": set(),
+            "05-rsa-install-entered": {"06-rsa-install-completed", "06-rsa-install-failed"},
+            "06-rsa-install-completed": {"07-ecc-issue-entered"},
+            "06-rsa-install-failed": set(),
+            "07-ecc-issue-entered": {"08-ecc-issue-completed", "08-ecc-issue-failed"},
+            "08-ecc-issue-completed": {"09-ecc-validation-entered"},
+            "08-ecc-issue-failed": set(),
+            "09-ecc-validation-entered": {"10-ecc-validation-completed", "10-ecc-validation-failed"},
+            "10-ecc-validation-completed": {"11-ecc-install-entered"},
+            "10-ecc-validation-failed": set(),
+            "11-ecc-install-entered": {"12-ecc-install-completed", "12-ecc-install-failed"},
+            "12-ecc-install-completed": {"13-reload-entered"},
+            "12-ecc-install-failed": set(),
+            "13-reload-entered": {"14-reload-completed", "14-reload-failed"},
+            "14-reload-completed": {"15-terminal-completed"},
+            "14-reload-failed": set(),
+            "15-terminal-completed": set(),
+        }
+        TERMINAL_STAGE = "15-terminal-completed"
+
+
+        def valid_directory(metadata, mode):
+            return (
+                stat.S_ISDIR(metadata.st_mode)
+                and not stat.S_ISLNK(metadata.st_mode)
+                and metadata.st_uid == 0
+                and metadata.st_gid == 0
+                and stat.S_IMODE(metadata.st_mode) == mode
+            )
+
+
+        def open_directory(path_or_name, *, mode, directory_fd=None):
+            metadata = os.stat(
+                path_or_name,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            if not valid_directory(metadata, mode):
+                raise ValueError
+            descriptor = os.open(path_or_name, DIRECTORY_FLAGS, dir_fd=directory_fd)
+            opened = os.fstat(descriptor)
+            if (
+                opened.st_dev != metadata.st_dev
+                or opened.st_ino != metadata.st_ino
+                or not valid_directory(opened, mode)
+            ):
+                os.close(descriptor)
+                raise ValueError
+            return descriptor
+
+
+        def validate_stage_file(directory_fd, name):
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if (
+                name not in NEXT
+                or not stat.S_ISREG(metadata.st_mode)
+                or stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_nlink != 1
+                or metadata.st_size != 0
+            ):
+                raise ValueError
+            descriptor = os.open(name, FILE_FLAGS, dir_fd=directory_fd)
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    opened.st_dev != metadata.st_dev
+                    or opened.st_ino != metadata.st_ino
+                    or not stat.S_ISREG(opened.st_mode)
+                    or stat.S_ISLNK(opened.st_mode)
+                    or opened.st_uid != 0
+                    or opened.st_gid != 0
+                    or stat.S_IMODE(opened.st_mode) != 0o600
+                    or opened.st_nlink != 1
+                    or opened.st_size != 0
+                    or os.read(descriptor, 1) != b""
+                ):
+                    raise ValueError
+            finally:
+                os.close(descriptor)
+
+
+        def observed_stage(directory_fd):
+            names = sorted(os.listdir(directory_fd))
+            if len(names) > 15:
+                raise ValueError
+            previous = None
+            for name in names:
+                if name not in NEXT.get(previous, set()):
+                    raise ValueError
+                validate_stage_file(directory_fd, name)
+                previous = name
+            return previous
+
+
+        def main():
+            root, commit, mode, requested = sys.argv[1:]
+            if (
+                root != "/shared/letsencrypt"
+                or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+                or mode not in {"inspect", "record"}
+                or (mode == "inspect" and requested != "")
+                or (mode == "record" and requested not in NEXT)
+            ):
+                raise ValueError
+            root_descriptor = open_directory(root, mode=0o755)
+            stage_descriptor = None
+            stage_name = f"mochirii-acme-bootstrap-{commit}.v1"
+            try:
+                try:
+                    stage_descriptor = open_directory(
+                        stage_name,
+                        mode=0o700,
+                        directory_fd=root_descriptor,
+                    )
+                except FileNotFoundError:
+                    if mode == "inspect":
+                        sys.stdout.write("FRESH\n")
+                        sys.stdout.flush()
+                        return
+                    if requested != "01-rsa-issue-entered":
+                        raise ValueError
+                    os.mkdir(stage_name, 0o700, dir_fd=root_descriptor)
+                    os.fsync(root_descriptor)
+                    stage_descriptor = open_directory(
+                        stage_name,
+                        mode=0o700,
+                        directory_fd=root_descriptor,
+                    )
+                current = observed_stage(stage_descriptor)
+                if mode == "inspect":
+                    state = "TERMINAL" if current == TERMINAL_STAGE else "INCOMPLETE"
+                    sys.stdout.write(state + "\n")
+                    sys.stdout.flush()
+                    return
+                if requested not in NEXT.get(current, set()):
+                    raise ValueError
+                descriptor = os.open(
+                    requested,
+                    CREATE_FLAGS,
+                    0o600,
+                    dir_fd=stage_descriptor,
+                )
+                try:
+                    created = os.fstat(descriptor)
+                    if (
+                        not stat.S_ISREG(created.st_mode)
+                        or created.st_uid != 0
+                        or created.st_gid != 0
+                        or stat.S_IMODE(created.st_mode) != 0o600
+                        or created.st_nlink != 1
+                        or created.st_size != 0
+                    ):
+                        raise ValueError
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                os.fsync(stage_descriptor)
+                if observed_stage(stage_descriptor) != requested:
+                    raise ValueError
+            finally:
+                if stage_descriptor is not None:
+                    os.close(stage_descriptor)
+                os.close(root_descriptor)
+
+
+        try:
+            main()
+        except BaseException:
+            os._exit(1)
+        PY
+        }
+        # MOCHIRII ACME STAGE TOOL END
+
+        # MOCHIRII ACME STAGE PREFLIGHT BEGIN
+        record_acme_stage() {
+          if ! acme_stage_tool record "$1" >/dev/null 2>&1; then
+            printf '%s\n' 'FORUMS_ACME_STAGE_RECORD_FAILED' >&2
+            return 1
+          fi
+        }
+
+        acme_stage_state="$(acme_stage_tool inspect 2>/dev/null)" || {
+          printf '%s\n' 'FORUMS_ACME_STAGE_EVIDENCE_INVALID' >&2
+          exit 1
+        }
+        case "${acme_stage_state}" in
+          FRESH|TERMINAL) ;;
+          INCOMPLETE)
+            printf '%s\n' 'FORUMS_ACME_STAGE_FORWARD_FIX_REQUIRED' >&2
+            exit 1
+            ;;
+          *)
+            printf '%s\n' 'FORUMS_ACME_STAGE_EVIDENCE_INVALID' >&2
+            exit 1
+            ;;
+        esac
+        # MOCHIRII ACME STAGE PREFLIGHT END
         test -d "${public_webroot}"
         test ! -L "${public_webroot}"
         for challenge_directory in "${challenge_parent}" "${challenge_root}"; do
@@ -261,6 +490,251 @@
             return 1
           fi
         }
+
+        # MOCHIRII INSTALLED CERTIFICATE VALIDATOR BEGIN
+        validate_installed_certificate_material() (
+          local certificate_suffix="$1"
+          case "${certificate_suffix}" in
+            ""|_ecc) ;;
+            *) return 1 ;;
+          esac
+          "${python_bin}" -I -S -B - "/shared" "${DISCOURSE_HOSTNAME}" \
+            "${certificate_suffix}" <<'PY_INSTALLED' >/dev/null 2>&1
+        import os
+        import stat
+        import sys
+
+        DIRECTORY_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+        FILE_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+
+
+        def metadata_identity(metadata):
+            return (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_mode,
+                metadata.st_uid,
+                metadata.st_gid,
+                metadata.st_nlink,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+            )
+
+
+        def valid_directory(metadata, *, exact_mode=None):
+            mode = stat.S_IMODE(metadata.st_mode)
+            return (
+                stat.S_ISDIR(metadata.st_mode)
+                and not stat.S_ISLNK(metadata.st_mode)
+                and metadata.st_uid == 0
+                and metadata.st_gid == 0
+                and (mode & 0o500) == 0o500
+                and (mode & 0o022) == 0
+                and (mode & 0o7000) == 0
+                and (exact_mode is None or mode == exact_mode)
+            )
+
+
+        def open_directory(path_or_name, *, exact_mode=None, directory_fd=None):
+            metadata = os.stat(
+                path_or_name,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            if not valid_directory(metadata, exact_mode=exact_mode):
+                raise ValueError
+            descriptor = os.open(path_or_name, DIRECTORY_FLAGS, dir_fd=directory_fd)
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    metadata_identity(opened) != metadata_identity(metadata)
+                    or not valid_directory(opened, exact_mode=exact_mode)
+                ):
+                    raise ValueError
+            except BaseException:
+                os.close(descriptor)
+                raise
+            return descriptor, metadata_identity(opened)
+
+
+        def valid_file(metadata, *, kind, maximum_bytes):
+            mode = stat.S_IMODE(metadata.st_mode)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or metadata.st_nlink != 1
+                or metadata.st_size <= 0
+                or metadata.st_size > maximum_bytes
+                or (mode & 0o7000) != 0
+            ):
+                return False
+            if kind == "internal":
+                return mode == 0o600
+            if kind == "installed-key":
+                return mode in {0o400, 0o600}
+            if kind == "installed-fullchain":
+                return (mode & 0o400) != 0 and (mode & 0o022) == 0
+            return False
+
+
+        def open_file(directory_fd, name, *, kind, maximum_bytes):
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if not valid_file(metadata, kind=kind, maximum_bytes=maximum_bytes):
+                raise ValueError
+            descriptor = os.open(name, FILE_FLAGS, dir_fd=directory_fd)
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    metadata_identity(opened) != metadata_identity(metadata)
+                    or not valid_file(opened, kind=kind, maximum_bytes=maximum_bytes)
+                ):
+                    raise ValueError
+            except BaseException:
+                os.close(descriptor)
+                raise
+            return descriptor, metadata_identity(opened)
+
+
+        def read_exact(descriptor, expected_size):
+            chunks = []
+            remaining = expected_size
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 65536))
+                if not chunk:
+                    raise ValueError
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            if os.read(descriptor, 1) != b"":
+                raise ValueError
+            return b"".join(chunks)
+
+
+        def revalidate_directory(path_or_name, descriptor, identity, *, exact_mode=None, directory_fd=None):
+            path_metadata = os.stat(
+                path_or_name,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            held_metadata = os.fstat(descriptor)
+            if (
+                metadata_identity(path_metadata) != identity
+                or metadata_identity(held_metadata) != identity
+                or not valid_directory(path_metadata, exact_mode=exact_mode)
+                or not valid_directory(held_metadata, exact_mode=exact_mode)
+            ):
+                raise ValueError
+
+
+        def revalidate_file(directory_fd, name, descriptor, identity, *, kind, maximum_bytes):
+            path_metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            held_metadata = os.fstat(descriptor)
+            if (
+                metadata_identity(path_metadata) != identity
+                or metadata_identity(held_metadata) != identity
+                or not valid_file(path_metadata, kind=kind, maximum_bytes=maximum_bytes)
+                or not valid_file(held_metadata, kind=kind, maximum_bytes=maximum_bytes)
+            ):
+                raise ValueError
+
+
+        def main():
+            shared_root, hostname, suffix = sys.argv[1:]
+            if (
+                shared_root != "/shared"
+                or hostname != "forums.mochirii.com"
+                or suffix not in {"", "_ecc"}
+            ):
+                raise ValueError
+            directories = []
+            files = []
+            try:
+                shared_fd, shared_identity = open_directory(shared_root)
+                directories.append(shared_fd)
+                letsencrypt_fd, letsencrypt_identity = open_directory(
+                    "letsencrypt",
+                    exact_mode=0o755,
+                    directory_fd=shared_fd,
+                )
+                directories.append(letsencrypt_fd)
+                installed_fd, installed_identity = open_directory(
+                    "ssl",
+                    directory_fd=shared_fd,
+                )
+                directories.append(installed_fd)
+                internal_name = hostname + suffix
+                internal_fd, internal_identity = open_directory(
+                    internal_name,
+                    exact_mode=0o700,
+                    directory_fd=letsencrypt_fd,
+                )
+                directories.append(internal_fd)
+
+                leaf_specs = (
+                    (internal_fd, "fullchain.cer", "internal", 327680),
+                    (internal_fd, hostname + ".key", "internal", 65536),
+                    (installed_fd, hostname + suffix + ".cer", "installed-fullchain", 327680),
+                    (installed_fd, hostname + suffix + ".key", "installed-key", 65536),
+                )
+                held = []
+                for directory_fd, name, kind, maximum_bytes in leaf_specs:
+                    descriptor, identity = open_file(
+                        directory_fd,
+                        name,
+                        kind=kind,
+                        maximum_bytes=maximum_bytes,
+                    )
+                    files.append(descriptor)
+                    held.append((directory_fd, name, descriptor, identity, kind, maximum_bytes))
+                values = [read_exact(item[2], item[3][6]) for item in held]
+                if values[0] != values[2] or values[1] != values[3]:
+                    raise ValueError
+                for directory_fd, name, descriptor, identity, kind, maximum_bytes in held:
+                    revalidate_file(
+                        directory_fd,
+                        name,
+                        descriptor,
+                        identity,
+                        kind=kind,
+                        maximum_bytes=maximum_bytes,
+                    )
+                revalidate_directory(
+                    internal_name,
+                    internal_fd,
+                    internal_identity,
+                    exact_mode=0o700,
+                    directory_fd=letsencrypt_fd,
+                )
+                revalidate_directory(
+                    "ssl",
+                    installed_fd,
+                    installed_identity,
+                    directory_fd=shared_fd,
+                )
+                revalidate_directory(
+                    "letsencrypt",
+                    letsencrypt_fd,
+                    letsencrypt_identity,
+                    exact_mode=0o755,
+                    directory_fd=shared_fd,
+                )
+                revalidate_directory(shared_root, shared_fd, shared_identity)
+            finally:
+                for descriptor in reversed(files):
+                    os.close(descriptor)
+                for descriptor in reversed(directories):
+                    os.close(descriptor)
+
+
+        try:
+            main()
+        except BaseException:
+            os._exit(1)
+        PY_INSTALLED
+        )
+        # MOCHIRII INSTALLED CERTIFICATE VALIDATOR END
 
         # MOCHIRII CERTIFICATE MATERIAL VALIDATOR BEGIN
         validate_certificate_material() (
@@ -502,20 +976,80 @@
         # MOCHIRII CERTIFICATE MATERIAL VALIDATOR END
 
         # MOCHIRII ACME ORDER BEGIN
-        issue_certificate "4096"
-        if ! validate_certificate_material "" "rsa" "0:0"; then
-          printf '%s\n' 'FORUMS_ACME_RSA_MATERIAL_INVALID' >&2
-          exit 1
-        fi
-        install_certificate "" ""
+        if [ "${acme_stage_state}" = "TERMINAL" ]; then
+          if ! validate_certificate_material "" "rsa" "0:0" ||
+            ! validate_installed_certificate_material ""; then
+            printf '%s\n' 'FORUMS_ACME_TERMINAL_RSA_INVALID' >&2
+            exit 1
+          fi
+          if ! validate_certificate_material "_ecc" "ecc" "0:0" ||
+            ! validate_installed_certificate_material "_ecc"; then
+            printf '%s\n' 'FORUMS_ACME_TERMINAL_ECC_INVALID' >&2
+            exit 1
+          fi
+          if ! /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload >/dev/null 2>&1; then
+            printf '%s\n' 'FORUMS_ACME_RELOAD_FAILED' >&2
+            exit 1
+          fi
+        else
+          record_acme_stage "01-rsa-issue-entered"
+          if issue_certificate "4096"; then
+            record_acme_stage "02-rsa-issue-completed"
+          else
+            record_acme_stage "02-rsa-issue-failed"
+            exit 1
+          fi
+          record_acme_stage "03-rsa-validation-entered"
+          if validate_certificate_material "" "rsa" "0:0"; then
+            record_acme_stage "04-rsa-validation-completed"
+          else
+            printf '%s\n' 'FORUMS_ACME_RSA_MATERIAL_INVALID' >&2
+            record_acme_stage "04-rsa-validation-failed"
+            exit 1
+          fi
+          record_acme_stage "05-rsa-install-entered"
+          if install_certificate "" "" && validate_installed_certificate_material ""; then
+            record_acme_stage "06-rsa-install-completed"
+          else
+            printf '%s\n' 'FORUMS_ACME_RSA_INSTALL_INVALID' >&2
+            record_acme_stage "06-rsa-install-failed"
+            exit 1
+          fi
 
-        issue_certificate "ec-256"
-        if ! validate_certificate_material "_ecc" "ecc" "0:0"; then
-          printf '%s\n' 'FORUMS_ACME_ECC_MATERIAL_INVALID' >&2
-          exit 1
+          record_acme_stage "07-ecc-issue-entered"
+          if issue_certificate "ec-256"; then
+            record_acme_stage "08-ecc-issue-completed"
+          else
+            record_acme_stage "08-ecc-issue-failed"
+            exit 1
+          fi
+          record_acme_stage "09-ecc-validation-entered"
+          if validate_certificate_material "_ecc" "ecc" "0:0"; then
+            record_acme_stage "10-ecc-validation-completed"
+          else
+            printf '%s\n' 'FORUMS_ACME_ECC_MATERIAL_INVALID' >&2
+            record_acme_stage "10-ecc-validation-failed"
+            exit 1
+          fi
+          record_acme_stage "11-ecc-install-entered"
+          if install_certificate "_ecc" "--ecc" && validate_installed_certificate_material "_ecc"; then
+            record_acme_stage "12-ecc-install-completed"
+          else
+            printf '%s\n' 'FORUMS_ACME_ECC_INSTALL_INVALID' >&2
+            record_acme_stage "12-ecc-install-failed"
+            exit 1
+          fi
+
+          record_acme_stage "13-reload-entered"
+          if /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload >/dev/null 2>&1; then
+            record_acme_stage "14-reload-completed"
+          else
+            printf '%s\n' 'FORUMS_ACME_RELOAD_FAILED' >&2
+            record_acme_stage "14-reload-failed"
+            exit 1
+          fi
+          record_acme_stage "15-terminal-completed"
         fi
-        install_certificate "_ecc" "--ecc"
-        /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload
         # MOCHIRII ACME ORDER END
 
         grep -q 'force_https' /var/www/discourse/config/discourse.conf || \
