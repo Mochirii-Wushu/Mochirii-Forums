@@ -800,6 +800,35 @@ another retained-runtime cause. The same retained journal and runtime,
 stopped/absent publication, root-owned state, unrelated-journal exclusion, and
 evidence-preserving quarantine rules apply.
 
+The later bootstrap at exact release
+`637a7c315574840156ac46615beb4417074088ed` has an eighth,
+non-interchangeable recovery chain for the proved ACME stage-evidence boundary.
+That failed release is the sole parent of reviewed stage-evidence repair commit
+`9683e62abd3d0f41c41fc2a126a49eb33216c265`; the recovery source must be one
+exact sole-parent child of that repair and the current canonical `main`. The
+two exact path segments are independently bound: the stage-evidence repair
+changes only `.github/workflows/validate-repository.yml`,
+`config/immutable-letsencrypt.fragment.yml`, `scripts/check-repository.ps1`,
+`scripts/check-source-introduction.ps1`, `scripts/host-deploy.sh`,
+`scripts/test-contracts.py`, `scripts/test-source-introduction.ps1`,
+`scripts/validate-repository.py`, and `scripts/verify-host.sh`; the final
+recovery child changes only `.github/workflows/validate-repository.yml`, this
+document, `docs/operations/RECOVERY.md`, `scripts/check-repository.ps1`,
+`scripts/check-source-introduction.ps1`, `scripts/host-deploy.sh`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/test-source-introduction.ps1`, `scripts/upgrade-host-control.sh`, and
+`scripts/validate-repository.py`. The cumulative diff from the failed release
+is exactly those thirteen unique paths, including the unchanged accepted stage
+fragment and host verifier. Selection remains by exact failed commit, so this
+exception cannot substitute for an earlier lineage, admit another descendant
+or merge commit, or authorize another path set. The reviewed repair adds
+durable fixed stage evidence and descriptor-held installed-material identity
+validation around the unchanged RSA-then-ECC issuance order. It neither
+authorizes an identical-byte retry nor claims an unproved retained-runtime
+cause. The same retained journal and runtime, stopped/absent publication,
+root-owned state, unrelated-journal exclusion, and evidence-preserving
+quarantine rules apply.
+
 Every direct acceptance launcher pins the exact validator or hostile-fixture
 bytes before execution and invokes Python with `-I -S -B`. Both entrypoints
 also reject ambiguous import paths and incompatible startup flags before any
