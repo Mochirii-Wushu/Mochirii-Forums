@@ -258,12 +258,20 @@ monitor certificate expiry without exposing secret state.
 Point `forums.mochirii.com` to the Droplet only after the host is ready. The
 rendered production configuration keeps the official Discourse Docker web SSL
 template but replaces its floating Let's Encrypt downloader with the
-repository-owned immutable integration. It decodes vendored acme.sh `3.0.6`
-commit `b7caf7a0165d80dd1556b16057a06bb32025066d`, verifies exact compressed and
-decoded SHA-256 values before execution, installs an exact hash-verifying cron
-wrapper, and persists `AUTO_UPGRADE=0`. Bootstrap and renewal never fetch or
-upgrade executable client source. A client update requires a separate source,
-license, digest, disposable-bootstrap, hosted-renewal, and rollback review.
+repository-owned immutable integration. It decodes vendored acme.sh `3.1.4`
+commit `3661fd86b6304115e42f43910e6dd452ab9866d6`, verifies exact compressed and
+decoded SHA-256 values before execution, and installs exact hash-verifying
+wrappers for the client and curl. Every install, configuration, issuance,
+certificate installation, and renewal invocation starts from an empty
+environment; curl resolves only to the reviewed wrapper and receives `-q` as
+its first option, disabling ambient curl configuration. Wget selection,
+insecure TLS, custom CA paths, and custom CA bundles are rejected after retained
+account and CA configuration loads. The client and wrapper must be root-owned,
+mode-0755, one-link ordinary files, and the installed client is normalized and
+verified after the production mode-077 install. The integration persists
+`AUTO_UPGRADE=0`. Bootstrap and renewal never fetch or upgrade executable client
+source. A client update requires a separate source, license, digest,
+disposable-bootstrap, hosted-renewal, and rollback review.
 Rollback uses the prior exact Forums release/configuration and its still-pinned
 client while preserving `/shared/letsencrypt` certificate/account data. Prove
 valid issuance and the hash-verifying automatic renewal path through the exact
