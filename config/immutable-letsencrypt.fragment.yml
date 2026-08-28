@@ -18,17 +18,330 @@
       cmd:
         - >-
           test "$(base64 --decode
-          "$MOCHIRII_RELEASE_ASSET_ROOT/acme-sh-3.0.6.gz.b64"
+          "$MOCHIRII_RELEASE_ASSET_ROOT/acme-sh-3.1.4.gz.b64"
           | sha256sum | awk '{print $1}')" =
-          "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
+          "a94625046fb750d1b12e5d3eca3893f7150b54f463d7f08cf8438c4747423515"
         - >-
           base64 --decode
-          "$MOCHIRII_RELEASE_ASSET_ROOT/acme-sh-3.0.6.gz.b64"
-          | gzip --decompress --stdout > /opt/acme.sh
+          "$MOCHIRII_RELEASE_ASSET_ROOT/acme-sh-3.1.4.gz.b64"
+          | gzip --decompress --stdout > /opt/acme.sh.upstream
+        - >-
+          test "$(sha256sum /opt/acme.sh.upstream | awk '{print $1}')" =
+          "fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32"
+        - |-
+          /usr/bin/python3 -I -S -B - /opt/acme.sh.upstream /opt/acme.sh <<'PY'
+          from pathlib import Path
+          import sys
+
+          source_path = Path(sys.argv[1])
+          destination_path = Path(sys.argv[2])
+          source = source_path.read_bytes()
+          replacements = (
+              (
+                  b'''  __initHome
+
+          ''',
+                  b'''  __initHome
+            HTTP_HEADER=
+            __HTTP_INITIALIZED=
+            _ACME_CURL=
+            _ACME_WGET=
+
+          ''',
+              ),
+              (
+                  b'''  if [ -f "$ACCOUNT_CONF_PATH" ]; then
+              . "$ACCOUNT_CONF_PATH"
+            fi
+
+          ''',
+                  b'''  if [ -f "$ACCOUNT_CONF_PATH" ]; then
+              . "$ACCOUNT_CONF_PATH"
+            fi
+            if [ -n "${HTTP_HEADER:-}" ] || [ -n "${__HTTP_INITIALIZED:-}" ] || \
+              [ -n "${_ACME_CURL:-}" ] || [ -n "${_ACME_WGET:-}" ]; then
+              _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+              exit 1
+            fi
+            HTTP_HEADER="/shared/letsencrypt/http.header"
+            __HTTP_INITIALIZED=
+            _ACME_CURL=
+            _ACME_WGET=
+
+          ''',
+              ),
+              (
+                  b'''  if [ -f "$CA_CONF" ]; then
+              . "$CA_CONF"
+            fi
+
+          ''',
+                  b'''  HTTP_HEADER=
+            if [ -f "$CA_CONF" ]; then
+              . "$CA_CONF"
+            fi
+            if [ -n "${HTTP_HEADER:-}" ] || [ -n "${__HTTP_INITIALIZED:-}" ] || \
+              [ -n "${_ACME_CURL:-}" ] || [ -n "${_ACME_WGET:-}" ]; then
+              _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+              exit 1
+            fi
+            HTTP_HEADER="/shared/letsencrypt/http.header"
+            __HTTP_INITIALIZED=
+            _ACME_CURL=
+            _ACME_WGET=
+
+          ''',
+              ),
+              (
+                  b'''  if [ -z "$HTTP_HEADER" ] || ! touch "$HTTP_HEADER"; then
+              HTTP_HEADER="$(_mktemp)"
+              _debug2 HTTP_HEADER "$HTTP_HEADER"
+            fi
+
+          ''',
+                  b'''  if [ "${HTTP_HEADER:-}" != "/shared/letsencrypt/http.header" ] || \
+              ! /usr/local/libexec/mochirii-forums/acme-http-header >/dev/null 2>&1; then
+              _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+              return 1
+            fi
+
+          ''',
+              ),
+              (
+                  b'''  if [ "$__HTTP_INITIALIZED" ]; then
+              if [ "$_ACME_CURL$_ACME_WGET" ]; then
+                _debug2 "Http already initialized."
+                return 0
+              fi
+            fi
+
+          ''',
+                  b'''  if [ "${ACME_USE_WGET:-0}" != "0" ] || [ -n "${HTTPS_INSECURE:-}" ] || \\
+              [ -n "${CA_PATH:-}" ] || [ -n "${CA_BUNDLE:-}" ] || [ -n "${_ACME_WGET:-}" ]; then
+              _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+              return 1
+            fi
+
+            __HTTP_INITIALIZED=
+            _ACME_CURL=
+            _ACME_WGET=
+
+          ''',
+              ),
+              (
+                  b'''  if [ -z "$_ACME_CURL" ] && _exists "curl"; then
+          ''',
+                  b'''  if [ -z "$_ACME_CURL" ]; then
+          ''',
+              ),
+              (
+                  b'''    _ACME_CURL="curl --silent --dump-header $HTTP_HEADER "
+          ''',
+                  b'''    _ACME_CURL="/usr/local/libexec/mochirii-forums/acme-curl --silent --dump-header $HTTP_HEADER "
+          ''',
+              ),
+              (
+                  b'''    if _contains "$(curl --help 2>&1)" "--globoff" || _contains "$(curl --help curl 2>&1)" "--globoff"; then
+          ''',
+                  b'''    if _contains "$(/usr/local/libexec/mochirii-forums/acme-curl --help 2>&1)" "--globoff" || _contains "$(/usr/local/libexec/mochirii-forums/acme-curl --help curl 2>&1)" "--globoff"; then
+          ''',
+              ),
+              (
+                  b'''  _debug2 "_postContentType" "$_postContentType"
+
+            _inithttp
+
+            if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+          ''',
+                  b'''  _debug2 "_postContentType" "$_postContentType"
+
+            _inithttp || return 1
+
+            if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+          ''',
+              ),
+              (
+                  b'''  _debug "timeout=$t"
+
+            _inithttp
+
+            if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+          ''',
+                  b'''  _debug "timeout=$t"
+
+            _inithttp || return 1
+
+            if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+          ''',
+              ),
+              (
+                  b'''  if [ -z "$_ACME_WGET" ] && _exists "wget"; then
+          ''',
+                  b'''  if false; then
+          ''',
+              ),
+          )
+          for original, replacement in replacements:
+              if source.count(original) != 1:
+                  raise SystemExit("FORUMS_ACME_TRANSPORT_PATCH_FAILED")
+              source = source.replace(original, replacement, 1)
+          destination_path.write_bytes(source)
+          PY
         - >-
           test "$(sha256sum /opt/acme.sh | awk '{print $1}')" =
-          "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+          "b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e"
+        - rm -f -- /opt/acme.sh.upstream
         - chmod 0755 /opt/acme.sh
+        - install -d -m 0755 -o root -g root /usr/local/libexec/mochirii-forums
+  - file:
+      path: /usr/local/libexec/mochirii-forums/acme-curl
+      chmod: "+x"
+      contents: |
+        #!/bin/sh
+        set -eu
+        umask 077
+        if [ "$#" -lt 1 ] || [ ! -x /usr/bin/env ] || [ ! -x /usr/bin/curl ]; then
+          printf '%s\n' 'FORUMS_ACME_CURL_PREFLIGHT_FAILED' >&2
+          exit 1
+        fi
+        exec /usr/bin/env -i \
+          HOME="/nonexistent" \
+          PATH="/usr/bin:/bin" \
+          LC_ALL="C" \
+          LANG="C" \
+          /usr/bin/curl -q "$@"
+  - file:
+      path: /usr/local/libexec/mochirii-forums/acme-http-header
+      chmod: "+x"
+      contents: |
+        #!/bin/sh
+        set -eu
+        umask 077
+        if [ "$#" -ne 0 ] || [ ! -x /usr/bin/env ] || [ ! -x /usr/bin/python3 ]; then
+          exit 1
+        fi
+        exec /usr/bin/env -i \
+          PATH="/usr/bin:/bin" \
+          LC_ALL="C" \
+          LANG="C" \
+          /usr/bin/python3 -I -S -B - <<'PY'
+        import os
+        import stat
+
+        PARENT_PATH = "/shared/letsencrypt"
+        HEADER_NAME = "http.header"
+        EXPECTED_UID = 0
+        EXPECTED_GID = 0
+        MAXIMUM_BYTES = 65536
+
+
+        def main():
+            parent_descriptor = -1
+            header_descriptor = -1
+            try:
+                parent_descriptor = os.open(
+                    PARENT_PATH,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                )
+                parent_status = os.fstat(parent_descriptor)
+                if (
+                    not stat.S_ISDIR(parent_status.st_mode)
+                    or parent_status.st_uid != EXPECTED_UID
+                    or parent_status.st_gid != EXPECTED_GID
+                    or stat.S_IMODE(parent_status.st_mode) != 0o755
+                ):
+                    return 1
+                open_flags = os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+                try:
+                    header_descriptor = os.open(
+                        HEADER_NAME,
+                        open_flags,
+                        dir_fd=parent_descriptor,
+                    )
+                except FileNotFoundError:
+                    header_descriptor = os.open(
+                        HEADER_NAME,
+                        open_flags | os.O_CREAT | os.O_EXCL,
+                        mode=0o600,
+                        dir_fd=parent_descriptor,
+                    )
+                    os.fchown(header_descriptor, EXPECTED_UID, EXPECTED_GID)
+                    os.fchmod(header_descriptor, 0o600)
+                header_status = os.fstat(header_descriptor)
+                if (
+                    not stat.S_ISREG(header_status.st_mode)
+                    or header_status.st_uid != EXPECTED_UID
+                    or header_status.st_gid != EXPECTED_GID
+                    or stat.S_IMODE(header_status.st_mode) != 0o600
+                    or header_status.st_nlink != 1
+                    or header_status.st_size > MAXIMUM_BYTES
+                ):
+                    return 1
+                os.fsync(header_descriptor)
+                os.fsync(parent_descriptor)
+                return 0
+            except BaseException:
+                return 1
+            finally:
+                for descriptor in (header_descriptor, parent_descriptor):
+                    if descriptor >= 0:
+                        try:
+                            os.close(descriptor)
+                        except BaseException:
+                            pass
+
+
+        os._exit(main())
+        PY
+  - file:
+      path: /usr/local/bin/mochirii-acme-client
+      chmod: "+x"
+      contents: |
+        #!/bin/bash
+        set -euo pipefail
+        umask 077
+        readonly letsencrypt_dir="/shared/letsencrypt"
+        readonly patched_acme_sha256="b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e"
+        readonly curl_wrapper="/usr/local/libexec/mochirii-forums/acme-curl"
+        readonly curl_wrapper_sha256="2b0146be79adab6a232661d31444e1078b82a7dfc1231f06daa0ee4a5cf01109"
+        readonly header_helper="/usr/local/libexec/mochirii-forums/acme-http-header"
+        readonly header_helper_sha256="3406f82df0dfd29e908a0d14ca88c8e1d890cb200f4ca9174fd07c2c5011f6ba"
+        if [[ $# -lt 2 ]]; then
+          printf '%s\n' 'FORUMS_ACME_CLIENT_PREFLIGHT_FAILED' >&2
+          exit 1
+        fi
+        readonly acme_client="$1"
+        shift
+        case "${acme_client}" in
+          /opt/acme.sh|/shared/letsencrypt/acme.sh) ;;
+          *)
+            printf '%s\n' 'FORUMS_ACME_CLIENT_PREFLIGHT_FAILED' >&2
+            exit 1
+            ;;
+        esac
+        for runtime_file in "${acme_client}" "${curl_wrapper}" "${header_helper}" /usr/bin/curl; do
+          if [[ ! -f ${runtime_file} || -L ${runtime_file} ]] || \
+            [[ "$(/usr/bin/stat -c '%U:%G %a %h' -- "${runtime_file}")" != "root:root 755 1" ]]; then
+            printf '%s\n' 'FORUMS_ACME_CLIENT_PREFLIGHT_FAILED' >&2
+            exit 1
+          fi
+        done
+        if [[ "$(/usr/bin/sha256sum -- "${acme_client}" | /usr/bin/awk '{print $1}')" != "${patched_acme_sha256}" ]] || \
+          [[ "$(/usr/bin/sha256sum -- "${curl_wrapper}" | /usr/bin/awk '{print $1}')" != "${curl_wrapper_sha256}" ]] || \
+          [[ "$(/usr/bin/sha256sum -- "${header_helper}" | /usr/bin/awk '{print $1}')" != "${header_helper_sha256}" ]]; then
+          printf '%s\n' 'FORUMS_ACME_CLIENT_PREFLIGHT_FAILED' >&2
+          exit 1
+        fi
+        exec /usr/bin/env -i \
+          HOME="${letsencrypt_dir}" \
+          PATH="/usr/bin:/bin" \
+          SHELL="/bin/sh" \
+          LC_ALL="C" \
+          LANG="C" \
+          AUTO_UPGRADE="0" \
+          NO_DETECT_SH="1" \
+          LE_WORKING_DIR="${letsencrypt_dir}" \
+          "${acme_client}" "$@"
   - file:
       path: /usr/local/bin/mochirii-acme-cron
       chmod: "+x"
@@ -37,7 +350,7 @@
         set -euo pipefail
         umask 077
         readonly letsencrypt_dir="/shared/letsencrypt"
-        readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        readonly acme_sha256="b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e"
         test -d "${letsencrypt_dir}"
         test ! -L "${letsencrypt_dir}"
         test "$(stat -c '%U:%G %a' -- "${letsencrypt_dir}")" = "root:root 755"
@@ -48,7 +361,7 @@
           test ! -L "${private_path}"
           test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
         done
-        env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \
+        /usr/bin/env -i /usr/local/bin/mochirii-acme-client \
           "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"
         /usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload
         for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
@@ -64,7 +377,7 @@
         set -euo pipefail
         umask 077
         readonly letsencrypt_dir="/shared/letsencrypt"
-        readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        readonly acme_sha256="b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e"
         test "$(sha256sum /opt/acme.sh | awk '{print $1}')" = "${acme_sha256}"
         if test -e "${letsencrypt_dir}" || test -L "${letsencrypt_dir}"; then
           test -d "${letsencrypt_dir}"
@@ -88,8 +401,14 @@
           fi
         done
         cd /opt
-        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \
+        /usr/bin/env -i /usr/local/bin/mochirii-acme-client /opt/acme.sh \
           --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0
+        test -f "${letsencrypt_dir}/acme.sh"
+        test ! -L "${letsencrypt_dir}/acme.sh"
+        test "$(stat -c '%h' -- "${letsencrypt_dir}/acme.sh")" = "1"
+        chown root:root -- "${letsencrypt_dir}/acme.sh"
+        chmod 0755 -- "${letsencrypt_dir}/acme.sh"
+        test "$(stat -c '%U:%G %a %h' -- "${letsencrypt_dir}/acme.sh")" = "root:root 755 1"
         for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
           test -f "${private_path}"
           test ! -L "${private_path}"
@@ -100,7 +419,7 @@
         done
         test "$(sha256sum "${letsencrypt_dir}/acme.sh" | awk '{print $1}')" = "${acme_sha256}"
         grep -Eq "^AUTO_UPGRADE='?0'?$" "${letsencrypt_dir}/account.conf"
-        LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+        /usr/bin/env -i /usr/local/bin/mochirii-acme-client "${letsencrypt_dir}/acme.sh" \
           --set-default-ca --server letsencrypt
         for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
           test -f "${private_path}"
@@ -158,7 +477,7 @@
         set -euo pipefail
         umask 077
         readonly letsencrypt_dir="/shared/letsencrypt"
-        readonly acme_sha256="400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        readonly acme_sha256="b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e"
         readonly public_webroot="/var/www/discourse/public"
         readonly challenge_parent="${public_webroot}/.well-known"
         readonly challenge_root="${challenge_parent}/acme-challenge"
@@ -454,8 +773,8 @@
               return 1
               ;;
           esac
-          if LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
-            --issue -d "${DISCOURSE_HOSTNAME}" --keylength "${keylength}" \
+          if /usr/bin/env -i /usr/local/bin/mochirii-acme-client "${letsencrypt_dir}/acme.sh" \
+            --issue --server letsencrypt -d "${DISCOURSE_HOSTNAME}" --keylength "${keylength}" \
             -w "${public_webroot}" >/dev/null 2>&1; then
             issuance_status=0
           else
@@ -481,7 +800,7 @@
               return 1
               ;;
           esac
-          if ! LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \
+          if ! /usr/bin/env -i /usr/local/bin/mochirii-acme-client "${letsencrypt_dir}/acme.sh" \
             --installcert "${ecc_option[@]}" -d "${DISCOURSE_HOSTNAME}" \
             --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.cer" \
             --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.key" \
