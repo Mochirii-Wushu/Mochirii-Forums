@@ -353,7 +353,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "057b77e6ecbdfe70a34cd1882186a7fb813587ce21046aac09ac238b66afa1bb"
+            "40e6f29fa55cd464f2c0aeaae977d0c8bb116c4d328686a8b6e65b7cd637418e"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
             "76b4fbfc22f283d262ac63ae00888e206d53f373a9cadfc5af5e36f561033fae"
@@ -491,7 +491,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
         "ROOT": "6c0caf441a1aad2240e7aaccbb2a73915fc5ce62a90eb857836d905c68760c7d",
         "MANAGED_WEB_SSL_SERVER_OUTLET": "611b3941a610ea9d23805d773cbba7dbf7ce57c06b2355f10d65a8720196c8e0",
         "EXPECTED_SERVER_TLS_SHA256": "885cfdce0ad10ad670c604584bf51bc0e05027d1e6ab92cf45b35a23209914ce",
-        "ALLOWED_FILES": "2830164c191da98529cb8134eccfc4dd30891049e912e9625e767b2531283661",
+        "ALLOWED_FILES": "e7367ee329fa1492f2951dc2df311f3a5927ed4013320792b6b72080edba692e",
     }
     observed_executable_assignments = set()
     forbidden_assignment_nodes = (
@@ -557,7 +557,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
     )
     if (
         hashlib.sha256(verifier_source.encode("utf-8")).hexdigest()
-        != "6668eda049f2d14d63ab7da7421faebe41d94d09f73d8420eec77d81d5f2f284"
+        != "98e1d17b76a9eece653453c8c6e0211cc47176664b7ef3ffd5272e1266e0b269"
         or hashlib.sha256(contract_verifier_source.encode("utf-8")).hexdigest()
         != "43ab4b67ad4220227eedccd2815a7b487bbec0c65f62d770890461c3d606bdc8"
         or hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
@@ -858,15 +858,20 @@ def test_renderer() -> None:
             raise RuntimeError("Quoted SMTP fixture did not survive exact rendering.")
         tls_required = (
             '  - "templates/web.ssl.template.yml"',
-            "acme-sh-3.0.6.gz.b64",
-            "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da",
+            "acme-sh-3.1.4.gz.b64",
+            "fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32",
+            "b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e",
             "--auto-upgrade 0",
-            "NO_DETECT_SH=1",
+            'NO_DETECT_SH="1"',
+            "/usr/local/bin/mochirii-acme-client",
+            "/usr/local/libexec/mochirii-forums/acme-curl",
+            "/usr/local/libexec/mochirii-forums/acme-http-header",
+            "/usr/bin/curl -q",
             "/usr/local/bin/mochirii-acme-cron",
         )
         if any(value not in rendered for value in tls_required):
             raise RuntimeError("Production rendering lost the immutable TLS integration.")
-        if "web.letsencrypt.ssl.template.yml" in rendered or "curl " in rendered or "--upgrade" in rendered:
+        if "web.letsencrypt.ssl.template.yml" in rendered or "--upgrade" in rendered:
             raise RuntimeError("Production rendering reintroduced floating TLS client source.")
         if os.name != "nt" and stat.S_IMODE(output.stat().st_mode) != 0o600:
             raise RuntimeError("Rendered runtime configuration is not mode 0600.")
@@ -883,7 +888,7 @@ def test_renderer() -> None:
         )
         if any(value not in rendered for value in required):
             raise RuntimeError("Disposable restore rendering did not fail closed.")
-        if any(value in rendered for value in ("acme-sh-3.0.6", "mochirii-acme-cron", "DISCOURSE_FORCE_HTTPS")):
+        if any(value in rendered for value in ("acme-sh-3.1.4", "mochirii-acme-cron", "DISCOURSE_FORCE_HTTPS")):
             raise RuntimeError("Disposable restore rendering activated the public TLS client.")
 
     expect_render_error(production, repository_commit="ABC")
@@ -1101,10 +1106,25 @@ def test_acme_install_byte_stability() -> None:
             raise RuntimeError(f"{label} hostile did not change the production fragment.")
         original_fragment_sha = VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256
         original_configure_sha = VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256
+        original_curl_wrapper_sha = VALIDATOR.ACME_CURL_WRAPPER_SHA256
+        original_header_helper_sha = VALIDATOR.ACME_HEADER_HELPER_SHA256
+        original_client_wrapper_sha = VALIDATOR.ACME_CLIENT_WRAPPER_SHA256
         original_executable_sha = VALIDATOR.IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256
         original_run_sha = VALIDATOR.IMMUTABLE_LETSENCRYPT_RUN_SHA256
         VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = hashlib.sha256(hostile.encode("utf-8")).hexdigest()
         configure = VALIDATOR.yaml_executable_file_contents(hostile, "/usr/local/bin/configure-letsencrypt")
+        curl_hostile = VALIDATOR.yaml_executable_file_contents(
+            hostile,
+            "/usr/local/libexec/mochirii-forums/acme-curl",
+        )
+        header_helper_hostile = VALIDATOR.yaml_executable_file_contents(
+            hostile,
+            "/usr/local/libexec/mochirii-forums/acme-http-header",
+        )
+        client_hostile = VALIDATOR.yaml_executable_file_contents(
+            hostile,
+            "/usr/local/bin/mochirii-acme-client",
+        )
         letsencrypt_hostile = VALIDATOR.yaml_executable_file_contents(
             hostile,
             "/usr/local/bin/letsencrypt",
@@ -1114,6 +1134,11 @@ def test_acme_install_byte_stability() -> None:
         run_end = "# MOCHIRII TLS RUN END\n"
         run_section = hostile[hostile.index(run_begin) + len(run_begin) : hostile.index(run_end)]
         VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256 = hashlib.sha256(configure.encode("utf-8")).hexdigest()
+        VALIDATOR.ACME_CURL_WRAPPER_SHA256 = hashlib.sha256(curl_hostile.encode("utf-8")).hexdigest()
+        VALIDATOR.ACME_HEADER_HELPER_SHA256 = hashlib.sha256(
+            header_helper_hostile.encode("utf-8")
+        ).hexdigest()
+        VALIDATOR.ACME_CLIENT_WRAPPER_SHA256 = hashlib.sha256(client_hostile.encode("utf-8")).hexdigest()
         VALIDATOR.IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = hashlib.sha256(
             letsencrypt_hostile.encode("utf-8")
         ).hexdigest()
@@ -1127,16 +1152,41 @@ def test_acme_install_byte_stability() -> None:
         finally:
             VALIDATOR.IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = original_fragment_sha
             VALIDATOR.CONFIGURE_LETSENCRYPT_SHA256 = original_configure_sha
+            VALIDATOR.ACME_CURL_WRAPPER_SHA256 = original_curl_wrapper_sha
+            VALIDATOR.ACME_HEADER_HELPER_SHA256 = original_header_helper_sha
+            VALIDATOR.ACME_CLIENT_WRAPPER_SHA256 = original_client_wrapper_sha
             VALIDATOR.IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = original_executable_sha
             VALIDATOR.IMMUTABLE_LETSENCRYPT_RUN_SHA256 = original_run_sha
 
     exact_reload = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload"
     cron = VALIDATOR.yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-cron")
+    curl_wrapper = VALIDATOR.yaml_executable_file_contents(
+        tls,
+        "/usr/local/libexec/mochirii-forums/acme-curl",
+    )
+    header_helper = VALIDATOR.yaml_executable_file_contents(
+        tls,
+        "/usr/local/libexec/mochirii-forums/acme-http-header",
+    )
+    client_wrapper = VALIDATOR.yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-client")
     letsencrypt = VALIDATOR.yaml_executable_file_contents(
         tls,
         "/usr/local/bin/letsencrypt",
         "# MOCHIRII TLS RUN END\n",
     )
+    if (
+        hashlib.sha256(curl_wrapper.encode("utf-8")).hexdigest() != VALIDATOR.ACME_CURL_WRAPPER_SHA256
+        or hashlib.sha256(header_helper.encode("utf-8")).hexdigest()
+        != VALIDATOR.ACME_HEADER_HELPER_SHA256
+        or hashlib.sha256(client_wrapper.encode("utf-8")).hexdigest() != VALIDATOR.ACME_CLIENT_WRAPPER_SHA256
+    ):
+        raise RuntimeError("ACME transport wrapper source identity differs.")
+    unsealed_header_helper = tls.replace(
+        "os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC",
+        "os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC",
+        1,
+    )
+    reject_resealed_tls(unsealed_header_helper, "header-helper no-follow removal")
     validator_begin = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR BEGIN\n"
     validator_end = "# MOCHIRII CERTIFICATE MATERIAL VALIDATOR END\n"
     stage_tool_begin = "# MOCHIRII ACME STAGE TOOL BEGIN\n"
@@ -1228,7 +1278,15 @@ def test_acme_install_byte_stability() -> None:
     install_source = letsencrypt[
         letsencrypt.index("install_certificate() {\n") : letsencrypt.index("\n\n" + installed_validator_begin)
     ]
-    cron_call = '''env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \\
+    client_call = (
+        '/usr/bin/env -i /usr/local/bin/mochirii-acme-client '
+        '"${letsencrypt_dir}/acme.sh"'
+    )
+    if issue_source.count(client_call) != 1 or install_source.count(client_call) != 1:
+        raise RuntimeError("Production ACME issue or install client-wrapper seam differs.")
+    issue_harness_source = issue_source.replace(client_call, '"${letsencrypt_dir}/acme.sh"', 1)
+    install_harness_source = install_source.replace(client_call, '"${letsencrypt_dir}/acme.sh"', 1)
+    cron_call = '''/usr/bin/env -i /usr/local/bin/mochirii-acme-client \\
   "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"'''
     rsa_install = 'install_certificate "" ""'
     ecc_install = 'install_certificate "_ecc" "--ecc"'
@@ -1278,13 +1336,22 @@ done'''
           fi
         done
 '''
-    exact_install = '''        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
+    exact_install = '''        /usr/bin/env -i /usr/local/bin/mochirii-acme-client /opt/acme.sh \\
           --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0
+'''
+    installed_client_metadata = '''        test -f "${letsencrypt_dir}/acme.sh"
+        test ! -L "${letsencrypt_dir}/acme.sh"
+        test "$(stat -c '%h' -- "${letsencrypt_dir}/acme.sh")" = "1"
+        chown root:root -- "${letsencrypt_dir}/acme.sh"
+        chmod 0755 -- "${letsencrypt_dir}/acme.sh"
+        test "$(stat -c '%U:%G %a %h' -- "${letsencrypt_dir}/acme.sh")" = "root:root 755 1"
 '''
     initial_start = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf"
     if (
         tls.count(preflight) != 1
         or tls.count(exact_install) != 1
+        or tls.count(installed_client_metadata) != 1
+        or tls.index(exact_install) >= tls.index(installed_client_metadata)
         or letsencrypt.count(challenge_paths) != 1
         or letsencrypt.count(challenge_preparation) != 1
         or letsencrypt.index(challenge_paths) >= letsencrypt.index(challenge_preparation)
@@ -1324,6 +1391,84 @@ done'''
     without_preflight = tls.replace(preflight, "", 1)
     post_install_preflight = without_preflight.replace(exact_install, exact_install + preflight, 1)
     resealed_hostiles = (
+        (
+            tls.replace(
+                '''        exec /usr/bin/env -i \\
+          HOME="/nonexistent"''',
+                '''        exec /usr/bin/env \\
+          HOME="/nonexistent"''',
+                1,
+            ),
+            "curl wrapper ambient environment",
+        ),
+        (
+            tls.replace(
+                '''        exec /usr/bin/env -i \\
+          HOME="${letsencrypt_dir}"''',
+                '''        exec /usr/bin/env \\
+          HOME="${letsencrypt_dir}"''',
+                1,
+            ),
+            "client wrapper ambient environment",
+        ),
+        (tls.replace('/usr/bin/curl -q "$@"', '/usr/bin/curl "$@"', 1), "curl default configuration"),
+        (
+            tls.replace(
+                'for runtime_file in "${acme_client}" "${curl_wrapper}" "${header_helper}" /usr/bin/curl; do',
+                'for runtime_file in "${acme_client}" "${curl_wrapper}" "${header_helper}"; do',
+                1,
+            ),
+            "missing absolute curl preflight",
+        ),
+        (
+            tls.replace(
+                '_ACME_CURL="/usr/local/libexec/mochirii-forums/acme-curl --silent',
+                '_ACME_CURL="curl --silent',
+                1,
+            ),
+            "relative ACME curl command",
+        ),
+        (
+            tls.replace(
+                '                  b\'\'\'  if false; then',
+                '                  b\'\'\'  if [ -z "$_ACME_WGET" ] && _exists "wget"; then',
+                1,
+            ),
+            "wget transport fallback",
+        ),
+        (
+            tls.replace(
+                'if [ "${HTTP_HEADER:-}" != "/shared/letsencrypt/http.header" ] || \\\n'
+                '              ! /usr/local/libexec/mochirii-forums/acme-http-header >/dev/null 2>&1; then',
+                'if ! touch "$HTTP_HEADER"; then',
+                1,
+            ),
+            "ACME header path policy",
+        ),
+        (
+            tls.replace(
+                '    _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"',
+                '    true # retained transport overrides accepted',
+                1,
+            ),
+            "retained transport override",
+        ),
+        (
+            tls.replace(
+                '$(/usr/local/libexec/mochirii-forums/acme-curl --help 2>&1)',
+                '$(curl --help 2>&1)',
+                1,
+            ),
+            "raw curl capability probe",
+        ),
+        (
+            tls.replace(
+                "/usr/bin/env -i /usr/local/bin/mochirii-acme-client /opt/acme.sh",
+                "/opt/acme.sh",
+                1,
+            ),
+            "direct ACME install bypass",
+        ),
         (tls.replace(exact_reload, "sv reload nginx", 1), "runit reload"),
         (tls.replace(exact_reload, exact_reload + " || true", 1), "masked reload failure"),
         (tls.replace(f"        {exact_reload}\n", "", 1), "missing caller-owned reload"),
@@ -1429,6 +1574,10 @@ done'''
         (post_start_challenge_preparation, "late challenge preparation"),
         (uncalled_challenge_preparation, "uncalled challenge preparation"),
         (post_install_preflight, "post-install private-state preflight"),
+        (
+            tls.replace(installed_client_metadata, "", 1),
+            "missing installed-client metadata normalization",
+        ),
         (
             tls.replace(
                 'if test -e "${private_path}" || test -L "${private_path}"; then',
@@ -1640,10 +1789,13 @@ done'''
             'letsencrypt_dir="$PWD/runtime"\n'
             'public_webroot="/fixture/public"\n'
             'DISCOURSE_HOSTNAME="forums.mochirii.com"\n'
-            + issue_source
+            + issue_harness_source
             + '\nissue_certificate "$1"\n'
         )
-        expected_issue = b"--issue -d forums.mochirii.com --keylength 4096 -w /fixture/public\n"
+        expected_issue = (
+            b"--issue --server letsencrypt -d forums.mochirii.com "
+            b"--keylength 4096 -w /fixture/public\n"
+        )
         for status, should_pass in (("0", True), ("2", True), ("1", False)):
             events = root / "issue-events.log"
             if events.exists():
@@ -1697,7 +1849,7 @@ done'''
             "set -euo pipefail\n"
             'letsencrypt_dir="$PWD/runtime"\n'
             'DISCOURSE_HOSTNAME="forums.mochirii.com"\n'
-            + install_source
+            + install_harness_source
             + '\ninstall_certificate "$1" "$2"\n'
         )
         install_cases = (
@@ -1834,13 +1986,22 @@ printf leaked-success
                 raise RuntimeError("Host ACME verification accepted a linked parent directory.")
 
     def require_reload_failure(seam: str, label: str) -> None:
+        cron_suffix = ' --cron --home "${letsencrypt_dir}"'
+        if not cron_call.endswith(cron_suffix):
+            raise RuntimeError("ACME cron client-wrapper suffix differs.")
+        cron_client_call = cron_call[: -len(cron_suffix)]
+        if seam.count(cron_client_call) != 1:
+            raise RuntimeError(f"{label} client-wrapper test seam differs.")
+        harness_seam = seam.replace(cron_client_call, "/bin/true", 1)
+        if "/usr/local/bin/mochirii-acme-client" in harness_seam:
+            raise RuntimeError(f"{label} client-wrapper test seam remained active.")
         harness = (
             "set -euo pipefail\n"
             "letsencrypt_dir=/unused\n"
             "DISCOURSE_HOSTNAME=forums.invalid\n"
             "install_certificate() { return 0; }\n"
             "reload_stub() { return 47; }\n"
-            + seam.replace('"${letsencrypt_dir}/acme.sh"', "/bin/true").replace(
+            + harness_seam.replace(
                 exact_reload,
                 "reload_stub",
             )
@@ -1892,9 +2053,13 @@ printf leaked-success
         else:
             raise RuntimeError("Actual validator accepted a weakened host-private ACME contract.")
 
-    controlled_install = '''        AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
+    controlled_install = '''        /usr/bin/env -i /usr/local/bin/mochirii-acme-client /opt/acme.sh \\
           --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0\n'''
-    uncontrolled_install = controlled_install.replace(" NO_DETECT_SH=1", "")
+    uncontrolled_install = controlled_install.replace(
+        "/usr/bin/env -i /usr/local/bin/mochirii-acme-client /opt/acme.sh",
+        "AUTO_UPGRADE=0 LE_WORKING_DIR=\"${letsencrypt_dir}\" ./acme.sh",
+        1,
+    )
     terminal = "        exec /usr/local/bin/letsencrypt\n"
     hostile = tls.replace(controlled_install, uncontrolled_install, 1).replace(
         terminal,
@@ -1935,14 +2100,26 @@ printf leaked-success
             rendered_run = RENDER.tls_fragment_section("RUN")
         finally:
             RENDER.TLS_FRAGMENT = previous_fragment
-    if not rendered_run.startswith("dead: |1\n  - exec:") or "NO_DETECT_SH=1" not in rendered_run:
+    if not rendered_run.startswith("dead: |1\n  - exec:") or 'NO_DETECT_SH="1"' not in rendered_run:
         raise RuntimeError("Actual renderer seam did not preserve the inert RUN block-scalar hostile.")
     reject_resealed_tls(inert_run, "inert immutable TLS RUN section")
 
-    encoded = (ROOT / "config/acme-sh-3.0.6.gz.b64").read_text(encoding="ascii")
+    encoded = (ROOT / "config/acme-sh-3.1.4.gz.b64").read_text(encoding="ascii")
     source = gzip.decompress(base64.b64decode("".join(encoded.splitlines()), validate=True))
     if hashlib.sha256(source).hexdigest() != VALIDATOR.ACME_SOURCE_SHA256:
         raise RuntimeError("Pinned ACME fixture bytes differ before the install control test.")
+    if any(replacement in source for _, replacement in VALIDATOR.ACME_RUNTIME_REPLACEMENTS):
+        raise RuntimeError("Pinned ACME source already contains a reviewed runtime replacement.")
+    runtime_source = VALIDATOR.transform_acme_runtime_source(source)
+    if (
+        hashlib.sha256(runtime_source).hexdigest() != VALIDATOR.ACME_RUNTIME_SOURCE_SHA256
+        or any(
+            runtime_source.count(replacement) != 1
+            for _, replacement in VALIDATOR.ACME_RUNTIME_REPLACEMENTS
+        )
+        or any(original in runtime_source for original, _ in VALIDATOR.ACME_RUNTIME_REPLACEMENTS)
+    ):
+        raise RuntimeError("Pinned ACME runtime transport transformation differs.")
     vendor_webroot_fragments = (
         b'mkdir -p "$wellknown_path"',
         b'printf "%s" "$keyauthorization" >"$wellknown_path/$token"',
@@ -1955,6 +2132,565 @@ printf leaked-success
     # Linux CI; Windows still binds the exact rendered command and pinned bytes.
     if os.name == "nt":
         return
+
+    with tempfile.TemporaryDirectory(prefix="mochirii-acme-transport-") as directory:
+        transport_root = Path(directory)
+        hostile_parent_environment = {
+            "ALL_PROXY": "http://proxy.invalid",
+            "BASH_ENV": "/hostile",
+            "CURL_CA_BUNDLE": "/hostile",
+            "CURL_HOME": "/hostile",
+            "ENV": "/hostile",
+            "HOME": "/hostile",
+            "HTTPS_PROXY": "http://proxy.invalid",
+            "PATH": "/hostile",
+            "PYTHONPATH": "/hostile",
+            "SSL_CERT_FILE": "/hostile",
+        }
+        system_env = Path("/usr/bin/env")
+        if not system_env.is_file() or system_env.is_symlink():
+            raise RuntimeError("Linux ACME transport fixture lacks the exact env executable.")
+        system_env_sha = hashlib.sha256(system_env.read_bytes()).hexdigest()
+
+        def render_header_helper_fixture(parent: Path) -> str:
+            fixture_source = header_helper
+            substitutions = (
+                ('PARENT_PATH = "/shared/letsencrypt"', f"PARENT_PATH = {str(parent)!r}"),
+                ("EXPECTED_UID = 0", f"EXPECTED_UID = {os.geteuid()}"),
+                ("EXPECTED_GID = 0", f"EXPECTED_GID = {os.getegid()}"),
+            )
+            for original, replacement in substitutions:
+                if fixture_source.count(original) != 1:
+                    raise RuntimeError("ACME header helper fixture substitution seam differs.")
+                fixture_source = fixture_source.replace(original, replacement, 1)
+            return fixture_source
+
+        integrated_home = transport_root / "integrated-home"
+        header_helper_fixture = transport_root / "acme-http-header"
+        header_helper_fixture_source = render_header_helper_fixture(integrated_home)
+        header_helper_fixture.write_text(
+            header_helper_fixture_source,
+            encoding="utf-8",
+            newline="\n",
+        )
+        header_helper_fixture.chmod(0o755)
+        header_helper_fixture_sha = hashlib.sha256(header_helper_fixture.read_bytes()).hexdigest()
+
+        helper_home = transport_root / "header-helper-home"
+        direct_header_helper = transport_root / "acme-http-header-direct"
+        direct_header_helper.write_text(
+            render_header_helper_fixture(helper_home),
+            encoding="utf-8",
+            newline="\n",
+        )
+        direct_header_helper.chmod(0o755)
+
+        def reset_helper_home() -> Path:
+            if helper_home.exists():
+                shutil.rmtree(helper_home)
+            helper_home.mkdir(mode=0o755)
+            helper_home.chmod(0o755)
+            return helper_home / "http.header"
+
+        def run_header_helper() -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(
+                [str(direct_header_helper)],
+                env=hostile_parent_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=10,
+            )
+
+        header_path = reset_helper_home()
+        for _ in range(2):
+            helper_result = run_header_helper()
+            header_status = header_path.stat()
+            if (
+                helper_result.returncode != 0
+                or helper_result.stdout
+                or helper_result.stderr
+                or not stat.S_ISREG(header_status.st_mode)
+                or header_status.st_uid != os.geteuid()
+                or header_status.st_gid != os.getegid()
+                or stat.S_IMODE(header_status.st_mode) != 0o600
+                or header_status.st_nlink != 1
+                or header_status.st_size != 0
+            ):
+                raise RuntimeError("Actual ACME header helper did not create and retain the exact safe file shape.")
+
+        symlink_target = transport_root / "header-symlink-target"
+        symlink_target.write_bytes(b"symlink-target-preserved")
+        symlink_target.chmod(0o600)
+        header_path = reset_helper_home()
+        header_path.symlink_to(symlink_target)
+        symlink_result = run_header_helper()
+        if (
+            symlink_result.returncode == 0
+            or symlink_result.stdout
+            or symlink_result.stderr
+            or not header_path.is_symlink()
+            or header_path.readlink() != symlink_target
+            or symlink_target.read_bytes() != b"symlink-target-preserved"
+        ):
+            raise RuntimeError("Actual ACME header helper modified or accepted a symlink.")
+
+        hardlink_target = transport_root / "header-hardlink-target"
+        hardlink_target.write_bytes(b"hardlink-target-preserved")
+        hardlink_target.chmod(0o600)
+        header_path = reset_helper_home()
+        os.link(hardlink_target, header_path)
+        hardlink_inode = hardlink_target.stat().st_ino
+        hardlink_result = run_header_helper()
+        if (
+            hardlink_result.returncode == 0
+            or hardlink_result.stdout
+            or hardlink_result.stderr
+            or header_path.stat().st_ino != hardlink_inode
+            or hardlink_target.stat().st_ino != hardlink_inode
+            or hardlink_target.stat().st_nlink != 2
+            or hardlink_target.read_bytes() != b"hardlink-target-preserved"
+        ):
+            raise RuntimeError("Actual ACME header helper modified or accepted a hardlink.")
+
+        header_path = reset_helper_home()
+        os.mkfifo(header_path, 0o600)
+        fifo_result = run_header_helper()
+        if (
+            fifo_result.returncode == 0
+            or fifo_result.stdout
+            or fifo_result.stderr
+            or not stat.S_ISFIFO(header_path.lstat().st_mode)
+        ):
+            raise RuntimeError("Actual ACME header helper modified, blocked on, or accepted a FIFO.")
+
+        header_path = reset_helper_home()
+        header_path.write_bytes(b"unsafe-mode-preserved")
+        header_path.chmod(0o644)
+        unsafe_mode_result = run_header_helper()
+        if (
+            unsafe_mode_result.returncode == 0
+            or unsafe_mode_result.stdout
+            or unsafe_mode_result.stderr
+            or header_path.read_bytes() != b"unsafe-mode-preserved"
+            or stat.S_IMODE(header_path.stat().st_mode) != 0o644
+        ):
+            raise RuntimeError("Actual ACME header helper modified or accepted an unsafe mode.")
+
+        header_path = reset_helper_home()
+        oversized_bytes = b"x" * 65537
+        header_path.write_bytes(oversized_bytes)
+        header_path.chmod(0o600)
+        oversized_result = run_header_helper()
+        if (
+            oversized_result.returncode == 0
+            or oversized_result.stdout
+            or oversized_result.stderr
+            or header_path.read_bytes() != oversized_bytes
+        ):
+            raise RuntimeError("Actual ACME header helper modified or accepted an oversized file.")
+
+        client_fixture_source = client_wrapper
+        substitutions = (
+            (
+                "/opt/acme.sh|/shared/letsencrypt/acme.sh",
+                "/usr/bin/env",
+            ),
+            (
+                VALIDATOR.ACME_RUNTIME_SOURCE_SHA256,
+                system_env_sha,
+            ),
+            (
+                "/usr/local/libexec/mochirii-forums/acme-curl",
+                "/usr/bin/env",
+            ),
+            (
+                VALIDATOR.ACME_CURL_WRAPPER_SHA256,
+                system_env_sha,
+            ),
+            (
+                "/usr/local/libexec/mochirii-forums/acme-http-header",
+                str(header_helper_fixture),
+            ),
+            (
+                VALIDATOR.ACME_HEADER_HELPER_SHA256,
+                header_helper_fixture_sha,
+            ),
+        )
+        for original, replacement in substitutions:
+            if client_fixture_source.count(original) != 1:
+                raise RuntimeError("ACME client wrapper fixture substitution seam differs.")
+            client_fixture_source = client_fixture_source.replace(original, replacement, 1)
+        client_fixture = transport_root / "mochirii-acme-client"
+        client_fixture.write_text(client_fixture_source, encoding="utf-8", newline="\n")
+        client_fixture.chmod(0o755)
+        client_result = subprocess.run(
+            [str(client_fixture), "/usr/bin/env", "--"],
+            env=hostile_parent_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=10,
+        )
+        client_environment = dict(
+            line.split("=", 1)
+            for line in client_result.stdout.decode("utf-8", errors="strict").splitlines()
+        )
+        if (
+            client_result.returncode != 0
+            or client_result.stderr
+            or client_environment
+            != {
+                "AUTO_UPGRADE": "0",
+                "HOME": "/shared/letsencrypt",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "LE_WORKING_DIR": "/shared/letsencrypt",
+                "NO_DETECT_SH": "1",
+                "PATH": "/usr/bin:/bin",
+                "SHELL": "/bin/sh",
+            }
+        ):
+            raise RuntimeError("Actual ACME client wrapper did not replace the ambient environment exactly.")
+
+        missing_curl = transport_root / "missing-curl"
+        if client_fixture_source.count("/usr/bin/curl") != 1:
+            raise RuntimeError("ACME client missing-curl fixture seam differs.")
+        missing_curl_source = client_fixture_source.replace(
+            "/usr/bin/curl",
+            str(missing_curl),
+            1,
+        )
+        missing_curl_fixture = transport_root / "mochirii-acme-client-missing-curl"
+        missing_curl_fixture.write_text(missing_curl_source, encoding="utf-8", newline="\n")
+        missing_curl_fixture.chmod(0o755)
+        missing_curl_result = subprocess.run(
+            [str(missing_curl_fixture), "/usr/bin/env", "--"],
+            env=hostile_parent_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=10,
+        )
+        if (
+            missing_curl_result.returncode == 0
+            or missing_curl_result.stdout
+            or missing_curl_result.stderr != b"FORUMS_ACME_CLIENT_PREFLIGHT_FAILED\n"
+        ):
+            raise RuntimeError("Actual ACME client wrapper accepted an absent reviewed curl binary.")
+
+        curl_arguments = transport_root / "curl-arguments"
+        curl_environment = transport_root / "curl-environment"
+        curl_stub = transport_root / "curl-stub"
+        curl_stub.write_text(
+            "#!/bin/sh\n"
+            + f"/usr/bin/printf '%s\\n' \"$@\" > {str(curl_arguments)!r}\n"
+            + f"/usr/bin/env > {str(curl_environment)!r}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        curl_stub.chmod(0o755)
+        if curl_wrapper.count("/usr/bin/curl") != 2:
+            raise RuntimeError("ACME curl wrapper executable seam differs.")
+        curl_fixture_source = curl_wrapper.replace("/usr/bin/curl", str(curl_stub), 2)
+        curl_fixture = transport_root / "acme-curl"
+        curl_fixture.write_text(curl_fixture_source, encoding="utf-8", newline="\n")
+        curl_fixture.chmod(0o755)
+        curl_result = subprocess.run(
+            [str(curl_fixture), "--silent", "https://example.invalid/new-order"],
+            env=hostile_parent_environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=10,
+        )
+        observed_arguments = curl_arguments.read_text(encoding="utf-8").splitlines()
+        observed_environment = dict(
+            line.split("=", 1)
+            for line in curl_environment.read_text(encoding="utf-8").splitlines()
+        )
+        if (
+            curl_result.returncode != 0
+            or curl_result.stdout
+            or curl_result.stderr
+            or observed_arguments != ["-q", "--silent", "https://example.invalid/new-order"]
+            or observed_environment.get("HOME") != "/nonexistent"
+            or observed_environment.get("PATH") != "/usr/bin:/bin"
+            or observed_environment.get("LC_ALL") != "C"
+            or observed_environment.get("LANG") != "C"
+            or any(name in observed_environment for name in hostile_parent_environment)
+        ):
+            raise RuntimeError("Actual ACME curl wrapper did not isolate transport or place -q first.")
+
+        reviewed_wrapper_path = b"/usr/local/libexec/mochirii-forums/acme-curl"
+        fixture_wrapper_path = str(curl_fixture).encode("utf-8")
+        if runtime_source.count(reviewed_wrapper_path) != 3:
+            raise RuntimeError("ACME runtime wrapper integration seam differs.")
+        integrated_source = runtime_source.replace(reviewed_wrapper_path, fixture_wrapper_path)
+        reviewed_header_helper_path = b"/usr/local/libexec/mochirii-forums/acme-http-header"
+        fixture_header_helper_path = str(header_helper_fixture).encode("utf-8")
+        if integrated_source.count(reviewed_header_helper_path) != 1:
+            raise RuntimeError("ACME runtime header-helper integration seam differs.")
+        integrated_source = integrated_source.replace(
+            reviewed_header_helper_path,
+            fixture_header_helper_path,
+            1,
+        )
+        reviewed_header_path = b"/shared/letsencrypt/http.header"
+        fixture_header_path = str(integrated_home / "http.header").encode("utf-8")
+        if integrated_source.count(reviewed_header_path) != 3:
+            raise RuntimeError("ACME runtime canonical header path seam differs.")
+        integrated_source = integrated_source.replace(reviewed_header_path, fixture_header_path)
+        main_call = b'main "$@"\n'
+        integrated_main = b'''if [ "${1:-}" = "__mochirii_transport_fixture" ]; then
+  operation="${2:-init}"
+  _initpath "forums.mochirii.com" "2048" || exit 1
+  case "$operation" in
+    init)
+      _inithttp
+      ;;
+    post)
+      _post '{}' 'https://example.invalid/new-order' '' 'POST' 'application/jose+json'
+      ;;
+    get)
+      _get 'https://example.invalid/directory' '' ''
+      ;;
+    repeat)
+      _post '{}' 'https://example.invalid/new-order' '' 'POST' 'application/jose+json' || exit 1
+      _get 'https://example.invalid/directory' '' ''
+      ;;
+    *)
+      exit 64
+      ;;
+  esac
+else
+  main "$@"
+fi
+'''
+        if integrated_source.count(main_call) != 1:
+            raise RuntimeError("ACME runtime integration main seam differs.")
+        integrated_source = integrated_source.replace(main_call, integrated_main, 1)
+        integrated_fixture = transport_root / "acme-integrated"
+        integrated_fixture.write_bytes(integrated_source)
+        integrated_fixture.chmod(0o755)
+
+        def run_integrated_transport(
+            account_lines: tuple[str, ...],
+            ca_lines: tuple[str, ...] = (),
+            operation: str = "init",
+            prepare_header=None,
+        ) -> subprocess.CompletedProcess[bytes]:
+            home = integrated_home
+            if home.exists():
+                shutil.rmtree(home)
+            home.mkdir(mode=0o755)
+            home.chmod(0o755)
+            account = home / "account.conf"
+            account.write_text(
+                "DEFAULT_ACME_SERVER='https://acme-v02.api.letsencrypt.org/directory'\n"
+                + "\n".join(account_lines)
+                + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            if ca_lines:
+                ca = home / "ca" / "acme-v02.api.letsencrypt.org" / "directory" / "ca.conf"
+                ca.parent.mkdir(parents=True, mode=0o700)
+                ca.write_text("\n".join(ca_lines) + "\n", encoding="utf-8", newline="\n")
+            if prepare_header is not None:
+                prepare_header(home / "http.header")
+            curl_arguments.unlink(missing_ok=True)
+            curl_environment.unlink(missing_ok=True)
+            return subprocess.run(
+                [
+                    "/bin/sh",
+                    str(integrated_fixture),
+                    "__mochirii_transport_fixture",
+                    operation,
+                ],
+                env={
+                    "HOME": str(home),
+                    "LC_ALL": "C",
+                    "LE_WORKING_DIR": str(home),
+                    "PATH": "/usr/bin:/bin",
+                },
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=10,
+            )
+
+        for operation in ("init", "post", "get", "repeat"):
+            safe_transport = run_integrated_transport(("AUTO_UPGRADE='0'",), operation=operation)
+            if safe_transport.returncode != 0 or safe_transport.stdout or safe_transport.stderr:
+                raise RuntimeError("Actual transformed ACME runtime rejected the reviewed transport control.")
+            if not curl_arguments.is_file():
+                raise RuntimeError("Actual transformed ACME runtime did not use the reviewed curl wrapper.")
+
+        def header_shape_control(shape: str, operation: str):
+            sentinel = transport_root / f"integrated-{shape}-{operation}-sentinel"
+            sentinel.unlink(missing_ok=True)
+            expected: dict[str, object] = {}
+
+            def prepare(header: Path) -> None:
+                if shape == "symlink":
+                    sentinel.write_bytes(b"symlink-target-preserved")
+                    sentinel.chmod(0o600)
+                    header.symlink_to(sentinel)
+                    expected["target"] = sentinel
+                elif shape == "hardlink":
+                    sentinel.write_bytes(b"hardlink-target-preserved")
+                    sentinel.chmod(0o600)
+                    os.link(sentinel, header)
+                    expected["inode"] = sentinel.stat().st_ino
+                elif shape == "fifo":
+                    os.mkfifo(header, 0o600)
+                elif shape == "unsafe-mode":
+                    header.write_bytes(b"unsafe-mode-preserved")
+                    header.chmod(0o644)
+                elif shape == "oversized":
+                    header.write_bytes(b"y" * 65537)
+                    header.chmod(0o600)
+                else:
+                    raise RuntimeError("Unknown ACME header hostile shape.")
+
+            def preserved(header: Path) -> bool:
+                if shape == "symlink":
+                    return (
+                        header.is_symlink()
+                        and header.readlink() == expected["target"]
+                        and sentinel.read_bytes() == b"symlink-target-preserved"
+                    )
+                if shape == "hardlink":
+                    return (
+                        header.stat().st_ino == expected["inode"]
+                        and sentinel.stat().st_ino == expected["inode"]
+                        and sentinel.stat().st_nlink == 2
+                        and sentinel.read_bytes() == b"hardlink-target-preserved"
+                    )
+                if shape == "fifo":
+                    return stat.S_ISFIFO(header.lstat().st_mode)
+                if shape == "unsafe-mode":
+                    return (
+                        header.read_bytes() == b"unsafe-mode-preserved"
+                        and stat.S_IMODE(header.stat().st_mode) == 0o644
+                    )
+                return header.read_bytes() == b"y" * 65537
+
+            return prepare, preserved
+
+        for operation in ("post", "get"):
+            for shape in ("symlink", "hardlink", "fifo", "unsafe-mode", "oversized"):
+                prepare_header, preserved_header = header_shape_control(shape, operation)
+                unsafe_header_result = run_integrated_transport(
+                    ("AUTO_UPGRADE='0'",),
+                    operation=operation,
+                    prepare_header=prepare_header,
+                )
+                live_header = integrated_home / "http.header"
+                if (
+                    unsafe_header_result.returncode == 0
+                    or unsafe_header_result.stdout
+                    or b"FORUMS_ACME_TRANSPORT_POLICY_FAILED" not in unsafe_header_result.stderr
+                    or str(transport_root).encode("utf-8") in unsafe_header_result.stderr
+                    or b"Traceback" in unsafe_header_result.stderr
+                    or curl_arguments.exists()
+                    or not preserved_header(live_header)
+                ):
+                    raise RuntimeError(
+                        "Actual transformed ACME runtime modified or accepted an unsafe canonical header file."
+                    )
+
+        hostile_transport_executed = transport_root / "hostile-transport-executed"
+        hostile_transport = transport_root / "hostile-transport"
+        hostile_header = transport_root / "hostile-header --insecure"
+        hostile_transport.write_text(
+            "#!/bin/sh\n"
+            + f"/usr/bin/printf '%s\\n' executed > {str(hostile_transport_executed)!r}\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        hostile_transport.chmod(0o755)
+        account_hostiles = (
+            "__HTTP_INITIALIZED='1'",
+            "ACME_USE_WGET='1'",
+            "HTTPS_INSECURE='1'",
+            "CA_PATH='/hostile'",
+            "CA_BUNDLE='/hostile'",
+            f"_ACME_CURL={str(hostile_transport)!r}",
+            f"_ACME_WGET={str(hostile_transport)!r}",
+            f"HTTP_HEADER={str(hostile_header)!r}",
+        )
+        for operation in ("post", "get"):
+            for hostile_line in account_hostiles:
+                hostile_transport_executed.unlink(missing_ok=True)
+                hostile_header.unlink(missing_ok=True)
+                hostile_result = run_integrated_transport(
+                    ("AUTO_UPGRADE='0'", hostile_line),
+                    operation=operation,
+                )
+                if (
+                    hostile_result.returncode == 0
+                    or hostile_result.stdout
+                    or b"FORUMS_ACME_TRANSPORT_POLICY_FAILED" not in hostile_result.stderr
+                    or curl_arguments.exists()
+                    or hostile_transport_executed.exists()
+                    or hostile_header.exists()
+                ):
+                    raise RuntimeError("Actual transformed ACME runtime accepted retained account transport state.")
+
+            for hostile_line in account_hostiles:
+                hostile_transport_executed.unlink(missing_ok=True)
+                hostile_header.unlink(missing_ok=True)
+                hostile_result = run_integrated_transport(
+                    ("AUTO_UPGRADE='0'",),
+                    (hostile_line,),
+                    operation=operation,
+                )
+                if (
+                    hostile_result.returncode == 0
+                    or hostile_result.stdout
+                    or b"FORUMS_ACME_TRANSPORT_POLICY_FAILED" not in hostile_result.stderr
+                    or curl_arguments.exists()
+                    or hostile_transport_executed.exists()
+                    or hostile_header.exists()
+                ):
+                    raise RuntimeError("Actual transformed ACME runtime accepted retained CA transport state.")
+
+            paired_hostiles = (
+                (
+                    ("AUTO_UPGRADE='0'", "__HTTP_INITIALIZED='1'", f"_ACME_CURL={str(hostile_transport)!r}"),
+                    (),
+                ),
+                (
+                    ("AUTO_UPGRADE='0'",),
+                    ("__HTTP_INITIALIZED='1'", f"_ACME_CURL={str(hostile_transport)!r}"),
+                ),
+                (
+                    ("AUTO_UPGRADE='0'", "__HTTP_INITIALIZED='1'"),
+                    (f"_ACME_CURL={str(hostile_transport)!r}",),
+                ),
+                (
+                    ("AUTO_UPGRADE='0'", f"_ACME_CURL={str(hostile_transport)!r}"),
+                    ("__HTTP_INITIALIZED='1'",),
+                ),
+            )
+            for account_lines, ca_lines in paired_hostiles:
+                hostile_transport_executed.unlink(missing_ok=True)
+                hostile_result = run_integrated_transport(account_lines, ca_lines, operation=operation)
+                if (
+                    hostile_result.returncode == 0
+                    or hostile_result.stdout
+                    or b"FORUMS_ACME_TRANSPORT_POLICY_FAILED" not in hostile_result.stderr
+                    or curl_arguments.exists()
+                    or hostile_transport_executed.exists()
+                ):
+                    raise RuntimeError("Actual transformed ACME runtime accepted paired retained transport cache state.")
 
     if os.geteuid() == 0:
         commit = "a" * 40
@@ -2812,7 +3548,7 @@ printf leaked-success
         if algorithm_result.returncode == 0 or algorithm_result.stdout or algorithm_result.stderr:
             raise RuntimeError("Actual certificate validator accepted the wrong key algorithm contract.")
 
-    def installed_bytes(*, preserve_shebang: bool) -> bytes:
+    def installed_bytes(*, preserve_shebang: bool) -> tuple[bytes, int]:
         with tempfile.TemporaryDirectory(prefix="mochirii-acme-install-") as directory:
             root = Path(directory)
             script = root / "acme.sh"
@@ -2820,7 +3556,7 @@ printf leaked-success
             install = root / "installed"
             log = root / "acme.log"
             home.mkdir(mode=0o700)
-            script.write_bytes(source)
+            script.write_bytes(runtime_source)
             script.chmod(0o755)
             child_environment = {
                 "AUTO_UPGRADE": "0",
@@ -2850,21 +3586,23 @@ printf leaked-success
                 stderr=subprocess.DEVNULL,
                 check=False,
                 timeout=30,
+                preexec_fn=lambda: os.umask(0o077),
             )
             target = install / "acme.sh"
             if result.returncode != 0 or not target.is_file() or target.is_symlink():
                 raise RuntimeError("Pinned ACME install fixture did not complete as an ordinary file.")
-            return target.read_bytes()
+            return target.read_bytes(), stat.S_IMODE(target.stat().st_mode)
 
-    controlled = installed_bytes(preserve_shebang=True)
-    if controlled != source:
+    controlled, controlled_mode = installed_bytes(preserve_shebang=True)
+    if controlled != runtime_source or controlled_mode != 0o700:
         raise RuntimeError("NO_DETECT_SH did not preserve the pinned ACME bytes exactly.")
 
-    uncontrolled = installed_bytes(preserve_shebang=False)
+    uncontrolled, uncontrolled_mode = installed_bytes(preserve_shebang=False)
     first_line, separator, tail = uncontrolled.partition(b"\n")
-    source_tail = source.partition(b"\n")[2]
+    source_tail = runtime_source.partition(b"\n")[2]
     if (
-        uncontrolled == source
+        uncontrolled == runtime_source
+        or uncontrolled_mode != 0o700
         or separator != b"\n"
         or first_line not in {b"#!/bin/bash", b"#!/usr/bin/bash"}
         or tail != source_tail

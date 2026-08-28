@@ -104,7 +104,7 @@ jobs:
           sudo install -m 0644 -o root -g root /tmp/mochirii-release.tar "$asset_root/mochirii-release.tar"
           sudo install -m 0644 -o root -g root /tmp/mochirii-theme.zip "$asset_root/mochirii-theme.zip"
           sudo install -m 0644 -o root -g root plugins/mochirii_email_metadata/plugin.rb "$asset_root/mochirii-email-metadata-plugin.rb"
-          sudo install -m 0644 -o root -g root config/acme-sh-3.0.6.gz.b64 "$asset_root/acme-sh-3.0.6.gz.b64"
+          sudo install -m 0644 -o root -g root config/acme-sh-3.1.4.gz.b64 "$asset_root/acme-sh-3.1.4.gz.b64"
           for script in backup-transaction.py backup-url-boundary.rb configure-site.rb expire-discourse-connect-nonce.rb fetch-disaster-recovery-evidence.rb fetch-disaster-recovery-release.rb normal-upload-inventory.rb prepare-admin-recovery-fixture.rb prepare-backup-marker.rb publish-disaster-recovery-evidence.rb render-branding-email.rb storage-response-boundary.rb verify-backup.rb verify-break-glass-admin.rb verify-clean-disaster-target.rb verify-contained-discourse-connect.rb verify-discourse-connect-fixture.rb verify-restored-backup.rb verify-sensitive-log-redaction.rb verify-site.rb verify-storage-fixture.rb verify-zero-secure-uploads.rb; do
             sudo install -m 0644 -o root -g root "scripts/${script}" "$asset_root/${script}"
           done
