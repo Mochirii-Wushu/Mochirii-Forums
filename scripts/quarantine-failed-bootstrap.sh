@@ -38,6 +38,8 @@ readonly reviewed_acme_webroot_recovery_commit="bb891aa65ebe8470fa04cdd639185afd
 readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"
 readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"
 readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"
+readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"
+readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"
 
 validate_source_lineage() {
   local current="$1" failed="$2" status_output remote_output reviewed_recovery_commit current_parent_commit actual_path_output
@@ -144,6 +146,45 @@ validate_source_lineage() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
   )
+  local -ar acme_stage_repair_expected_paths=(
+    .github/workflows/validate-repository.yml
+    config/immutable-letsencrypt.fragment.yml
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/validate-repository.py
+    scripts/verify-host.sh
+  )
+  local -ar acme_stage_current_expected_paths=(
+    .github/workflows/validate-repository.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+  )
+  local -ar acme_stage_expected_paths=(
+    .github/workflows/validate-repository.yml
+    config/immutable-letsencrypt.fragment.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host.sh
+  )
   local -a actual_paths expected_paths
   case "${failed}" in
     "${reviewed_legacy_failed_bootstrap_commit}")
@@ -180,6 +221,11 @@ validate_source_lineage() {
       reviewed_recovery_commit="${reviewed_acme_material_recovery_commit}"
       current_parent_commit="${reviewed_acme_material_review_authority_commit}"
       expected_paths=("${acme_material_expected_paths[@]}")
+      ;;
+    "${reviewed_acme_stage_failed_bootstrap_commit}")
+      reviewed_recovery_commit="${reviewed_acme_stage_recovery_commit}"
+      current_parent_commit="${reviewed_recovery_commit}"
+      expected_paths=("${acme_stage_expected_paths[@]}")
       ;;
     *) return 1 ;;
   esac
@@ -233,6 +279,22 @@ validate_source_lineage() {
     [[ ${#actual_paths[@]} -eq ${#acme_material_current_expected_paths[@]} ]] || return 1
     for index in "${!acme_material_current_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_material_current_expected_paths[$index]}" ]] || return 1
+    done
+  fi
+  if [[ ${failed} == "${reviewed_acme_stage_failed_bootstrap_commit}" ]]; then
+    actual_path_output="$(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${failed}" "${reviewed_recovery_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_stage_repair_expected_paths[@]} ]] || return 1
+    for index in "${!acme_stage_repair_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_stage_repair_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${current}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_stage_current_expected_paths[@]} ]] || return 1
+    for index in "${!acme_stage_current_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_stage_current_expected_paths[$index]}" ]] || return 1
     done
   fi
   actual_path_output="$(git -C "${source_root}" diff-tree --no-commit-id --name-only -r "${failed}" "${current}" 2>/dev/null)" || return 1

@@ -353,10 +353,10 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "018ff6eef86744a80bc6108eb3600d663e16646bb7c1c6d7280bfb8377fe6c6e"
+            "057b77e6ecbdfe70a34cd1882186a7fb813587ce21046aac09ac238b66afa1bb"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
-            "b80af8388a6d90a0d4b9de120fc930d71fd8763168db837efbcbadfaa26fcfc0"
+            "76b4fbfc22f283d262ac63ae00888e206d53f373a9cadfc5af5e36f561033fae"
         ),
     }
     observed_contract_seals: dict[str, str] = {}
@@ -12064,6 +12064,8 @@ reviewed_acme_webroot_recovery_commit=bb891aa65ebe8470fa04cdd639185afdad7372f7
 reviewed_acme_material_failed_bootstrap_commit=81e5226e54246686ce0ef80051d4df2cd1b64c5e
 reviewed_acme_material_recovery_commit=64e12c2344fbc04d44b10c495cf9651cac5ac0b8
 reviewed_acme_material_review_authority_commit=af3540426051c94bf26e9661ac68ce8ee720f977
+reviewed_acme_stage_failed_bootstrap_commit=637a7c315574840156ac46615beb4417074088ed
+reviewed_acme_stage_recovery_commit=9683e62abd3d0f41c41fc2a126a49eb33216c265
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -12072,6 +12074,7 @@ case "${{BINDER_LINEAGE:-legacy}}" in
   reload_privacy) pending="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
   webroot) pending="$reviewed_acme_webroot_failed_bootstrap_commit"; reviewed="$reviewed_acme_webroot_recovery_commit" ;;
   material) pending="$reviewed_acme_material_failed_bootstrap_commit"; reviewed="$reviewed_acme_material_recovery_commit" ;;
+  stage) pending="$reviewed_acme_stage_failed_bootstrap_commit"; reviewed="$reviewed_acme_stage_recovery_commit" ;;
   unknown) pending=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) return 84 ;;
 esac
@@ -12133,6 +12136,34 @@ git() {{
         scripts/upgrade-host-control.sh
       [[ ${{BINDER_MUTATION:-none}} == material-current-paths ]] || printf '%s\n' scripts/validate-repository.py
       [[ ${{BINDER_MUTATION:-none}} != material-current-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_stage_failed_bootstrap_commit}} ${{reviewed_acme_stage_recovery_commit}}")
+      printf '%s\n' \
+        .github/workflows/validate-repository.yml \
+        config/immutable-letsencrypt.fragment.yml \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/host-deploy.sh \
+        scripts/test-contracts.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/validate-repository.py
+      [[ ${{BINDER_MUTATION:-none}} == stage-repair-paths ]] || printf '%s\n' scripts/verify-host.sh
+      [[ ${{BINDER_MUTATION:-none}} != stage-repair-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_stage_recovery_commit}} ${{requested}}")
+      printf '%s\n' \
+        .github/workflows/validate-repository.yml \
+        docs/operations/DEPLOYMENT.md \
+        docs/operations/RECOVERY.md \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/host-deploy.sh \
+        scripts/quarantine-failed-bootstrap.sh \
+        scripts/test-contracts.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/upgrade-host-control.sh
+      [[ ${{BINDER_MUTATION:-none}} == stage-current-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{BINDER_MUTATION:-none}} != stage-current-status ]] || return 83
       ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{pending}} ${{requested}}")
       case "${{BINDER_LINEAGE:-legacy}}" in
@@ -12208,6 +12239,22 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        stage)
+          printf '%s\n' \
+            .github/workflows/validate-repository.yml \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/check-repository.ps1 \
+            scripts/check-source-introduction.ps1 \
+            scripts/host-deploy.sh \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/test-source-introduction.ps1 \
+            scripts/upgrade-host-control.sh \
+            scripts/validate-repository.py
+          [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -12239,7 +12286,7 @@ bind_invoked_canonical_successor "$requested" "$pending"
             )
             binder_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot", "material")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot", "material", "stage")
                 for mutation, should_pass in mutation_cases
             ]
             binder_cases.extend(
@@ -12256,6 +12303,13 @@ bind_invoked_canonical_successor "$requested" "$pending"
                     "material-repair-paths", "material-repair-status",
                     "material-authority-paths", "material-authority-status",
                     "material-current-paths", "material-current-status",
+                )
+            )
+            binder_cases.extend(
+                ("stage", mutation, False)
+                for mutation in (
+                    "stage-repair-paths", "stage-repair-status",
+                    "stage-current-paths", "stage-current-status",
                 )
             )
             binder_cases.extend(("legacy", mutation, False) for mutation in ("grafts", "commondir"))
@@ -13186,9 +13240,9 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     manifest = json.loads(TRUSTED_MANIFEST_SOURCE)
     if (
         hashlib.sha256(source.encode("utf-8")).hexdigest()
-        != "1792bf339b590c98a9bb5423fa0fd539e29c20c58dd5381be9670bdf0fcdde57"
+        != "ef45fe4268304a4121b56d74ba84da6a2c961343655d147639efa9116d5617a7"
         or hashlib.sha256(upgrader.encode("utf-8")).hexdigest()
-        != "041168ece778a3e60d001b82707216a2b5c785bd3e1ece9d12c0f6e6ba3c91c4"
+        != "31feef91fa360393c9adcc658ad9243a5d08ecf9706a5e16e33dd95a0e2f5247"
     ):
         raise RuntimeError("Failed-bootstrap production control source seal differs.")
 
@@ -14240,13 +14294,13 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         main_start = upgrade_source.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."')
         main = upgrade_source[main_start:]
         exact_section_sha256 = {
-            "quarantine-lineage": "f560af0212226cd5499191e7ad91b152e7e4ed3ad3fc0bb490818159ef81b0dc",
+            "quarantine-lineage": "6b2f78cf270e725764424ce223ff2cae974075cd83e21dd3c042f0662c4c88ff",
             "quarantine-state": "c81b2fc822775b576c4f408a5f49e079923774e08569e2c43d42a9ca5db2bcc1",
             "quarantine-identity": "8ea0576bac3f50f2ea87ff993d9e1f171c23940dba1dd6dd5b6bbe9c23d8e4b3",
             "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
             "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
-            "upgrade-selector": "544ba5ce5a8dbb9e2f1772eafa0d6aa9b6de06bf683d58aedc7314d4eb30bf93",
-            "upgrade-path-validator": "c49fb1f5da2906d58642819c6a8bcdd81c48d419963bb321a05691e90b652896",
+            "upgrade-selector": "6395509185af9cc94f80f6a6e0ee8b3cc8ebb588e75e12373e62552096f78d70",
+            "upgrade-path-validator": "bee4393c9fe4f1c143966daaaf6e2dd3072d93affea5b278bd5334cc556c7b47",
             "upgrade-binder": "7b9a240168ec90ac2ea3f95e42e29236e9a6396d95d421801912334eef4a983b",
             "upgrade-exception": "6ea0d4ff36175b26333ce78608d1f12092da953a192170897c33340411f5dbe3",
             "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
@@ -14425,6 +14479,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
         'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
         'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
+        'readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"',
+        'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
         'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -14598,6 +14654,45 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         "scripts/upgrade-host-control.sh",
         "scripts/validate-repository.py",
     )
+    acme_stage_repair_expected_paths = (
+        ".github/workflows/validate-repository.yml",
+        "config/immutable-letsencrypt.fragment.yml",
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/host-deploy.sh",
+        "scripts/test-contracts.py",
+        "scripts/test-source-introduction.ps1",
+        "scripts/validate-repository.py",
+        "scripts/verify-host.sh",
+    )
+    acme_stage_current_expected_paths = (
+        ".github/workflows/validate-repository.yml",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/host-deploy.sh",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/test-source-introduction.ps1",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+    )
+    acme_stage_expected_paths = (
+        ".github/workflows/validate-repository.yml",
+        "config/immutable-letsencrypt.fragment.yml",
+        "docs/operations/DEPLOYMENT.md",
+        "docs/operations/RECOVERY.md",
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/host-deploy.sh",
+        "scripts/quarantine-failed-bootstrap.sh",
+        "scripts/test-contracts.py",
+        "scripts/test-source-introduction.ps1",
+        "scripts/upgrade-host-control.sh",
+        "scripts/validate-repository.py",
+        "scripts/verify-host.sh",
+    )
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
         ("active_swap_expected_paths", active_swap_expected_paths),
@@ -14612,6 +14707,9 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         ),
         ("acme_material_current_expected_paths", acme_material_current_expected_paths),
         ("acme_material_expected_paths", acme_material_expected_paths),
+        ("acme_stage_repair_expected_paths", acme_stage_repair_expected_paths),
+        ("acme_stage_current_expected_paths", acme_stage_current_expected_paths),
+        ("acme_stage_expected_paths", acme_stage_expected_paths),
     ):
         marker = f"local -ar {name}=("
         block_start = source.index(marker)
@@ -14651,6 +14749,8 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
         'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
         'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
+        'readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"',
+        'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
         '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
@@ -14735,6 +14835,8 @@ reviewed_acme_webroot_recovery_commit=bb891aa65ebe8470fa04cdd639185afdad7372f7
 reviewed_acme_material_failed_bootstrap_commit=81e5226e54246686ce0ef80051d4df2cd1b64c5e
 reviewed_acme_material_recovery_commit=64e12c2344fbc04d44b10c495cf9651cac5ac0b8
 reviewed_acme_material_review_authority_commit=af3540426051c94bf26e9661ac68ce8ee720f977
+reviewed_acme_stage_failed_bootstrap_commit=637a7c315574840156ac46615beb4417074088ed
+reviewed_acme_stage_recovery_commit=9683e62abd3d0f41c41fc2a126a49eb33216c265
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -14743,6 +14845,7 @@ case "${{LINEAGE_KIND:-legacy}}" in
   reload_privacy) failed="$reviewed_acme_reload_privacy_failed_bootstrap_commit"; reviewed="$reviewed_acme_reload_privacy_recovery_commit" ;;
   webroot) failed="$reviewed_acme_webroot_failed_bootstrap_commit"; reviewed="$reviewed_acme_webroot_recovery_commit" ;;
   material) failed="$reviewed_acme_material_failed_bootstrap_commit"; reviewed="$reviewed_acme_material_recovery_commit" ;;
+  stage) failed="$reviewed_acme_stage_failed_bootstrap_commit"; reviewed="$reviewed_acme_stage_recovery_commit" ;;
   unknown) failed=dddddddddddddddddddddddddddddddddddddddd; reviewed=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee ;;
   *) exit 84 ;;
 esac
@@ -14803,6 +14906,34 @@ git() {{
         scripts/upgrade-host-control.sh
       [[ ${{LINEAGE_MUTATION:-none}} == material-current-paths ]] || printf '%s\n' scripts/validate-repository.py
       [[ ${{LINEAGE_MUTATION:-none}} != material-current-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_stage_failed_bootstrap_commit}} ${{reviewed_acme_stage_recovery_commit}}")
+      printf '%s\n' \
+        .github/workflows/validate-repository.yml \
+        config/immutable-letsencrypt.fragment.yml \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/host-deploy.sh \
+        scripts/test-contracts.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/validate-repository.py
+      [[ ${{LINEAGE_MUTATION:-none}} == stage-repair-paths ]] || printf '%s\n' scripts/verify-host.sh
+      [[ ${{LINEAGE_MUTATION:-none}} != stage-repair-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_stage_recovery_commit}} ${{current}}")
+      printf '%s\n' \
+        .github/workflows/validate-repository.yml \
+        docs/operations/DEPLOYMENT.md \
+        docs/operations/RECOVERY.md \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/host-deploy.sh \
+        scripts/quarantine-failed-bootstrap.sh \
+        scripts/test-contracts.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/upgrade-host-control.sh
+      [[ ${{LINEAGE_MUTATION:-none}} == stage-current-paths ]] || printf '%s\n' scripts/validate-repository.py
+      [[ ${{LINEAGE_MUTATION:-none}} != stage-current-status ]] || return 83
       ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{failed}} ${{current}}")
       case "${{LINEAGE_KIND:-legacy}}" in
@@ -14878,6 +15009,22 @@ git() {{
             scripts/upgrade-host-control.sh
           [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/validate-repository.py
           ;;
+        stage)
+          printf '%s\n' \
+            .github/workflows/validate-repository.yml \
+            config/immutable-letsencrypt.fragment.yml \
+            docs/operations/DEPLOYMENT.md \
+            docs/operations/RECOVERY.md \
+            scripts/check-repository.ps1 \
+            scripts/check-source-introduction.ps1 \
+            scripts/host-deploy.sh \
+            scripts/quarantine-failed-bootstrap.sh \
+            scripts/test-contracts.py \
+            scripts/test-source-introduction.ps1 \
+            scripts/upgrade-host-control.sh \
+            scripts/validate-repository.py
+          [[ ${{LINEAGE_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
+          ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -14907,7 +15054,7 @@ validate_source_lineage "$current" "$failed"
             )
             lineage_cases = [
                 (lineage, mutation, should_pass)
-                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot", "material")
+                for lineage in ("legacy", "active", "acme", "quarantine", "reload_privacy", "webroot", "material", "stage")
                 for mutation, should_pass in mutation_cases
             ]
             lineage_cases.extend(
@@ -14924,6 +15071,13 @@ validate_source_lineage "$current" "$failed"
                     "material-repair-paths", "material-repair-status",
                     "material-authority-paths", "material-authority-status",
                     "material-current-paths", "material-current-status",
+                )
+            )
+            lineage_cases.extend(
+                ("stage", mutation, False)
+                for mutation in (
+                    "stage-repair-paths", "stage-repair-status",
+                    "stage-current-paths", "stage-current-status",
                 )
             )
             lineage_cases.extend(("legacy", mutation, False) for mutation in ("grafts", "commondir"))
