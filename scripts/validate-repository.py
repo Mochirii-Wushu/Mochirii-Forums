@@ -912,10 +912,10 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "ce39393d82a0f7b200838577eccd997e8b003fe5df3d93047d972b992524c3d5"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "018ff6eef86744a80bc6108eb3600d663e16646bb7c1c6d7280bfb8377fe6c6e"
+CONTRACT_TEST_SOURCE_SHA256 = "2174b162945c6cb95e0fe0107f25bc5b894add5ef96ff0a5cc9eb9f7e338af1d"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "057b77e6ecbdfe70a34cd1882186a7fb813587ce21046aac09ac238b66afa1bb"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-FAILED_BOOTSTRAP_TEST_SHA256 = "b80af8388a6d90a0d4b9de120fc930d71fd8763168db837efbcbadfaa26fcfc0"
+FAILED_BOOTSTRAP_TEST_SHA256 = "76b4fbfc22f283d262ac63ae00888e206d53f373a9cadfc5af5e36f561033fae"
 
 
 def validate_validator_cli_acceptance_chain(source: str) -> None:
@@ -7373,9 +7373,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     operation_lock_fixture = read("scripts/test-host-operation-lock.py")
     if (
         hashlib.sha256(failed_bootstrap_quarantine.encode("utf-8")).hexdigest()
-        != "1792bf339b590c98a9bb5423fa0fd539e29c20c58dd5381be9670bdf0fcdde57"
+        != "ef45fe4268304a4121b56d74ba84da6a2c961343655d147639efa9116d5617a7"
         or hashlib.sha256(control_upgrade.encode("utf-8")).hexdigest()
-        != "041168ece778a3e60d001b82707216a2b5c785bd3e1ece9d12c0f6e6ba3c91c4"
+        != "31feef91fa360393c9adcc658ad9243a5d08ecf9706a5e16e33dd95a0e2f5247"
     ):
         fail("Failed-bootstrap production control source seal differs.")
     if operator_sudoers.splitlines() != [
@@ -8035,6 +8035,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
             'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
             'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
+            'readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"',
+            'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
             'rev-parse --verify "${requested_commit}^1"',
             'rev-list --parents -n 1 "${requested_commit}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8049,6 +8051,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_material_review_authority_expected_paths=(',
             'acme_material_current_expected_paths=(',
             'acme_material_expected_paths=(',
+            'acme_stage_repair_expected_paths=(',
+            'acme_stage_current_expected_paths=(',
+            'acme_stage_expected_paths=(',
             'diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}"',
             'GIT_NO_REPLACE_OBJECTS=1',
             '${invocation_source_root}/.git/commondir',
@@ -8086,6 +8091,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_material_failed_bootstrap_commit="81e5226e54246686ce0ef80051d4df2cd1b64c5e"',
             'readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651cac5ac0b8"',
             'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
+            'readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"',
+            'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
             'rev-parse --verify "${current}^1"',
             'rev-list --parents -n 1 "${current}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8120,6 +8127,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_material_review_authority_expected_paths=(',
             'acme_material_current_expected_paths=(',
             'acme_material_expected_paths=(',
+            'acme_stage_repair_expected_paths=(',
+            'acme_stage_current_expected_paths=(',
+            'acme_stage_expected_paths=(',
             'object_pairs_hook=reject_duplicate',
             'metadata.st_uid != 0',
             'metadata.st_gid != 0',
@@ -8343,13 +8353,13 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         control_upgrade.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."'):
     ]
     exact_section_sha256 = {
-        "quarantine-lineage": "f560af0212226cd5499191e7ad91b152e7e4ed3ad3fc0bb490818159ef81b0dc",
+        "quarantine-lineage": "6b2f78cf270e725764424ce223ff2cae974075cd83e21dd3c042f0662c4c88ff",
         "quarantine-state": "c81b2fc822775b576c4f408a5f49e079923774e08569e2c43d42a9ca5db2bcc1",
         "quarantine-identity": "8ea0576bac3f50f2ea87ff993d9e1f171c23940dba1dd6dd5b6bbe9c23d8e4b3",
         "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
         "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
-        "upgrade-selector": "544ba5ce5a8dbb9e2f1772eafa0d6aa9b6de06bf683d58aedc7314d4eb30bf93",
-        "upgrade-path-validator": "c49fb1f5da2906d58642819c6a8bcdd81c48d419963bb321a05691e90b652896",
+        "upgrade-selector": "6395509185af9cc94f80f6a6e0ee8b3cc8ebb588e75e12373e62552096f78d70",
+        "upgrade-path-validator": "bee4393c9fe4f1c143966daaaf6e2dd3072d93affea5b278bd5334cc556c7b47",
         "upgrade-binder": "7b9a240168ec90ac2ea3f95e42e29236e9a6396d95d421801912334eef4a983b",
         "upgrade-exception": "6ea0d4ff36175b26333ce78608d1f12092da953a192170897c33340411f5dbe3",
         "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",

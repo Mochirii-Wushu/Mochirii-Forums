@@ -686,6 +686,27 @@ nor claims another retained-runtime cause. It uses the same root-only,
 evidence-preserving quarantine and requires the next clean bootstrap to target
 the then-current canonical main.
 
+An eighth exact bootstrap-only exception covers the proved ACME stage-evidence
+boundary. Failed release `637a7c315574840156ac46615beb4417074088ed`, reviewed
+stage-evidence repair `9683e62abd3d0f41c41fc2a126a49eb33216c265`, and one
+canonical-main control/quarantine child must form an exact sole-parent chain.
+The repair and recovery-child path segments are checked independently against
+their exact nine- and eleven-path inventories. The cumulative changed paths
+from the failed release are only `.github/workflows/validate-repository.yml`,
+`config/immutable-letsencrypt.fragment.yml`, `docs/operations/DEPLOYMENT.md`,
+this document, `scripts/check-repository.ps1`,
+`scripts/check-source-introduction.ps1`, `scripts/host-deploy.sh`,
+`scripts/quarantine-failed-bootstrap.sh`, `scripts/test-contracts.py`,
+`scripts/test-source-introduction.ps1`, `scripts/upgrade-host-control.sh`,
+`scripts/validate-repository.py`, and `scripts/verify-host.sh`. Selection by
+exact failed commit keeps this lineage separate from all earlier exceptions;
+the final child cannot be another descendant or a merge commit. The reviewed
+repair adds fixed durable stage evidence and descriptor-held installed-material
+identity validation to the existing RSA-then-ECC issuance sequence. It neither
+authorizes an identical-byte retry nor claims an unproved retained-runtime
+cause. It uses the same root-only, evidence-preserving quarantine and requires
+the next clean bootstrap to target the then-current canonical main.
+
 The acceptance boundary for that final child is external to the mutually
 editable validator and hostile fixture: every direct launcher pins the exact
 bytes, uses Python `-I -S -B`, and both entrypoints reject ambiguous startup
