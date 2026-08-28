@@ -281,29 +281,46 @@
   "vendoredRuntimeComponents": [
     {
       "name": "acme.sh",
-      "release": "3.0.6",
+      "release": "3.1.4",
       "repository": "https://github.com/acmesh-official/acme.sh.git",
-      "revision": "b7caf7a0165d80dd1556b16057a06bb32025066d",
-      "revisionTree": "6d60c7b8d58a14fd0c443175fd5a6e2f0c219dfe",
+      "revision": "3661fd86b6304115e42f43910e6dd452ab9866d6",
+      "revisionTree": "f12d2b993c39e123de6f239e3374f5421b9b9a4a",
       "revisionCommitSignatureVerified": true,
       "revisionCommitSignatureReason": "valid",
       "licenseSpdx": "GPL-3.0-or-later",
       "source": {
         "path": "acme.sh",
-        "bytes": 220764,
-        "sha256": "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
+        "bytes": 271532,
+        "sha256": "fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32"
+      },
+      "runtimeSource": {
+        "bytes": 272504,
+        "sha256": "b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e",
+        "transformation": "bind-reviewed-absolute-curl-wrapper-disable-wget-reject-transport-trust-and-header-argument-overrides-reject-sourced-transport-cache-validate-fixed-header-file-shape-rebuild-every-request-and-propagate-policy-failures"
       },
       "encodedSource": {
-        "path": "config/acme-sh-3.0.6.gz.b64",
+        "path": "config/acme-sh-3.1.4.gz.b64",
         "encoding": "base64-gzip",
-        "compressedBytes": 50641,
-        "compressedSha256": "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
+        "compressedBytes": 64224,
+        "compressedSha256": "a94625046fb750d1b12e5d3eca3893f7150b54f463d7f08cf8438c4747423515"
       },
       "license": {
         "upstreamPath": "LICENSE.md",
-        "repositoryPath": "config/acme-sh-3.0.6.LICENSE.md",
+        "repositoryPath": "config/acme-sh-3.1.4.LICENSE.md",
         "bytes": 35149,
         "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+      },
+      "transport": {
+        "clientWrapperBytes": 1781,
+        "clientWrapperSha256": "6f7940eeda85a1441d278788260d664d0aadb29ed2c72ac2cd7aa95cd5e0458b",
+        "curlFirstArgument": "-q",
+        "curlWrapperBytes": 295,
+        "curlWrapperPath": "/usr/local/libexec/mochirii-forums/acme-curl",
+        "curlWrapperSha256": "2b0146be79adab6a232661d31444e1078b82a7dfc1231f06daa0ee4a5cf01109",
+        "environment": "empty-explicit-allowlist",
+        "headerHelperBytes": 2313,
+        "headerHelperPath": "/usr/local/libexec/mochirii-forums/acme-http-header",
+        "headerHelperSha256": "3406f82df0dfd29e908a0d14ca88c8e1d890cb200f4ca9174fd07c2c5011f6ba"
       },
       "automaticUpdateEnabled": false,
       "onlineExactByteGateRequired": true
