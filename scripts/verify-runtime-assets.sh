@@ -21,7 +21,7 @@ guest_dir="/opt/mochirii-release"
 [[ "$(stat -c '%U:%G %a' "${asset_dir}")" == "root:root 755" ]] || fail "Runtime-asset directory permissions differ."
 
 runtime_assets=(
-  acme-sh-3.0.6.gz.b64
+  acme-sh-3.1.4.gz.b64
   backup-transaction.py
   backup-url-boundary.rb
   configure-site.rb
@@ -73,8 +73,8 @@ for script in backup-transaction.py backup-url-boundary.rb configure-site.rb exp
   cmp -s -- "${release_dir}/scripts/${script}" "${asset_dir}/${script}" || fail "Runtime script differs from sealed release source."
 done
 cmp -s -- "${release_dir}/plugins/mochirii_email_metadata/plugin.rb" "${asset_dir}/mochirii-email-metadata-plugin.rb" || fail "Mail metadata component differs from sealed release source."
-cmp -s -- "${release_dir}/config/acme-sh-3.0.6.gz.b64" "${asset_dir}/acme-sh-3.0.6.gz.b64" || fail "Immutable ACME client payload differs from sealed release source."
-[[ "$(base64 --decode "${asset_dir}/acme-sh-3.0.6.gz.b64" | sha256sum | awk '{print $1}')" == "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c" ]] || fail "Immutable ACME client payload digest differs."
+cmp -s -- "${release_dir}/config/acme-sh-3.1.4.gz.b64" "${asset_dir}/acme-sh-3.1.4.gz.b64" || fail "Immutable ACME client payload differs from sealed release source."
+[[ "$(base64 --decode "${asset_dir}/acme-sh-3.1.4.gz.b64" | sha256sum | awk '{print $1}')" == "a94625046fb750d1b12e5d3eca3893f7150b54f463d7f08cf8438c4747423515" ]] || fail "Immutable ACME client payload digest differs."
 
 theme_candidate="$(mktemp /tmp/mochirii-theme-verify.XXXXXXXX.zip)"
 inspect_candidate=""

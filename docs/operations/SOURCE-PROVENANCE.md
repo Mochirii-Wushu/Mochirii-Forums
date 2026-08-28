@@ -15,7 +15,7 @@ The immutable selections are recorded in
 | Deployment source | `ed9f680b0df1de28f062de1769d89d22b2644d1b` |
 | Docker Manager | `c008c3ca7fcc44775215843992e88190adb7b3bf` |
 | Base image, Linux AMD64 | `sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48` |
-| Vendored acme.sh | `3.0.6`, commit `b7caf7a0165d80dd1556b16057a06bb32025066d`, source SHA-256 `400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da` |
+| Vendored acme.sh | `3.1.4`, commit `3661fd86b6304115e42f43910e6dd452ab9866d6`, upstream source SHA-256 `fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32`, runtime source SHA-256 `b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e` |
 | Required first-party mail metadata component | exact `plugins/mochirii_email_metadata/plugin.rb` bytes in the Forums commit |
 
 The selected deployment revision is the first official correction for the
@@ -51,10 +51,28 @@ recorded digest, and it never rewrites member-authored subjects or bodies.
 The one deliberate vendored utility is the exact reviewed acme.sh client used
 for Forums HTTPS. Its compressed repository payload, decoded source, upstream
 commit/tree/signature, and GPL license are independently bound in the
-third-party manifest and online gate. The local immutable TLS integration
-never downloads executable source during bootstrap, disables acme.sh automatic
-updates, and requires a separate compatibility review to change any byte or
-revision.
+third-party manifest and online gate. Before execution, one exact reviewed
+transformation binds the client to the absolute repository-owned curl wrapper,
+routes its capability probe through that wrapper, disables wget selection, and
+rejects retained wget, insecure-TLS, custom-trust, or HTTP-header argument
+overrides after the client loads its account and CA configuration. The header
+file is restored only to the fixed Forums configuration path. Before every
+request, a sealed helper opens the trusted parent by descriptor, creates an
+absent header with exclusive no-follow semantics, and rejects non-regular,
+linked, incorrectly owned or permissioned, or oversized existing files without
+altering them. Internal curl, wget, and HTTP cache state is cleared before each
+configuration source, rejected immediately if any source restores it, and
+rebuilt from the reviewed wrapper for every request.
+Both HTTP request entry points propagate policy rejection before any selected
+transport can run. The resulting runtime bytes are separately hashed. The
+wrapper invokes
+`/usr/bin/curl` with `-q` as its first
+option, while every client entry starts with an empty environment and an
+explicit minimum variable allowlist. The installed client is normalized and
+verified as a root-owned mode-0755 one-link ordinary file even under the
+production mode-077 umask. The local immutable TLS integration never downloads
+executable source during bootstrap, disables acme.sh automatic updates, and
+requires a separate compatibility review to change any byte or revision.
 
 The 2026-08-20 bounded observation records official `main` at
 `00595119c368c0aef7d7019ec66ffc8fa51cce79`, eleven commits ahead of the

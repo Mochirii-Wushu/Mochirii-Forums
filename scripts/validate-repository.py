@@ -101,13 +101,172 @@ DOCKER_REVISION = "ed9f680b0df1de28f062de1769d89d22b2644d1b"
 CORE_REVISION = "cbf996f65aae3da1843224aa624bcd9a225931ac"
 DOCKER_MANAGER_REVISION = "c008c3ca7fcc44775215843992e88190adb7b3bf"
 BASE_DIGEST = "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
-ACME_REVISION = "b7caf7a0165d80dd1556b16057a06bb32025066d"
-ACME_SOURCE_SHA256 = "400d1a96ef72a1f27fe79c7f0e6d4e4f600c0509c0cd787db00931b9258c54da"
-ACME_COMPRESSED_SHA256 = "a42ebbbddb439b989272e97d9e8f1d354311d48f3b56543583a3b345fac0492c"
-CONFIGURE_LETSENCRYPT_SHA256 = "069d53abb70100354d0b44bd0d3b132c9d764a952f8abc91f5e7b6d12775cfde"
-IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "41b14fc7e318f9ae4114565147788e6980d7931ee8da1aeadaa23b5a2b57160c"
-IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = "913c60891a627fbc8761ee1f0bfc291ed448b70bf2512fd31cbfe78c1b877b25"
-IMMUTABLE_LETSENCRYPT_RUN_SHA256 = "994eaa1c1b9d8eeb55a6687123ac5e9212c395c970a3706e3e65f55d0d494635"
+ACME_REVISION = "3661fd86b6304115e42f43910e6dd452ab9866d6"
+ACME_SOURCE_SHA256 = "fcabf274d4f96966ec933879ae0257266e8ef2f7d16161f14b84dd896c0cac32"
+ACME_COMPRESSED_SHA256 = "a94625046fb750d1b12e5d3eca3893f7150b54f463d7f08cf8438c4747423515"
+ACME_RUNTIME_SOURCE_SHA256 = "b173cd7d5290e3e0c3704647be6ecacb916572d5bbf334e00f9ec794502d554e"
+ACME_CURL_WRAPPER_SHA256 = "2b0146be79adab6a232661d31444e1078b82a7dfc1231f06daa0ee4a5cf01109"
+ACME_HEADER_HELPER_SHA256 = "3406f82df0dfd29e908a0d14ca88c8e1d890cb200f4ca9174fd07c2c5011f6ba"
+ACME_CLIENT_WRAPPER_SHA256 = "6f7940eeda85a1441d278788260d664d0aadb29ed2c72ac2cd7aa95cd5e0458b"
+ACME_RUNTIME_PATCH_SOURCE_SHA256 = "dd6d18864c9d013d29081b1813058575a021d13f87d3a259db4b1e60b2aac98d"
+CONFIGURE_LETSENCRYPT_SHA256 = "c0386a24d681e0e063b3d8ca35d3b65a2b52c206ac2e0ac4df10118785db1197"
+IMMUTABLE_LETSENCRYPT_FRAGMENT_SHA256 = "91cb36b766d3c5b53feb62a1330b52ad3c884735f96dd0b0437b871d5aced9b1"
+IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256 = "aca2d1cdcc0a59c609730750dd47c6d7e403567d4a366b0104c447fb0c265295"
+IMMUTABLE_LETSENCRYPT_RUN_SHA256 = "81af3ab04d748054ef0eab60afbdbaf2469782ec1131e660c6eafe01df6147de"
+ACME_RUNTIME_REPLACEMENTS = (
+    (
+        b'''  __initHome
+
+''',
+        b'''  __initHome
+  HTTP_HEADER=
+  __HTTP_INITIALIZED=
+  _ACME_CURL=
+  _ACME_WGET=
+
+''',
+    ),
+    (
+        b'''  if [ -f "$ACCOUNT_CONF_PATH" ]; then
+    . "$ACCOUNT_CONF_PATH"
+  fi
+
+''',
+        b'''  if [ -f "$ACCOUNT_CONF_PATH" ]; then
+    . "$ACCOUNT_CONF_PATH"
+  fi
+  if [ -n "${HTTP_HEADER:-}" ] || [ -n "${__HTTP_INITIALIZED:-}" ] || \
+    [ -n "${_ACME_CURL:-}" ] || [ -n "${_ACME_WGET:-}" ]; then
+    _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+    exit 1
+  fi
+  HTTP_HEADER="/shared/letsencrypt/http.header"
+  __HTTP_INITIALIZED=
+  _ACME_CURL=
+  _ACME_WGET=
+
+''',
+    ),
+    (
+        b'''  if [ -f "$CA_CONF" ]; then
+    . "$CA_CONF"
+  fi
+
+''',
+        b'''  HTTP_HEADER=
+  if [ -f "$CA_CONF" ]; then
+    . "$CA_CONF"
+  fi
+  if [ -n "${HTTP_HEADER:-}" ] || [ -n "${__HTTP_INITIALIZED:-}" ] || \
+    [ -n "${_ACME_CURL:-}" ] || [ -n "${_ACME_WGET:-}" ]; then
+    _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+    exit 1
+  fi
+  HTTP_HEADER="/shared/letsencrypt/http.header"
+  __HTTP_INITIALIZED=
+  _ACME_CURL=
+  _ACME_WGET=
+
+''',
+    ),
+    (
+        b'''  if [ -z "$HTTP_HEADER" ] || ! touch "$HTTP_HEADER"; then
+    HTTP_HEADER="$(_mktemp)"
+    _debug2 HTTP_HEADER "$HTTP_HEADER"
+  fi
+
+''',
+        b'''  if [ "${HTTP_HEADER:-}" != "/shared/letsencrypt/http.header" ] || \
+    ! /usr/local/libexec/mochirii-forums/acme-http-header >/dev/null 2>&1; then
+    _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+    return 1
+  fi
+
+''',
+    ),
+    (
+        b'''  if [ "$__HTTP_INITIALIZED" ]; then
+    if [ "$_ACME_CURL$_ACME_WGET" ]; then
+      _debug2 "Http already initialized."
+      return 0
+    fi
+  fi
+
+''',
+        b'''  if [ "${ACME_USE_WGET:-0}" != "0" ] || [ -n "${HTTPS_INSECURE:-}" ] || \\
+    [ -n "${CA_PATH:-}" ] || [ -n "${CA_BUNDLE:-}" ] || [ -n "${_ACME_WGET:-}" ]; then
+    _err "FORUMS_ACME_TRANSPORT_POLICY_FAILED"
+    return 1
+  fi
+
+  __HTTP_INITIALIZED=
+  _ACME_CURL=
+  _ACME_WGET=
+
+''',
+    ),
+    (
+        b'''  if [ -z "$_ACME_CURL" ] && _exists "curl"; then
+''',
+        b'''  if [ -z "$_ACME_CURL" ]; then
+''',
+    ),
+    (
+        b'''    _ACME_CURL="curl --silent --dump-header $HTTP_HEADER "
+''',
+        b'''    _ACME_CURL="/usr/local/libexec/mochirii-forums/acme-curl --silent --dump-header $HTTP_HEADER "
+''',
+    ),
+    (
+        b'''    if _contains "$(curl --help 2>&1)" "--globoff" || _contains "$(curl --help curl 2>&1)" "--globoff"; then
+''',
+        b'''    if _contains "$(/usr/local/libexec/mochirii-forums/acme-curl --help 2>&1)" "--globoff" || _contains "$(/usr/local/libexec/mochirii-forums/acme-curl --help curl 2>&1)" "--globoff"; then
+''',
+    ),
+    (
+        b'''  _debug2 "_postContentType" "$_postContentType"
+
+  _inithttp
+
+  if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+''',
+        b'''  _debug2 "_postContentType" "$_postContentType"
+
+  _inithttp || return 1
+
+  if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+''',
+    ),
+    (
+        b'''  _debug "timeout=$t"
+
+  _inithttp
+
+  if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+''',
+        b'''  _debug "timeout=$t"
+
+  _inithttp || return 1
+
+  if [ "$_ACME_CURL" ] && [ "${ACME_USE_WGET:-0}" = "0" ]; then
+''',
+    ),
+    (
+        b'''  if [ -z "$_ACME_WGET" ] && _exists "wget"; then
+''',
+        b'''  if false; then
+''',
+    ),
+)
+
+
+def transform_acme_runtime_source(source: bytes) -> bytes:
+    transformed = source
+    for original, replacement in ACME_RUNTIME_REPLACEMENTS:
+        if transformed.count(original) != 1:
+            fail("Vendored ACME source no longer has an exact reviewed transport seam.")
+        transformed = transformed.replace(original, replacement, 1)
+    return transformed
 OBSERVED_MAIN_REVISION = "00595119c368c0aef7d7019ec66ffc8fa51cce79"
 OBSERVED_MAIN_TREE = "d5b846bf4e59784c5220c48839d7eb1b45671aae"
 OBSERVED_RANGE = [
@@ -558,8 +717,8 @@ ALLOWED_FILES = frozenset(
     "README.md",
     "SECURITY.md",
     "config/app.yml.example",
-    "config/acme-sh-3.0.6.gz.b64",
-    "config/acme-sh-3.0.6.LICENSE.md",
+    "config/acme-sh-3.1.4.gz.b64",
+    "config/acme-sh-3.1.4.LICENSE.md",
     "config/apt-auto-upgrades.conf",
     "config/certbot-cli.ini.example",
     "config/certbot-dns.ini.example",
@@ -721,7 +880,7 @@ JSON_SHAPE_SHA256 = {
     "docs/operations/runtime-config.v1.example.json": "3c75090f614add84c67429fc9c66c2551280339f02d6b5a5fae704fdce4c2bae",
     "docs/operations/source-introduction.v1.json": "cb61665e970f3948e3b9f15293e85f4be80ddd0344a7bafdde6e47d9763a2c08",
     "docs/operations/storage-policy.v1.json": "9b4b8c841497133d3fc9a7b2350fc6fbe7b92e90f27fec69b035c2f27031ccab",
-    "docs/operations/third-party-components.v1.json": "bdb87c1d4e255ea39e377a16f36ec53f3443713cdcd12c93287d239acfc7e6bc",
+    "docs/operations/third-party-components.v1.json": "339cbaf02586168055bd2ef2f41146a031b05d9b0b37b717fc712ad37d5d8803",
     "docs/operations/upstream-provenance.v1.json": "9208d8d87a9dcf86273a10aff3011cbd2ad218000aaaf659547b96d497c4a78b",
     "theme/mochirii/about.json": "0cfcd9a73ccc866ae9f272dfe933ce70cdf2e2f0e4ae16b01d0ce1f3c4ececa3",
 }
@@ -912,8 +1071,8 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "2174b162945c6cb95e0fe0107f25bc5b894add5ef96ff0a5cc9eb9f7e338af1d"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "057b77e6ecbdfe70a34cd1882186a7fb813587ce21046aac09ac238b66afa1bb"
+CONTRACT_TEST_SOURCE_SHA256 = "5ded66a3b6325c30c2fea03a9755e2d8987cec89c2c1a62000acc13a444effd0"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "c885c0b5845adafe82f90b05eaadf2af1ac88db9cc71be01660553da0063d09a"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
 FAILED_BOOTSTRAP_TEST_SHA256 = "76b4fbfc22f283d262ac63ae00888e206d53f373a9cadfc5af5e36f561033fae"
 
@@ -1015,7 +1174,7 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
         "ROOT": "6c0caf441a1aad2240e7aaccbb2a73915fc5ce62a90eb857836d905c68760c7d",
         "MANAGED_WEB_SSL_SERVER_OUTLET": "611b3941a610ea9d23805d773cbba7dbf7ce57c06b2355f10d65a8720196c8e0",
         "EXPECTED_SERVER_TLS_SHA256": "885cfdce0ad10ad670c604584bf51bc0e05027d1e6ab92cf45b35a23209914ce",
-        "ALLOWED_FILES": "2830164c191da98529cb8134eccfc4dd30891049e912e9625e767b2531283661",
+        "ALLOWED_FILES": "e7367ee329fa1492f2951dc2df311f3a5927ed4013320792b6b72080edba692e",
     }
     protected_seal_names = {
         "VALIDATOR_CLI_SOURCE_SHA256",
@@ -2593,6 +2752,35 @@ def validate_immutable_acme_install_contract(tls: str) -> None:
     if tls.count(run_begin) != 1 or tls.count(run_end) != 1 or tls.index(run_begin) >= tls.index(run_end):
         fail("Immutable TLS RUN section boundary differs.")
     run_section = tls[tls.index(run_begin) + len(run_begin) : tls.index(run_end)]
+    bootstrap_exec_section = run_section.split("  - file:\n", 1)[0]
+    runtime_patch_begin = (
+        "/usr/bin/python3 -I -S -B - /opt/acme.sh.upstream /opt/acme.sh <<'PY'\n"
+    )
+    runtime_patch_end = "\n          PY\n"
+    if (
+        bootstrap_exec_section.count(runtime_patch_begin) != 1
+        or bootstrap_exec_section.count(runtime_patch_end) != 1
+    ):
+        fail("Immutable ACME runtime patch boundary differs.")
+    runtime_patch_indented = (
+        bootstrap_exec_section.split(runtime_patch_begin, 1)[1]
+        .split(runtime_patch_end, 1)[0]
+        + "\n"
+    )
+    runtime_patch_source = "".join(
+        line[10:] if line.startswith("          ") else line
+        for line in runtime_patch_indented.splitlines(keepends=True)
+    )
+    try:
+        ast.parse(runtime_patch_source)
+    except SyntaxError:
+        fail("Immutable ACME runtime patch is not valid isolated Python.")
+    if (
+        len(runtime_patch_source.encode("utf-8")) != 3718
+        or hashlib.sha256(runtime_patch_source.encode("utf-8")).hexdigest()
+        != ACME_RUNTIME_PATCH_SOURCE_SHA256
+    ):
+        fail("Immutable ACME runtime patch differs from the exact reviewed source.")
     if (
         not run_section.startswith("  - exec:\n")
         or not run_section.endswith("\n")
@@ -2601,6 +2789,12 @@ def validate_immutable_acme_install_contract(tls: str) -> None:
         fail("Immutable TLS RUN section differs from the exact active reviewed structure.")
     configure = yaml_executable_file_contents(tls, "/usr/local/bin/configure-letsencrypt")
     cron = yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-cron")
+    curl_wrapper = yaml_executable_file_contents(tls, "/usr/local/libexec/mochirii-forums/acme-curl")
+    header_helper = yaml_executable_file_contents(
+        tls,
+        "/usr/local/libexec/mochirii-forums/acme-http-header",
+    )
+    client_wrapper = yaml_executable_file_contents(tls, "/usr/local/bin/mochirii-acme-client")
     letsencrypt = yaml_executable_file_contents(
         tls,
         "/usr/local/bin/letsencrypt",
@@ -2608,13 +2802,43 @@ def validate_immutable_acme_install_contract(tls: str) -> None:
     )
     if hashlib.sha256(configure.encode("utf-8")).hexdigest() != CONFIGURE_LETSENCRYPT_SHA256:
         fail("Immutable ACME configuration executable differs from the exact reviewed source.")
+    if hashlib.sha256(curl_wrapper.encode("utf-8")).hexdigest() != ACME_CURL_WRAPPER_SHA256:
+        fail("Immutable ACME curl wrapper differs from the exact reviewed source.")
+    if hashlib.sha256(header_helper.encode("utf-8")).hexdigest() != ACME_HEADER_HELPER_SHA256:
+        fail("Immutable ACME header helper differs from the exact reviewed source.")
+    if hashlib.sha256(client_wrapper.encode("utf-8")).hexdigest() != ACME_CLIENT_WRAPPER_SHA256:
+        fail("Immutable ACME client wrapper differs from the exact reviewed source.")
     if hashlib.sha256(letsencrypt.encode("utf-8")).hexdigest() != IMMUTABLE_LETSENCRYPT_EXECUTABLE_SHA256:
         fail("Immutable ACME issuance executable differs from the exact reviewed source.")
-    exact_install = '''AUTO_UPGRADE=0 NO_DETECT_SH=1 LE_WORKING_DIR="${letsencrypt_dir}" ./acme.sh \\
+    exact_install = '''/usr/bin/env -i /usr/local/bin/mochirii-acme-client /opt/acme.sh \\
   --install --nocron --noprofile --log "${letsencrypt_dir}/acme.sh.log" --auto-upgrade 0'''
+    exact_default_ca = '''/usr/bin/env -i /usr/local/bin/mochirii-acme-client "${letsencrypt_dir}/acme.sh" \\
+  --set-default-ca --server letsencrypt'''
     exact_reload = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s reload"
-    cron_call = '''env AUTO_UPGRADE=0 LE_WORKING_DIR="${letsencrypt_dir}" \\
+    cron_call = '''/usr/bin/env -i /usr/local/bin/mochirii-acme-client \\
   "${letsencrypt_dir}/acme.sh" --cron --home "${letsencrypt_dir}"'''
+    exact_client_environment = '''exec /usr/bin/env -i \\
+  HOME="${letsencrypt_dir}" \\
+  PATH="/usr/bin:/bin" \\
+  SHELL="/bin/sh" \\
+  LC_ALL="C" \\
+  LANG="C" \\
+  AUTO_UPGRADE="0" \\
+  NO_DETECT_SH="1" \\
+  LE_WORKING_DIR="${letsencrypt_dir}" \\
+  "${acme_client}" "$@"'''
+    transport_patch_fragments = (
+        "| gzip --decompress --stdout > /opt/acme.sh.upstream",
+        '''test "$(sha256sum /opt/acme.sh.upstream | awk '{print $1}')" =''',
+        "/usr/bin/python3 -I -S -B - /opt/acme.sh.upstream /opt/acme.sh <<'PY'",
+        "source = source_path.read_bytes()",
+        "replacements = (",
+        "for original, replacement in replacements:",
+        'raise SystemExit("FORUMS_ACME_TRANSPORT_PATCH_FAILED")',
+        "destination_path.write_bytes(source)",
+        '''test "$(sha256sum /opt/acme.sh | awk '{print $1}')" =''',
+        "rm -f -- /opt/acme.sh.upstream",
+    )
     validator_tool_preflight = '''readonly certificate_minimum_lifetime_seconds="604800"
 readonly openssl_bin="/usr/bin/openssl"
 readonly stat_bin="/usr/bin/stat"
@@ -2645,10 +2869,10 @@ done'''
   printf '%s\\n' 'FORUMS_ACME_HOSTNAME_CONTRACT_FAILED' >&2
   exit 1
 fi'''
-    issue_call = '''  if LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
-    --issue -d "${DISCOURSE_HOSTNAME}" --keylength "${keylength}" \\
+    issue_call = '''  if /usr/bin/env -i /usr/local/bin/mochirii-acme-client "${letsencrypt_dir}/acme.sh" \\
+    --issue --server letsencrypt -d "${DISCOURSE_HOSTNAME}" --keylength "${keylength}" \\
     -w "${public_webroot}" >/dev/null 2>&1; then'''
-    install_call = '''  if ! LE_WORKING_DIR="${letsencrypt_dir}" "${letsencrypt_dir}/acme.sh" \\
+    install_call = '''  if ! /usr/bin/env -i /usr/local/bin/mochirii-acme-client "${letsencrypt_dir}/acme.sh" \\
     --installcert "${ecc_option[@]}" -d "${DISCOURSE_HOSTNAME}" \\
     --fullchainpath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.cer" \\
     --keypath "/shared/ssl/${DISCOURSE_HOSTNAME}${certificate_suffix}.key" \\
@@ -3058,6 +3282,12 @@ done'''
   chmod 0600 -- "${private_path}"
   test "$(stat -c '%U:%G %a %h' -- "${private_path}")" = "root:root 600 1"
 done'''
+    installed_client_metadata = '''test -f "${letsencrypt_dir}/acme.sh"
+test ! -L "${letsencrypt_dir}/acme.sh"
+test "$(stat -c '%h' -- "${letsencrypt_dir}/acme.sh")" = "1"
+chown root:root -- "${letsencrypt_dir}/acme.sh"
+chmod 0755 -- "${letsencrypt_dir}/acme.sh"
+test "$(stat -c '%U:%G %a %h' -- "${letsencrypt_dir}/acme.sh")" = "root:root 755 1"'''
     private_verification = '''for private_path in "${letsencrypt_dir}/account.conf" "${letsencrypt_dir}/acme.sh.log"; do
   test -f "${private_path}"
   test ! -L "${private_path}"
@@ -3084,11 +3314,50 @@ done'''
     initial_stop = "/usr/sbin/nginx -c /etc/nginx/letsencrypt.conf -s stop"
     if (
         configure.count(exact_install) != 1
-        or configure.count("./acme.sh") != 1
+        or configure.count(exact_default_ca) != 1
+        or configure.count("/usr/local/bin/mochirii-acme-client") != 2
         or configure.count("--install") != 1
-        or configure.count("NO_DETECT_SH") != 1
+        or configure.count("NO_DETECT_SH") != 0
         or tls.count("NO_DETECT_SH") != 1
-        or tls.count("umask 077") != 3
+        or tls.count("umask 077") != 6
+        or client_wrapper.count(exact_client_environment) != 1
+        or client_wrapper.count("/usr/local/libexec/mochirii-forums/acme-curl") != 1
+        or client_wrapper.count("/usr/local/libexec/mochirii-forums/acme-http-header") != 1
+        or client_wrapper.count(
+            'for runtime_file in "${acme_client}" "${curl_wrapper}" "${header_helper}" /usr/bin/curl; do'
+        )
+        != 1
+        or client_wrapper.count(ACME_RUNTIME_SOURCE_SHA256) != 1
+        or client_wrapper.count(ACME_CURL_WRAPPER_SHA256) != 1
+        or client_wrapper.count(ACME_HEADER_HELPER_SHA256) != 1
+        or curl_wrapper.count('exec /usr/bin/env -i') != 1
+        or curl_wrapper.count('/usr/bin/curl -q "$@"') != 1
+        or curl_wrapper.count("FORUMS_ACME_CURL_PREFLIGHT_FAILED") != 1
+        or header_helper.count('/usr/bin/python3 -I -S -B -') != 1
+        or header_helper.count('PARENT_PATH = "/shared/letsencrypt"') != 1
+        or header_helper.count('HEADER_NAME = "http.header"') != 1
+        or header_helper.count("EXPECTED_UID = 0") != 1
+        or header_helper.count("EXPECTED_GID = 0") != 1
+        or header_helper.count("os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC") != 1
+        or header_helper.count("os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC") != 1
+        or header_helper.count("open_flags | os.O_CREAT | os.O_EXCL") != 1
+        or header_helper.count("os.fchown(header_descriptor, EXPECTED_UID, EXPECTED_GID)") != 1
+        or header_helper.count("header_status.st_nlink != 1") != 1
+        or header_helper.count("stat.S_IMODE(header_status.st_mode) != 0o600") != 1
+        or header_helper.count("header_status.st_size > MAXIMUM_BYTES") != 1
+        or header_helper.count("os.fsync(parent_descriptor)") != 1
+        or cron.count("/usr/local/bin/mochirii-acme-client") != 1
+        or letsencrypt.count("/usr/local/bin/mochirii-acme-client") != 2
+        or tls.count("/usr/local/bin/mochirii-acme-client") != 6
+        or tls.count("/usr/local/libexec/mochirii-forums/acme-curl") != 5
+        or tls.count('/usr/bin/env -i') != 8
+        or tls.count('/usr/bin/curl -q') != 1
+        or any(bootstrap_exec_section.count(fragment) != 1 for fragment in transport_patch_fragments)
+        or not all(
+            bootstrap_exec_section.index(transport_patch_fragments[index])
+            < bootstrap_exec_section.index(transport_patch_fragments[index + 1])
+            for index in range(len(transport_patch_fragments) - 1)
+        )
         or tls.count(private_loop) != 7
         or tls.count(private_regular) != 7
         or tls.count(private_nonlink) != 7
@@ -3101,6 +3370,7 @@ done'''
         or letsencrypt.count(private_directory_verification) != 1
         or configure.count(private_preflight) != 1
         or configure.count(private_post_install) != 1
+        or configure.count(installed_client_metadata) != 1
         or configure.count(private_verification) != 1
         or cron.count(private_verification) != 2
         or letsencrypt.count(private_verification) != 2
@@ -3113,7 +3383,6 @@ done'''
         or cron.count(exact_reload) != 1
         or cron.count(f"\n{exact_reload}\n") != 1
         or cron.count("set -euo pipefail") != 1
-        or "exec env" in cron
         or letsencrypt.count(validator_tool_preflight) != 1
         or letsencrypt.count(hostname_contract) != 1
         or letsencrypt.count(issue_call) != 1
@@ -3142,7 +3411,8 @@ done'''
         or configure.index("umask 077") >= configure.index(private_directory_normalization)
         or configure.index(private_directory_normalization) >= configure.index(private_preflight)
         or configure.index(private_preflight) >= configure.index(exact_install)
-        or configure.index(exact_install) >= configure.index(private_post_install)
+        or configure.index(exact_install) >= configure.index(installed_client_metadata)
+        or configure.index(installed_client_metadata) >= configure.index(private_post_install)
         or configure.index(private_post_install) >= configure.index(private_verification)
         or cron.index(private_directory_verification) >= cron.index(private_verification)
         or cron.index(private_verification) >= cron.index(cron_call)
@@ -3345,7 +3615,26 @@ def validate_manifests() -> None:
         or len(vendored) != 1
         or vendored[0].get("revision") != ACME_REVISION
         or vendored[0].get("source", {}).get("sha256") != ACME_SOURCE_SHA256
+        or vendored[0].get("runtimeSource")
+        != {
+            "bytes": 272504,
+            "sha256": ACME_RUNTIME_SOURCE_SHA256,
+            "transformation": "bind-reviewed-absolute-curl-wrapper-disable-wget-reject-transport-trust-and-header-argument-overrides-reject-sourced-transport-cache-validate-fixed-header-file-shape-rebuild-every-request-and-propagate-policy-failures",
+        }
         or vendored[0].get("encodedSource", {}).get("compressedSha256") != ACME_COMPRESSED_SHA256
+        or vendored[0].get("transport")
+        != {
+            "clientWrapperBytes": 1781,
+            "clientWrapperSha256": ACME_CLIENT_WRAPPER_SHA256,
+            "curlFirstArgument": "-q",
+            "curlWrapperBytes": 295,
+            "curlWrapperPath": "/usr/local/libexec/mochirii-forums/acme-curl",
+            "curlWrapperSha256": ACME_CURL_WRAPPER_SHA256,
+            "environment": "empty-explicit-allowlist",
+            "headerHelperBytes": 2313,
+            "headerHelperPath": "/usr/local/libexec/mochirii-forums/acme-http-header",
+            "headerHelperSha256": ACME_HEADER_HELPER_SHA256,
+        }
         or vendored[0].get("automaticUpdateEnabled") is not False
         or vendored[0].get("onlineExactByteGateRequired") is not True
     ):
@@ -5643,20 +5932,25 @@ def validate_template() -> None:
     require_text(
         tls,
         [
-            "acme-sh-3.0.6.gz.b64",
+            "acme-sh-3.1.4.gz.b64",
             ACME_SOURCE_SHA256,
             ACME_COMPRESSED_SHA256,
+            ACME_RUNTIME_SOURCE_SHA256,
             "--install --nocron --noprofile",
             "--auto-upgrade 0",
-            "NO_DETECT_SH=1",
+            'NO_DETECT_SH="1"',
+            "/usr/local/bin/mochirii-acme-client",
+            "/usr/local/libexec/mochirii-forums/acme-curl",
+            "/usr/bin/env -i",
+            "/usr/bin/curl -q",
             'grep -Eq "^AUTO_UPGRADE=',
             "/usr/local/bin/mochirii-acme-cron",
         ],
         "immutable Forums TLS integration",
     )
-    if "web.letsencrypt.ssl.template.yml" in app or "curl " in tls or "--upgrade" in tls:
+    if "web.letsencrypt.ssl.template.yml" in app or "--upgrade" in tls:
         fail("Forums TLS integration reintroduced floating executable source or automatic upgrade.")
-    encoded_text = read("config/acme-sh-3.0.6.gz.b64")
+    encoded_text = read("config/acme-sh-3.1.4.gz.b64")
     encoded_lines = encoded_text.splitlines()
     if (
         not encoded_text.endswith("\n")
@@ -5671,13 +5965,23 @@ def validate_template() -> None:
     except (ValueError, gzip.BadGzipFile) as error:
         raise RuntimeError("Vendored immutable ACME payload cannot be decoded exactly.") from error
     if (
-        len(compressed) != 50641
+        len(compressed) != 64224
         or hashlib.sha256(compressed).hexdigest() != ACME_COMPRESSED_SHA256
-        or len(source) != 220764
+        or len(source) != 271532
         or hashlib.sha256(source).hexdigest() != ACME_SOURCE_SHA256
     ):
         fail("Vendored immutable ACME payload bytes differ.")
-    license_bytes = (ROOT / "config/acme-sh-3.0.6.LICENSE.md").read_bytes()
+    if any(replacement in source for _, replacement in ACME_RUNTIME_REPLACEMENTS):
+        fail("Vendored ACME source already contains a reviewed runtime replacement.")
+    runtime_source = transform_acme_runtime_source(source)
+    if (
+        len(runtime_source) != 272504
+        or hashlib.sha256(runtime_source).hexdigest() != ACME_RUNTIME_SOURCE_SHA256
+        or any(runtime_source.count(replacement) != 1 for _, replacement in ACME_RUNTIME_REPLACEMENTS)
+        or any(original in runtime_source for original, _ in ACME_RUNTIME_REPLACEMENTS)
+    ):
+        fail("Immutable ACME runtime transport transformation differs.")
+    license_bytes = (ROOT / "config/acme-sh-3.1.4.LICENSE.md").read_bytes()
     if len(license_bytes) != 35149 or hashlib.sha256(license_bytes).hexdigest() != "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986":
         fail("Vendored ACME license bytes differ.")
 
