@@ -23,9 +23,9 @@ readonly deployment_transaction="/var/lib/mochirii/forums/deployment-transaction
 readonly deployment_terminal="/var/lib/mochirii/forums/current-deployment.json"
 readonly launcher_timeout_seconds=7200
 readonly launcher_cumulative_budget_seconds=7800
-readonly repository_validator_sha256="a16f9ef9c23f1a10df5f3a65253bf0a7eaa7ec346efc436cea934359ab33f2af"
-readonly repository_contract_tests_sha256="2174b162945c6cb95e0fe0107f25bc5b894add5ef96ff0a5cc9eb9f7e338af1d"
-readonly repository_python_acceptance_root_sha256="5cfb43306edb37f4a96731f7fe3c6adfd63c5a6ef3f046e123d5af6cdad053b5"
+readonly repository_validator_sha256="ef8575e6b8579d85000f1730eafba3c1e3161c42553f737b401e9daa7e8c9eb6"
+readonly repository_contract_tests_sha256="4a0530398d45d70664e5a275218d2b5a73d269d5b90748b75b37b07f18555319"
+readonly repository_python_acceptance_root_sha256="d50d004a8155092d5c4ff04c832a7192c0e3d1225374e1cc35eaf8477187b3f8"
 readonly operation_started_epoch="$(date +%s)"
 
 fail() {
@@ -2561,7 +2561,7 @@ fi
 asset_candidate="$(mktemp -d "${assets_root}/.candidate-${commit}.XXXXXXXX")"
 python3 "${release_dir}/scripts/build-theme-archive.py" --output "${asset_candidate}/mochirii-theme.zip"
 install -m 0644 -o root -g root "${release_dir}/plugins/mochirii_email_metadata/plugin.rb" "${asset_candidate}/mochirii-email-metadata-plugin.rb"
-install -m 0644 -o root -g root "${release_dir}/config/acme-sh-3.0.6.gz.b64" "${asset_candidate}/acme-sh-3.0.6.gz.b64"
+install -m 0644 -o root -g root "${release_dir}/config/acme-sh-3.1.4.gz.b64" "${asset_candidate}/acme-sh-3.1.4.gz.b64"
 install -m 0644 -o root -g root "${trusted_archive}" "${asset_candidate}/mochirii-release.tar"
 for script in backup-transaction.py backup-url-boundary.rb configure-site.rb expire-discourse-connect-nonce.rb fetch-disaster-recovery-evidence.rb fetch-disaster-recovery-release.rb normal-upload-inventory.rb prepare-admin-recovery-fixture.rb prepare-backup-marker.rb publish-disaster-recovery-evidence.rb render-branding-email.rb storage-response-boundary.rb verify-backup.rb verify-break-glass-admin.rb verify-clean-disaster-target.rb verify-contained-discourse-connect.rb verify-discourse-connect-fixture.rb verify-restored-backup.rb verify-sensitive-log-redaction.rb verify-site.rb verify-storage-fixture.rb verify-zero-secure-uploads.rb; do
   install -m 0644 -o root -g root "${release_dir}/scripts/${script}" "${asset_candidate}/${script}"
@@ -2581,7 +2581,7 @@ else
   fsync_directory "${assets_root}"
   asset_candidate=""
 fi
-for runtime_asset in acme-sh-3.0.6.gz.b64 mochirii-release.tar mochirii-theme.zip mochirii-email-metadata-plugin.rb backup-transaction.py backup-url-boundary.rb configure-site.rb expire-discourse-connect-nonce.rb fetch-disaster-recovery-evidence.rb fetch-disaster-recovery-release.rb normal-upload-inventory.rb prepare-admin-recovery-fixture.rb prepare-backup-marker.rb publish-disaster-recovery-evidence.rb render-branding-email.rb storage-response-boundary.rb verify-backup.rb verify-break-glass-admin.rb verify-clean-disaster-target.rb verify-contained-discourse-connect.rb verify-discourse-connect-fixture.rb verify-restored-backup.rb verify-sensitive-log-redaction.rb verify-site.rb verify-storage-fixture.rb verify-zero-secure-uploads.rb; do
+for runtime_asset in acme-sh-3.1.4.gz.b64 mochirii-release.tar mochirii-theme.zip mochirii-email-metadata-plugin.rb backup-transaction.py backup-url-boundary.rb configure-site.rb expire-discourse-connect-nonce.rb fetch-disaster-recovery-evidence.rb fetch-disaster-recovery-release.rb normal-upload-inventory.rb prepare-admin-recovery-fixture.rb prepare-backup-marker.rb publish-disaster-recovery-evidence.rb render-branding-email.rb storage-response-boundary.rb verify-backup.rb verify-break-glass-admin.rb verify-clean-disaster-target.rb verify-contained-discourse-connect.rb verify-discourse-connect-fixture.rb verify-restored-backup.rb verify-sensitive-log-redaction.rb verify-site.rb verify-storage-fixture.rb verify-zero-secure-uploads.rb; do
   [[ "$(stat -c '%U:%G %a' "${asset_dir}/${runtime_asset}")" == "root:root 644" ]] || fail "Runtime asset permissions differ from the reviewed boundary."
 done
 cmp -s -- "${trusted_archive}" "${asset_dir}/mochirii-release.tar" || fail "Versioned release archive differs from exact canonical main bytes."

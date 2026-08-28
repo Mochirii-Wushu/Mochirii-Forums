@@ -34,15 +34,18 @@ upstream core source.
 ## acme.sh
 
 - Source: <https://github.com/acmesh-official/acme.sh>
-- Selected release: `3.0.6`
-- Exact revision: `b7caf7a0165d80dd1556b16057a06bb32025066d`
+- Selected release: `3.1.4`
+- Exact revision: `3661fd86b6304115e42f43910e6dd452ab9866d6`
 - License: GPL-3.0-or-later
-- Included license: `config/acme-sh-3.0.6.LICENSE.md`
+- Included license: `config/acme-sh-3.1.4.LICENSE.md`
 
 The exact reviewed `acme.sh` bytes are stored as the deterministic
-base64-encoded gzip payload `config/acme-sh-3.0.6.gz.b64`. Production bootstrap
+base64-encoded gzip payload `config/acme-sh-3.1.4.gz.b64`. Production bootstrap
 decodes and verifies its recorded SHA-256 before execution. Automatic updates
-are disabled; no tag/branch URL or online installer executes on the host.
+are disabled; no tag/branch URL or online installer executes on the host. One
+exact local transport hardening transformation selects the repository-owned
+absolute curl wrapper; it does not remove or replace upstream attribution or
+license terms.
 
 ## Mochirii theme
 
