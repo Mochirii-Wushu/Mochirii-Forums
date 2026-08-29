@@ -143,8 +143,11 @@ jobs:
             python3 -B /repo/scripts/test-disposable-launcher-guard.py --inside-linux >/dev/null
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             python3 -B /repo/scripts/test-host-restore-launcher-journal.py --inside-linux >/dev/null
-          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
-            python3 -B /repo/scripts/test-host-operation-lock.py >/dev/null
+          if ! host_lock_fixture_output="$(docker run "${ruby_fixture_container[@]}" --tmpfs /run/lock:rw,nosuid,nodev,size=1m,mode=1777,uid=0,gid=0 -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
+            /usr/bin/python3 -I -S -B /repo/scripts/test-host-operation-lock.py)"; then
+            exit 1
+          fi
+          test "${host_lock_fixture_output}" = "Host operation lock hostile fixture passed."
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
             ruby /repo/scripts/test-operation-survivor.rb >/dev/null
           docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \
