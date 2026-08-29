@@ -3,9 +3,9 @@ param([string]$RepositoryRoot = (Join-Path $PSScriptRoot '..'))
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$expectedValidatorSha256 = '5a21f33fd613fe4c8733deec55277943b03cf33e9d89c51339fd976409854f5f'
-$expectedContractSha256 = '5ded66a3b6325c30c2fea03a9755e2d8987cec89c2c1a62000acc13a444effd0'
-$expectedPythonAcceptanceRootSha256 = '243df14f0bbd001706a5de14bab276ae3142437951ad812eaca29e8f58ba381b'
+$expectedValidatorSha256 = 'f17f8e347b9c647992a62f8cf3788349ea3368cbf1bc614f666d710da9f07def'
+$expectedContractSha256 = '3cc0d7a79585f52b4d494b1ad330b21424f3046f7c4634715b66e1d252f64cec'
+$expectedPythonAcceptanceRootSha256 = '45c008b4dde41a4371307d110898414fc8830dc61caa32961319682a6ecb9e70'
 
 function Get-PythonAcceptanceRootSha256 {
     param(

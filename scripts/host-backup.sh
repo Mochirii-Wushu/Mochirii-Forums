@@ -21,12 +21,12 @@ backup_operation_sha="$2"
 [[ ${commit} =~ ^[0-9a-f]{40}$ ]] || fail "Expected commit is malformed."
 [[ ${backup_operation_sha} =~ ^[0-9a-f]{64}$ ]] || fail "Backup operation digest is malformed."
 lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py
-if python3 -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
 fi
 current_evidence="/var/lib/mochirii/forums/current-release.json"
 [[ -f ${current_evidence} && ! -L ${current_evidence} ]] || fail "Current release evidence is absent."

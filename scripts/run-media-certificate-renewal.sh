@@ -12,16 +12,16 @@ common=/usr/local/libexec/mochirii-forums/media-certificate-operation.sh
 acme_helper=/usr/local/libexec/mochirii-forums/reconcile-acme-dns.py
 credentials=/etc/letsencrypt/mochirii-cloudflare.ini
 [[ -f ${common} && ! -L ${common} && -f ${acme_helper} && ! -L ${acme_helper} ]] || fail "Installed media certificate operation helpers are absent."
-# shellcheck source=media-certificate-operation.sh
-source "${common}"
 lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py
-if python3 -B "${lock_helper}" assert-held --locks media 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks media 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks media -- /bin/bash "$0" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks media -- /bin/bash "$0" "$@"
 fi
+# shellcheck source=media-certificate-operation.sh
+source "${common}"
 [[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate renewal refuses an active deployment mutation."
 media_boundary_initialize 1140 180 || fail "Media certificate renewal boundary initialization failed."
 MEDIA_ACME_HELPER="${acme_helper}"
