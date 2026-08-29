@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import ipaddress
 import os
 import pathlib
 import stat
@@ -27,6 +28,13 @@ LOCK_FDS = {
 }
 CONTEXT_ENV = "MOCHIRII_FORUMS_HOST_LOCK_FDS"
 CONTEXT_VERSION = "v1"
+CHILD_ENVIRONMENT = {
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "LC_ALL": "C",
+    "HOME": "/nonexistent",
+}
+PRESERVED_CHILD_ENVIRONMENT = ("SUDO_USER", "SSH_CONNECTION")
+MAX_PRESERVED_ENVIRONMENT_LENGTH = 512
 
 _DIRECTORY_FLAGS = (
     os.O_RDONLY
@@ -84,6 +92,19 @@ def _close(descriptor: int) -> None:
 def close_lock_fds(lock_ids: Sequence[str]) -> None:
     for lock_id in reversed(tuple(lock_ids)):
         _close(LOCK_FDS[lock_id])
+
+
+def _require_reserved_lock_fds_available() -> None:
+    for lock_id in LOCK_ORDER:
+        try:
+            os.fstat(LOCK_FDS[lock_id])
+        except OSError as error:
+            if error.errno == errno.EBADF:
+                continue
+            raise LockBoundaryError(
+                "Reserved host lock descriptor inspection failed."
+            ) from error
+        raise LockBoundaryError("Reserved host lock descriptor is occupied.")
 
 
 def _require_root() -> None:
@@ -374,12 +395,47 @@ def run_locked(
         raise LockBoundaryError("A host lock context is already present.")
     if not command or not os.path.isabs(command[0]):
         raise LockBoundaryError("Locked command must use an absolute executable path.")
+    source_environment = os.environ if environment is None else environment
+    child_environment = dict(CHILD_ENVIRONMENT)
+    for name in PRESERVED_CHILD_ENVIRONMENT:
+        value = source_environment.get(name)
+        if value is None:
+            continue
+        if (
+            not value
+            or len(value) > MAX_PRESERVED_ENVIRONMENT_LENGTH
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        ):
+            raise LockBoundaryError("Preserved host operation environment is malformed.")
+        if name == "SUDO_USER" and value not in {
+            "mochirii-forums-deploy",
+            "mochirii-forums-operator",
+        }:
+            raise LockBoundaryError("Preserved host operation environment is malformed.")
+        if name == "SSH_CONNECTION":
+            fields = value.split(" ")
+            try:
+                if len(fields) != 4:
+                    raise ValueError
+                ipaddress.ip_address(fields[0])
+                ipaddress.ip_address(fields[2])
+                valid_connection = (
+                    fields[1].isdigit()
+                    and 1 <= int(fields[1]) <= 65535
+                    and fields[3].isdigit()
+                    and 1 <= int(fields[3]) <= 65535
+                )
+            except (ValueError, IndexError):
+                valid_connection = False
+            if not valid_connection:
+                raise LockBoundaryError("Preserved host operation environment is malformed.")
+        child_environment[name] = value
+    child_environment[CONTEXT_ENV] = _context_value(requested)
+    _require_reserved_lock_fds_available()
     acquire_lock_set(requested, root=root)
     try:
         for lock_id in requested:
             os.set_inheritable(LOCK_FDS[lock_id], True)
-        child_environment = dict(os.environ if environment is None else environment)
-        child_environment[CONTEXT_ENV] = _context_value(requested)
         os.execve(command[0], list(command), child_environment)
     except BaseException:
         close_lock_fds(requested)
