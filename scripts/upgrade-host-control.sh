@@ -25,6 +25,8 @@ readonly reviewed_acme_material_recovery_commit="64e12c2344fbc04d44b10c495cf9651
 readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"
 readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"
 readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"
+readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"
+readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -37,6 +39,366 @@ readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generato
 active_transaction=""
 upgrade_complete=false
 recovery_continue=false
+
+safe_source_repository_directory_identity() {
+  local path="$1" descriptor="$2" metadata kind device inode uid gid mode links modified changed
+  [[ ${descriptor} == true || ${descriptor} == false ]] || return 1
+  [[ -d ${path} ]] || return 1
+  if [[ ${descriptor} == true ]]; then
+    [[ ${path} =~ ^/proc/self/fd/[1-9][0-9]*$ ]] || return 1
+  else
+    [[ ! -L ${path} ]] || return 1
+  fi
+  metadata="$(/usr/bin/stat -Lc $'%F\t%d\t%i\t%u\t%g\t%a\t%h\t%y\t%z' -- "${path}" 2>/dev/null)" || return 1
+  IFS=$'\t' read -r kind device inode uid gid mode links modified changed <<<"${metadata}"
+  [[ ${kind} == directory && ${device} =~ ^[0-9]+$ && ${inode} =~ ^[0-9]+$ ]] || return 1
+  [[ ${uid} == 0 && ${gid} == 0 && ${mode} =~ ^[0-7]{3,4}$ && ${links} =~ ^[0-9]+$ ]] || return 1
+  (( links >= 1 && (8#${mode} & 8#022) == 0 )) || return 1
+  printf '%s\n' "${metadata}"
+}
+
+safe_source_repository_regular_file_identity() {
+  local path="$1" descriptor="$2" maximum_size="$3" metadata metadata_after digest digest_after
+  local device inode uid gid mode links size modified changed
+  [[ ${descriptor} == true || ${descriptor} == false ]] || return 1
+  [[ ${maximum_size} =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ -f ${path} ]] || return 1
+  if [[ ${descriptor} == true ]]; then
+    [[ ${path} =~ ^/proc/self/fd/[1-9][0-9]*$ ]] || return 1
+  else
+    [[ ! -L ${path} ]] || return 1
+  fi
+  metadata="$(/usr/bin/stat -Lc $'%d\t%i\t%u\t%g\t%a\t%h\t%s\t%y\t%z' -- "${path}" 2>/dev/null)" || return 1
+  IFS=$'\t' read -r device inode uid gid mode links size modified changed <<<"${metadata}"
+  [[ ${device} =~ ^[0-9]+$ && ${inode} =~ ^[0-9]+$ ]] || return 1
+  [[ ${uid} == 0 && ${gid} == 0 && ( ${mode} == 600 || ${mode} == 644 ) && ${links} == 1 ]] || return 1
+  [[ ${size} =~ ^[0-9]+$ ]] || return 1
+  (( size > 0 && size <= maximum_size )) || return 1
+  digest="$(/usr/bin/sha256sum -- "${path}" 2>/dev/null | /usr/bin/awk '{print $1}')" || return 1
+  [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
+  metadata_after="$(/usr/bin/stat -Lc $'%d\t%i\t%u\t%g\t%a\t%h\t%s\t%y\t%z' -- "${path}" 2>/dev/null)" || return 1
+  digest_after="$(/usr/bin/sha256sum -- "${path}" 2>/dev/null | /usr/bin/awk '{print $1}')" || return 1
+  [[ ${metadata_after} == "${metadata}" && ${digest_after} == "${digest}" ]] || return 1
+  printf '%s:%s\n' "${metadata}" "${digest}"
+}
+
+validated_source_repository_config_identity() {
+  local config="$1" descriptor="$2" metadata metadata_after digest digest_after keys_output keys_text key expected value_output
+  local device inode uid gid mode links size modified changed
+  local -a actual_keys
+  local -A seen_keys=()
+  [[ ${descriptor} == true || ${descriptor} == false ]] || return 1
+  [[ -f ${config} ]] || return 1
+  if [[ ${descriptor} == true ]]; then
+    [[ ${config} =~ ^/proc/self/fd/[1-9][0-9]*$ ]] || return 1
+  else
+    [[ ! -L ${config} ]] || return 1
+  fi
+  metadata="$(/usr/bin/stat -Lc $'%d\t%i\t%u\t%g\t%a\t%h\t%s\t%y\t%z' -- "${config}" 2>/dev/null)" || return 1
+  IFS=$'\t' read -r device inode uid gid mode links size modified changed <<<"${metadata}"
+  [[ ${uid} == 0 && ${gid} == 0 && ( ${mode} == 600 || ${mode} == 644 ) && ${links} == 1 ]] || return 1
+  [[ ${size} =~ ^[0-9]+$ ]] || return 1
+  (( size > 0 && size <= 65536 )) || return 1
+  digest="$(/usr/bin/sha256sum -- "${config}" 2>/dev/null | /usr/bin/awk '{print $1}')" || return 1
+  [[ ${digest} =~ ^[0-9a-f]{64}$ ]] || return 1
+  keys_output="$(
+    cd /
+    /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C HOME=/nonexistent \
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null \
+      GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
+      GIT_PAGER=cat PAGER=cat \
+      /usr/bin/git -c core.pager=cat -c pager.config=false config \
+        --file "${config}" --no-includes --name-only --list 2>/dev/null && printf '\036'
+  )" || return 1
+  [[ ${keys_output} == *$'\036' ]] || return 1
+  keys_text="${keys_output%$'\036'}"
+  [[ ${keys_text} == *$'\n' ]] || return 1
+  keys_text="${keys_text%$'\n'}"
+  [[ -n ${keys_text} && ${keys_text} != *$'\036'* ]] || return 1
+  mapfile -t actual_keys <<<"${keys_text}"
+  [[ ${#actual_keys[@]} -eq 14 ]] || return 1
+  for key in "${actual_keys[@]}"; do
+    case "${key}" in
+      core.repositoryformatversion) expected=0 ;;
+      core.filemode) expected=true ;;
+      core.bare) expected=false ;;
+      core.logallrefupdates) expected=true ;;
+      remote.origin.url) expected="${canonical_repository}" ;;
+      remote.origin.fetch) expected='+refs/heads/*:refs/remotes/origin/*' ;;
+      branch.main.remote) expected=origin ;;
+      branch.main.merge) expected=refs/heads/main ;;
+      remote.upstream.url) expected=https://github.com/discourse/discourse_docker.git ;;
+      remote.upstream.fetch) expected='+refs/heads/main:refs/remotes/upstream/main' ;;
+      remote.upstream.pushurl) expected=disabled://upstream-push ;;
+      remote.upstream.tagopt) expected=--no-tags ;;
+      remote.pushdefault) expected=origin ;;
+      pull.ff) expected=only ;;
+      *) return 1 ;;
+    esac
+    [[ -z ${seen_keys["${key}"]+present} ]] || return 1
+    seen_keys["${key}"]=1
+    value_output="$(
+      cd /
+      /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C HOME=/nonexistent \
+        GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null \
+        GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
+        GIT_PAGER=cat PAGER=cat \
+        /usr/bin/git -c core.pager=cat -c pager.config=false config \
+          --file "${config}" --no-includes --get-all "${key}" 2>/dev/null && printf '\036'
+    )" || return 1
+    [[ ${value_output} == "${expected}"$'\n'$'\036' ]] || return 1
+  done
+  metadata_after="$(/usr/bin/stat -Lc $'%d\t%i\t%u\t%g\t%a\t%h\t%s\t%y\t%z' -- "${config}" 2>/dev/null)" || return 1
+  digest_after="$(/usr/bin/sha256sum -- "${config}" 2>/dev/null | /usr/bin/awk '{print $1}')" || return 1
+  [[ ${metadata_after} == "${metadata}" && ${digest_after} == "${digest}" ]] || return 1
+  printf '%s:%s\n' "${metadata}" "${digest}"
+}
+
+validated_source_repository_boundary_identity() {
+  local repository="$1" source_directory_fd="$2" git_directory_fd="$3" config_fd="$4"
+  local info_directory_fd="$5" objects_directory_fd="$6" objects_info_directory_fd="$7" head_fd="$8"
+  local refs_directory_fd="$9" heads_directory_fd="${10}" main_ref_fd="${11}" index_fd="${12}"
+  local root_identity parent_identity source_path_identity git_path_identity info_path_identity objects_path_identity objects_info_path_identity refs_path_identity heads_path_identity
+  local source_descriptor_identity git_descriptor_identity info_descriptor_identity objects_descriptor_identity objects_info_descriptor_identity refs_descriptor_identity heads_descriptor_identity
+  local config_path_identity config_descriptor_identity head_path_identity head_descriptor_identity main_ref_path_identity main_ref_descriptor_identity index_path_identity index_descriptor_identity
+  local head_output main_ref_output main_ref_text reserved descriptor_fd git_device child_device directory_identity
+  local source_descriptor="/proc/self/fd/${source_directory_fd}"
+  local git_descriptor="/proc/self/fd/${git_directory_fd}"
+  local config_descriptor="/proc/self/fd/${config_fd}"
+  local info_descriptor="/proc/self/fd/${info_directory_fd}"
+  local objects_descriptor="/proc/self/fd/${objects_directory_fd}"
+  local objects_info_descriptor="/proc/self/fd/${objects_info_directory_fd}"
+  local head_descriptor="/proc/self/fd/${head_fd}"
+  local refs_descriptor="/proc/self/fd/${refs_directory_fd}"
+  local heads_descriptor="/proc/self/fd/${heads_directory_fd}"
+  local main_ref_descriptor="/proc/self/fd/${main_ref_fd}"
+  local index_descriptor="/proc/self/fd/${index_fd}"
+  [[ ${repository} == /root/Mochirii-Forums ]] || return 1
+  for descriptor_fd in "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}"; do
+    [[ ${descriptor_fd} =~ ^[1-9][0-9]*$ ]] || return 1
+  done
+  root_identity="$(safe_source_repository_directory_identity / false)" || return 1
+  parent_identity="$(safe_source_repository_directory_identity /root false)" || return 1
+  source_path_identity="$(safe_source_repository_directory_identity "${repository}" false)" || return 1
+  git_path_identity="$(safe_source_repository_directory_identity "${repository}/.git" false)" || return 1
+  info_path_identity="$(safe_source_repository_directory_identity "${repository}/.git/info" false)" || return 1
+  objects_path_identity="$(safe_source_repository_directory_identity "${repository}/.git/objects" false)" || return 1
+  objects_info_path_identity="$(safe_source_repository_directory_identity "${repository}/.git/objects/info" false)" || return 1
+  refs_path_identity="$(safe_source_repository_directory_identity "${repository}/.git/refs" false)" || return 1
+  heads_path_identity="$(safe_source_repository_directory_identity "${repository}/.git/refs/heads" false)" || return 1
+  source_descriptor_identity="$(safe_source_repository_directory_identity "${source_descriptor}" true)" || return 1
+  git_descriptor_identity="$(safe_source_repository_directory_identity "${git_descriptor}" true)" || return 1
+  info_descriptor_identity="$(safe_source_repository_directory_identity "${info_descriptor}" true)" || return 1
+  objects_descriptor_identity="$(safe_source_repository_directory_identity "${objects_descriptor}" true)" || return 1
+  objects_info_descriptor_identity="$(safe_source_repository_directory_identity "${objects_info_descriptor}" true)" || return 1
+  refs_descriptor_identity="$(safe_source_repository_directory_identity "${refs_descriptor}" true)" || return 1
+  heads_descriptor_identity="$(safe_source_repository_directory_identity "${heads_descriptor}" true)" || return 1
+  [[ ${source_descriptor_identity} == "${source_path_identity}" ]] || return 1
+  [[ ${git_descriptor_identity} == "${git_path_identity}" ]] || return 1
+  [[ ${info_descriptor_identity} == "${info_path_identity}" ]] || return 1
+  [[ ${objects_descriptor_identity} == "${objects_path_identity}" ]] || return 1
+  [[ ${objects_info_descriptor_identity} == "${objects_info_path_identity}" ]] || return 1
+  [[ ${refs_descriptor_identity} == "${refs_path_identity}" ]] || return 1
+  [[ ${heads_descriptor_identity} == "${heads_path_identity}" ]] || return 1
+  git_device="${git_descriptor_identity#*$'\t'}"
+  git_device="${git_device%%$'\t'*}"
+  [[ ${git_device} =~ ^[0-9]+$ ]] || return 1
+  for directory_identity in "${info_descriptor_identity}" "${objects_descriptor_identity}" "${objects_info_descriptor_identity}" "${refs_descriptor_identity}" "${heads_descriptor_identity}"; do
+    child_device="${directory_identity#*$'\t'}"
+    child_device="${child_device%%$'\t'*}"
+    [[ ${child_device} == "${git_device}" ]] || return 1
+  done
+  config_path_identity="$(validated_source_repository_config_identity "${repository}/.git/config" false)" || return 1
+  config_descriptor_identity="$(validated_source_repository_config_identity "${config_descriptor}" true)" || return 1
+  [[ ${config_descriptor_identity} == "${config_path_identity}" ]] || return 1
+  head_path_identity="$(safe_source_repository_regular_file_identity "${repository}/.git/HEAD" false 4096)" || return 1
+  head_descriptor_identity="$(safe_source_repository_regular_file_identity "${head_descriptor}" true 4096)" || return 1
+  [[ ${head_descriptor_identity} == "${head_path_identity}" ]] || return 1
+  head_output="$({ /usr/bin/cat -- "${head_descriptor}"; printf '\036'; } 2>/dev/null)" || return 1
+  [[ ${head_output} == 'ref: refs/heads/main'$'\n'$'\036' ]] || return 1
+  main_ref_path_identity="$(safe_source_repository_regular_file_identity "${repository}/.git/refs/heads/main" false 4096)" || return 1
+  main_ref_descriptor_identity="$(safe_source_repository_regular_file_identity "${main_ref_descriptor}" true 4096)" || return 1
+  [[ ${main_ref_descriptor_identity} == "${main_ref_path_identity}" ]] || return 1
+  main_ref_output="$({ /usr/bin/cat -- "${main_ref_descriptor}"; printf '\036'; } 2>/dev/null)" || return 1
+  [[ ${main_ref_output} == *$'\036' ]] || return 1
+  main_ref_text="${main_ref_output%$'\036'}"
+  [[ ${main_ref_text} == *$'\n' ]] || return 1
+  main_ref_text="${main_ref_text%$'\n'}"
+  [[ ${main_ref_text} =~ ^[0-9a-f]{40}$ ]] || return 1
+  [[ ${main_ref_output} == "${main_ref_text}"$'\n'$'\036' ]] || return 1
+  index_path_identity="$(safe_source_repository_regular_file_identity "${repository}/.git/index" false 67108864)" || return 1
+  index_descriptor_identity="$(safe_source_repository_regular_file_identity "${index_descriptor}" true 67108864)" || return 1
+  [[ ${index_descriptor_identity} == "${index_path_identity}" ]] || return 1
+  for reserved in \
+    "${git_descriptor}/commondir" \
+    "${git_descriptor}/config.worktree" \
+    "${git_descriptor}/shallow" \
+    "${info_descriptor}/grafts" \
+    "${info_descriptor}/attributes" \
+    "${objects_info_descriptor}/alternates" \
+    "${objects_info_descriptor}/http-alternates"; do
+    [[ ! -e ${reserved} && ! -L ${reserved} ]] || return 1
+  done
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+    "${root_identity}" "${parent_identity}" "${source_path_identity}" "${git_path_identity}" \
+    "${info_path_identity}" "${objects_path_identity}" "${objects_info_path_identity}" "${refs_path_identity}" \
+    "${heads_path_identity}" "${config_path_identity}" "${head_path_identity}" "${main_ref_path_identity}" "${index_path_identity}"
+}
+
+source_repository_git() {
+  local source_directory_fd="$1" git_directory_fd="$2"
+  shift 2
+  [[ ${source_directory_fd} =~ ^[1-9][0-9]*$ && ${git_directory_fd} =~ ^[1-9][0-9]*$ ]] || return 1
+  cd /
+  /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C HOME=/nonexistent \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1 GIT_OPTIONAL_LOCKS=0 GIT_ATTR_NOSYSTEM=1 \
+    GIT_TERMINAL_PROMPT=0 GIT_CEILING_DIRECTORIES=/ GIT_PAGER=cat PAGER=cat \
+    /usr/bin/git --git-dir="/proc/self/fd/${git_directory_fd}" \
+      --work-tree="/proc/self/fd/${source_directory_fd}" \
+      -c core.commitGraph=false "$@"
+}
+
+validate_source_repository_operation_state() {
+  local git_directory_fd="$1" lock_output operation_path operation_relative
+  local -a forbidden_operation_paths=(
+    MERGE_HEAD AUTO_MERGE MERGE_AUTOSTASH CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD
+    BISECT_HEAD BISECT_START BISECT_LOG BISECT_NAMES BISECT_RUN
+    gc.pid refs/bisect refs/rewritten worktrees sequencer rebase-apply rebase-merge
+  )
+  [[ ${git_directory_fd} =~ ^[1-9][0-9]*$ ]] || return 1
+  for operation_relative in "${forbidden_operation_paths[@]}"; do
+    operation_path="/proc/self/fd/${git_directory_fd}/${operation_relative}"
+    [[ ! -e ${operation_path} && ! -L ${operation_path} ]] || return 1
+  done
+  lock_output="$({
+    bounded 5s /usr/bin/find -H "/proc/self/fd/${git_directory_fd}" -mindepth 1 \
+      \( -type l -o -name '*.lock' \) -print -quit &&
+      printf '\036'
+  } 2>/dev/null)" || return 1
+  (( ${#lock_output} <= 4096 )) || return 1
+  [[ ${lock_output} == $'\036' ]] || return 1
+}
+
+validate_source_repository_clean_state() {
+  local source_directory_fd="$1" git_directory_fd="$2"
+  local status_output shared_index_output resolve_undo_output flag_option flag_output flag_text line
+  local index_output index_text header mode blob stage path actual_blob tracked_path expected_file_mode
+  local metadata metadata_after device inode uid gid file_mode links size modified changed
+  local component prefix directory_path directory_identity directory_index
+  local -a path_components tracked_directories directory_identities
+  [[ ${source_directory_fd} =~ ^[1-9][0-9]*$ && ${git_directory_fd} =~ ^[1-9][0-9]*$ ]] || return 1
+  validate_source_repository_operation_state "${git_directory_fd}" || return 1
+  resolve_undo_output="$({
+    source_repository_git "${source_directory_fd}" "${git_directory_fd}" ls-files --resolve-undo &&
+      printf '\036'
+  } 2>/dev/null)" || return 1
+  (( ${#resolve_undo_output} <= 4194304 )) || return 1
+  [[ ${resolve_undo_output} == $'\036' ]] || return 1
+  status_output="$({
+    source_repository_git "${source_directory_fd}" "${git_directory_fd}" \
+      -c core.fsmonitor=false -c core.untrackedCache=false \
+      status --porcelain=v1 --untracked-files=all --ignored=matching &&
+      printf '\036'
+  } 2>/dev/null)" || return 1
+  (( ${#status_output} <= 262144 )) || return 1
+  [[ ${status_output} == $'\036' ]] || return 1
+  shared_index_output="$({
+    source_repository_git "${source_directory_fd}" "${git_directory_fd}" \
+      rev-parse --shared-index-path &&
+      printf '\036'
+  } 2>/dev/null)" || return 1
+  (( ${#shared_index_output} <= 4096 )) || return 1
+  [[ ${shared_index_output} == $'\036' ]] || return 1
+  for flag_option in -v -f; do
+    flag_output="$({
+      source_repository_git "${source_directory_fd}" "${git_directory_fd}" \
+        ls-files "${flag_option}" --stage &&
+        printf '\036'
+    } 2>/dev/null)" || return 1
+    (( ${#flag_output} <= 4194304 )) || return 1
+    [[ ${flag_output} == *$'\036' ]] || return 1
+    flag_text="${flag_output%$'\036'}"
+    [[ ${flag_text} == *$'\n' ]] || return 1
+    flag_text="${flag_text%$'\n'}"
+    [[ -n ${flag_text} && ${flag_text} != *$'\036'* ]] || return 1
+    while IFS= read -r line; do
+      [[ ${line} == H\ * ]] || return 1
+    done <<<"${flag_text}"
+  done
+  source_repository_git "${source_directory_fd}" "${git_directory_fd}" \
+    diff-index --cached --quiet --no-ext-diff HEAD -- 2>/dev/null || return 1
+  index_output="$({
+    source_repository_git "${source_directory_fd}" "${git_directory_fd}" \
+      ls-files --stage &&
+      printf '\036'
+  } 2>/dev/null)" || return 1
+  (( ${#index_output} <= 4194304 )) || return 1
+  [[ ${index_output} == *$'\036' ]] || return 1
+  index_text="${index_output%$'\036'}"
+  [[ ${index_text} == *$'\n' ]] || return 1
+  index_text="${index_text%$'\n'}"
+  [[ -n ${index_text} && ${index_text} != *$'\036'* ]] || return 1
+  while IFS= read -r line; do
+    [[ ${line} == *$'\t'* ]] || return 1
+    header="${line%%$'\t'*}"
+    path="${line#*$'\t'}"
+    read -r mode blob stage <<<"${header}"
+    [[ ( ${mode} == 100644 || ${mode} == 100755 ) && ${blob} =~ ^[0-9a-f]{40}$ && ${stage} == 0 ]] || return 1
+    [[ ${path} =~ ^[A-Za-z0-9._@+/-]+$ && ${path} != /* && ${path} != ../* && ${path} != */../* && ${path} != */.. ]] || return 1
+    IFS=/ read -r -a path_components <<<"${path}"
+    tracked_directories=()
+    directory_identities=()
+    prefix=
+    for (( directory_index=0; directory_index < ${#path_components[@]} - 1; directory_index++ )); do
+      component="${path_components[${directory_index}]}"
+      [[ -n ${component} ]] || return 1
+      prefix="${prefix:+${prefix}/}${component}"
+      directory_path="/proc/self/fd/${source_directory_fd}/${prefix}"
+      directory_identity="$(safe_source_repository_directory_identity "${directory_path}" false)" || return 1
+      tracked_directories+=("${directory_path}")
+      directory_identities+=("${directory_identity}")
+    done
+    tracked_path="/proc/self/fd/${source_directory_fd}/${path}"
+    [[ -f ${tracked_path} && ! -L ${tracked_path} ]] || return 1
+    expected_file_mode=644
+    [[ ${mode} != 100755 ]] || expected_file_mode=755
+    metadata="$(/usr/bin/stat -Lc $'%d\t%i\t%u\t%g\t%a\t%h\t%s\t%y\t%z' -- "${tracked_path}" 2>/dev/null)" || return 1
+    IFS=$'\t' read -r device inode uid gid file_mode links size modified changed <<<"${metadata}"
+    [[ ${device} =~ ^[0-9]+$ && ${inode} =~ ^[0-9]+$ && ${uid} == 0 && ${gid} == 0 ]] || return 1
+    [[ ${file_mode} == "${expected_file_mode}" && ${links} == 1 && ${size} =~ ^[0-9]+$ ]] || return 1
+    (( size <= 67108864 )) || return 1
+    actual_blob="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" \
+      hash-object --no-filters -- "${tracked_path}" 2>/dev/null)" || return 1
+    [[ ${actual_blob} == "${blob}" ]] || return 1
+    metadata_after="$(/usr/bin/stat -Lc $'%d\t%i\t%u\t%g\t%a\t%h\t%s\t%y\t%z' -- "${tracked_path}" 2>/dev/null)" || return 1
+    [[ ${metadata_after} == "${metadata}" ]] || return 1
+    for (( directory_index=0; directory_index < ${#tracked_directories[@]}; directory_index++ )); do
+      [[ "$(safe_source_repository_directory_identity "${tracked_directories[${directory_index}]}" false)" == "${directory_identities[${directory_index}]}" ]] || return 1
+    done
+  done <<<"${index_text}"
+  validate_source_repository_operation_state "${git_directory_fd}" || return 1
+  resolve_undo_output="$({
+    source_repository_git "${source_directory_fd}" "${git_directory_fd}" ls-files --resolve-undo &&
+      printf '\036'
+  } 2>/dev/null)" || return 1
+  (( ${#resolve_undo_output} <= 4194304 )) || return 1
+  [[ ${resolve_undo_output} == $'\036' ]] || return 1
+}
+
+read_canonical_remote_main() {
+  cd /
+  /usr/bin/timeout --signal=TERM --kill-after=5s 120s \
+    /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C HOME=/nonexistent \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1 GIT_TERMINAL_PROMPT=0 \
+    GIT_PROTOCOL_FROM_USER=0 GIT_CEILING_DIRECTORIES=/ GIT_PAGER=cat PAGER=cat \
+    /usr/bin/git --git-dir=/dev/null --work-tree=/dev/null \
+      -c credential.helper= -c core.askPass= -c core.pager=cat \
+      -c protocol.allow=never -c protocol.https.allow=always \
+      -c http.followRedirects=false -c http.proxy= \
+      ls-remote --refs "${canonical_repository}" refs/heads/main 2>/dev/null
+}
 
 fail() {
   printf '%s\n' "$1" >&2
@@ -71,7 +433,7 @@ reconcile_shared_libexec_traversal() {
 }
 
 durable_remove() {
-  python3 -B - "$1" <<'PY'
+  /usr/bin/python3 -I -S -B - "$1" <<'PY'
 import os
 import pathlib
 import sys
@@ -196,12 +558,15 @@ select_reviewed_failed_bootstrap_recovery_commit() {
     "${reviewed_acme_stage_failed_bootstrap_commit}")
       printf '%s\n' "${reviewed_acme_stage_recovery_commit}"
       ;;
+    "${reviewed_acme_transport_failed_bootstrap_commit}")
+      printf '%s\n' "${reviewed_acme_transport_recovery_commit}"
+      ;;
     *) return 1 ;;
   esac
 }
 
 validate_reviewed_failed_bootstrap_successor_paths() {
-  local invocation_source_root="$1" requested_commit="$2" pending_commit="$3"
+  local source_directory_fd="$1" git_directory_fd="$2" requested_commit="$3" pending_commit="$4"
   local -ar legacy_expected_paths=(
     .github/workflows/deploy-forums.yml
     config/host-control-manifest.v1.json
@@ -285,6 +650,7 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     scripts/test-source-introduction.ps1
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
+    scripts/verify-host-security.sh
   )
   local -ar acme_material_expected_paths=(
     .gitattributes
@@ -344,6 +710,91 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     scripts/validate-repository.py
     scripts/verify-host.sh
   )
+  local -ar acme_transport_repair_expected_paths=(
+    .github/workflows/disposable-bootstrap.yml
+    .github/workflows/validate-repository.yml
+    config/acme-sh-3.0.6.LICENSE.md
+    config/acme-sh-3.0.6.gz.b64
+    config/acme-sh-3.1.4.LICENSE.md
+    config/acme-sh-3.1.4.gz.b64
+    config/immutable-letsencrypt.fragment.yml
+    docs/operations/PROVIDER-DNS-TLS.md
+    docs/operations/SOURCE-PROVENANCE.md
+    docs/operations/THIRD-PARTY-NOTICES.md
+    docs/operations/third-party-components.v1.json
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-deploy.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/validate-repository.py
+    scripts/verify-runtime-assets.sh
+  )
+  local -ar acme_transport_current_expected_paths=(
+    .github/workflows/disposable-bootstrap.yml
+    .github/workflows/validate-repository.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/finalize-member-rollout.sh
+    scripts/host-backup.sh
+    scripts/host-break-glass-admin.sh
+    scripts/host-deploy.sh
+    scripts/host-finalize-authentication.sh
+    scripts/host-operation-lock.py
+    scripts/host-restore-validate.sh
+    scripts/host-stop-pending-activation.sh
+    scripts/host-verify-wrapper.sh
+    scripts/install-host-control.sh
+    scripts/install-media-certificate-renewal.sh
+    scripts/prepare-media-certificate.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/run-media-certificate-renewal.sh
+    scripts/test-contracts.py
+    scripts/test-host-operation-lock.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host-security.sh
+  )
+  local -ar acme_transport_expected_paths=(
+    .github/workflows/disposable-bootstrap.yml
+    .github/workflows/validate-repository.yml
+    config/acme-sh-3.0.6.gz.b64
+    config/acme-sh-3.1.4.LICENSE.md
+    config/acme-sh-3.1.4.gz.b64
+    config/immutable-letsencrypt.fragment.yml
+    docs/operations/DEPLOYMENT.md
+    docs/operations/PROVIDER-DNS-TLS.md
+    docs/operations/RECOVERY.md
+    docs/operations/SOURCE-PROVENANCE.md
+    docs/operations/THIRD-PARTY-NOTICES.md
+    docs/operations/third-party-components.v1.json
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/finalize-member-rollout.sh
+    scripts/host-backup.sh
+    scripts/host-break-glass-admin.sh
+    scripts/host-deploy.sh
+    scripts/host-finalize-authentication.sh
+    scripts/host-operation-lock.py
+    scripts/host-restore-validate.sh
+    scripts/host-stop-pending-activation.sh
+    scripts/host-verify-wrapper.sh
+    scripts/install-host-control.sh
+    scripts/install-media-certificate-renewal.sh
+    scripts/prepare-media-certificate.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/run-media-certificate-renewal.sh
+    scripts/test-contracts.py
+    scripts/test-host-operation-lock.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host-security.sh
+    scripts/verify-runtime-assets.sh
+  )
   local actual_path_output
   local -a actual_paths expected_paths
   case "${pending_commit}" in
@@ -355,24 +806,25 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     "${reviewed_acme_webroot_failed_bootstrap_commit}") expected_paths=("${acme_webroot_expected_paths[@]}") ;;
     "${reviewed_acme_material_failed_bootstrap_commit}") expected_paths=("${acme_material_expected_paths[@]}") ;;
     "${reviewed_acme_stage_failed_bootstrap_commit}") expected_paths=("${acme_stage_expected_paths[@]}") ;;
+    "${reviewed_acme_transport_failed_bootstrap_commit}") expected_paths=("${acme_transport_expected_paths[@]}") ;;
     *) return 1 ;;
   esac
   if [[ ${pending_commit} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
-    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${reviewed_acme_material_recovery_commit}" 2>/dev/null)" || return 1
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${reviewed_acme_material_recovery_commit}" 2>/dev/null)" || return 1
     (( ${#actual_path_output} <= 65536 )) || return 1
     mapfile -t actual_paths <<< "${actual_path_output}"
     [[ ${#actual_paths[@]} -eq ${#acme_material_repair_expected_paths[@]} ]] || return 1
     for index in "${!acme_material_repair_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_material_repair_expected_paths[$index]}" ]] || return 1
     done
-    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_material_recovery_commit}" "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" || return 1
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_material_recovery_commit}" "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" || return 1
     (( ${#actual_path_output} <= 65536 )) || return 1
     mapfile -t actual_paths <<< "${actual_path_output}"
     [[ ${#actual_paths[@]} -eq ${#acme_material_review_authority_expected_paths[@]} ]] || return 1
     for index in "${!acme_material_review_authority_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_material_review_authority_expected_paths[$index]}" ]] || return 1
     done
-    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_material_review_authority_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_material_review_authority_commit}" "${requested_commit}" 2>/dev/null)" || return 1
     (( ${#actual_path_output} <= 65536 )) || return 1
     mapfile -t actual_paths <<< "${actual_path_output}"
     [[ ${#actual_paths[@]} -eq ${#acme_material_current_expected_paths[@]} ]] || return 1
@@ -381,14 +833,14 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     done
   fi
   if [[ ${pending_commit} == "${reviewed_acme_stage_failed_bootstrap_commit}" ]]; then
-    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${reviewed_recovery_commit}" 2>/dev/null)" || return 1
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${reviewed_recovery_commit}" 2>/dev/null)" || return 1
     (( ${#actual_path_output} <= 65536 )) || return 1
     mapfile -t actual_paths <<< "${actual_path_output}"
     [[ ${#actual_paths[@]} -eq ${#acme_stage_repair_expected_paths[@]} ]] || return 1
     for index in "${!acme_stage_repair_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_stage_repair_expected_paths[$index]}" ]] || return 1
     done
-    actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${requested_commit}" 2>/dev/null)" || return 1
     (( ${#actual_path_output} <= 65536 )) || return 1
     mapfile -t actual_paths <<< "${actual_path_output}"
     [[ ${#actual_paths[@]} -eq ${#acme_stage_current_expected_paths[@]} ]] || return 1
@@ -396,7 +848,23 @@ validate_reviewed_failed_bootstrap_successor_paths() {
       [[ ${actual_paths[$index]} == "${acme_stage_current_expected_paths[$index]}" ]] || return 1
     done
   fi
-  actual_path_output="$(git -C "${invocation_source_root}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+  if [[ ${pending_commit} == "${reviewed_acme_transport_failed_bootstrap_commit}" ]]; then
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${reviewed_recovery_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_transport_repair_expected_paths[@]} ]] || return 1
+    for index in "${!acme_transport_repair_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_transport_repair_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_transport_current_expected_paths[@]} ]] || return 1
+    for index in "${!acme_transport_current_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_transport_current_expected_paths[$index]}" ]] || return 1
+    done
+  fi
+  actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}" 2>/dev/null)" || return 1
   (( ${#actual_path_output} <= 65536 )) || return 1
   mapfile -t actual_paths <<< "${actual_path_output}"
   [[ ${#actual_paths[@]} -eq ${#expected_paths[@]} ]] || return 1
@@ -406,7 +874,10 @@ validate_reviewed_failed_bootstrap_successor_paths() {
 }
 
 bind_invoked_canonical_successor() {
-  local requested_commit="$1" pending_commit="$2" invocation_script invocation_source_root remote_output status_output reviewed_recovery_commit requested_parent_commit
+  (
+  local requested_commit="$1" pending_commit="$2" invocation_script invocation_source_root remote_output reviewed_recovery_commit requested_parent_commit repository_config_identity
+  local source_directory_fd git_directory_fd config_fd info_directory_fd objects_directory_fd objects_info_directory_fd
+  local head_fd refs_directory_fd heads_directory_fd main_ref_fd index_fd
   reviewed_recovery_commit="$(select_reviewed_failed_bootstrap_recovery_commit "${pending_commit}")" || return 1
   requested_parent_commit="${reviewed_recovery_commit}"
   if [[ ${pending_commit} == "${reviewed_acme_reload_privacy_failed_bootstrap_commit}" ]]; then
@@ -418,38 +889,105 @@ bind_invoked_canonical_successor() {
   [[ -f $0 && ! -L $0 ]] || return 1
   invocation_script="$(realpath -e -- "$0")" || return 1
   invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
-  [[ -d ${invocation_source_root}/.git && ! -L ${invocation_source_root}/.git ]] || return 1
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_REPLACE_REF_BASE
   unset GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_PROTOCOL_FROM_USER
   export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1
-  [[ ! -e ${invocation_source_root}/.git/commondir && ! -L ${invocation_source_root}/.git/commondir ]] || return 1
-  [[ ! -e ${invocation_source_root}/.git/info/grafts && ! -L ${invocation_source_root}/.git/info/grafts ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${requested_commit}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
-  status_output="$(git -c core.fsmonitor=false -C "${invocation_source_root}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || return 1
-  (( ${#status_output} <= 262144 )) || return 1
-  [[ -z ${status_output} ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" remote get-url origin 2>/dev/null)" == "${canonical_repository}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${requested_parent_commit}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${requested_commit}" 2>/dev/null)" == "${requested_commit} ${requested_parent_commit}" ]] || return 1
+  shopt -u varredir_close
+  exec {source_directory_fd}<"${invocation_source_root}" || return 1
+  exec {git_directory_fd}<"${invocation_source_root}/.git" || return 1
+  exec {config_fd}<"${invocation_source_root}/.git/config" || return 1
+  exec {info_directory_fd}<"${invocation_source_root}/.git/info" || return 1
+  exec {objects_directory_fd}<"${invocation_source_root}/.git/objects" || return 1
+  exec {objects_info_directory_fd}<"${invocation_source_root}/.git/objects/info" || return 1
+  exec {head_fd}<"${invocation_source_root}/.git/HEAD" || return 1
+  exec {refs_directory_fd}<"${invocation_source_root}/.git/refs" || return 1
+  exec {heads_directory_fd}<"${invocation_source_root}/.git/refs/heads" || return 1
+  exec {main_ref_fd}<"${invocation_source_root}/.git/refs/heads/main" || return 1
+  exec {index_fd}<"${invocation_source_root}/.git/index" || return 1
+  validate_source_repository_operation_state "${git_directory_fd}" || return 1
+  repository_config_identity="$(validated_source_repository_boundary_identity "${invocation_source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" || return 1
+  validate_source_repository_clean_state "${source_directory_fd}" "${git_directory_fd}" || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${requested_commit}" ]] || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${requested_commit}^1" 2>/dev/null)" == "${requested_parent_commit}" ]] || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${requested_commit}" 2>/dev/null)" == "${requested_commit} ${requested_parent_commit}" ]] || return 1
   if [[ ${pending_commit} == "${reviewed_acme_reload_privacy_failed_bootstrap_commit}" ]]; then
-    [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
-    [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_launcher_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_launcher_child_commit} ${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
-    [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
-    [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit} ${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_acme_reload_privacy_launcher_child_commit}^1" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_launcher_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_launcher_child_commit} ${reviewed_acme_reload_privacy_recovery_child_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_acme_reload_privacy_recovery_child_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_acme_reload_privacy_recovery_child_commit}" 2>/dev/null)" == "${reviewed_acme_reload_privacy_recovery_child_commit} ${reviewed_recovery_commit}" ]] || return 1
   fi
   if [[ ${pending_commit} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
-    [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
-    [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" == "${reviewed_acme_material_review_authority_commit} ${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" == "${reviewed_acme_material_review_authority_commit} ${reviewed_recovery_commit}" ]] || return 1
   fi
-  [[ "$(git -C "${invocation_source_root}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
-  [[ "$(git -C "${invocation_source_root}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${pending_commit}" ]] || return 1
-  remote_output="$(bounded 120s git -c credential.helper= -c core.askPass= \
-    -c protocol.allow=never -c protocol.https.allow=always -c http.followRedirects=false \
-    ls-remote --refs "${canonical_repository}" refs/heads/main 2>/dev/null)" || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${pending_commit}" ]] || return 1
+  remote_output="$(read_canonical_remote_main)" || return 1
   (( ${#remote_output} <= 256 )) || return 1
   [[ ${remote_output} == "${requested_commit}"$'\trefs/heads/main' ]] || return 1
-  validate_reviewed_failed_bootstrap_successor_paths "${invocation_source_root}" "${requested_commit}" "${pending_commit}"
+  validate_reviewed_failed_bootstrap_successor_paths "${source_directory_fd}" "${git_directory_fd}" "${requested_commit}" "${pending_commit}" || return 1
+  validate_source_repository_clean_state "${source_directory_fd}" "${git_directory_fd}" || return 1
+  [[ "$(validated_source_repository_boundary_identity "${invocation_source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" == "${repository_config_identity}" ]] || return 1
+  validate_source_repository_operation_state "${git_directory_fd}" || return 1
+  )
+}
+
+read_bound_failed_bootstrap_preflight() {
+  (
+  local requested_commit="$1" invocation_script invocation_source_root remote_output repository_config_identity
+  local quarantine_path quarantine_path_identity quarantine_descriptor_identity tree_output tree_metadata tree_path
+  local tree_mode tree_type tree_blob tree_extra descriptor_blob output
+  local source_directory_fd git_directory_fd config_fd info_directory_fd objects_directory_fd objects_info_directory_fd
+  local head_fd refs_directory_fd heads_directory_fd main_ref_fd index_fd quarantine_fd
+  [[ ${requested_commit} =~ ^[0-9a-f]{40}$ ]] || return 1
+  [[ -f $0 && ! -L $0 ]] || return 1
+  invocation_script="$(realpath -e -- "$0")" || return 1
+  invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
+  quarantine_path="${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh"
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_REPLACE_REF_BASE
+  unset GIT_ASKPASS SSH_ASKPASS GIT_SSH GIT_SSH_COMMAND GIT_CONFIG_PARAMETERS GIT_CONFIG_SYSTEM GIT_PROTOCOL_FROM_USER
+  export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=0 GIT_NO_REPLACE_OBJECTS=1
+  shopt -u varredir_close
+  exec {source_directory_fd}<"${invocation_source_root}" || return 1
+  exec {git_directory_fd}<"${invocation_source_root}/.git" || return 1
+  exec {config_fd}<"${invocation_source_root}/.git/config" || return 1
+  exec {info_directory_fd}<"${invocation_source_root}/.git/info" || return 1
+  exec {objects_directory_fd}<"${invocation_source_root}/.git/objects" || return 1
+  exec {objects_info_directory_fd}<"${invocation_source_root}/.git/objects/info" || return 1
+  exec {head_fd}<"${invocation_source_root}/.git/HEAD" || return 1
+  exec {refs_directory_fd}<"${invocation_source_root}/.git/refs" || return 1
+  exec {heads_directory_fd}<"${invocation_source_root}/.git/refs/heads" || return 1
+  exec {main_ref_fd}<"${invocation_source_root}/.git/refs/heads/main" || return 1
+  exec {index_fd}<"${invocation_source_root}/.git/index" || return 1
+  exec {quarantine_fd}<"${quarantine_path}" || return 1
+  validate_source_repository_operation_state "${git_directory_fd}" || return 1
+  repository_config_identity="$(validated_source_repository_boundary_identity "${invocation_source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" || return 1
+  validate_source_repository_clean_state "${source_directory_fd}" "${git_directory_fd}" || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify HEAD^{commit} 2>/dev/null)" == "${requested_commit}" ]] || return 1
+  [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" symbolic-ref --short -q HEAD 2>/dev/null)" == main ]] || return 1
+  remote_output="$(read_canonical_remote_main)" || return 1
+  (( ${#remote_output} <= 256 )) || return 1
+  [[ ${remote_output} == "${requested_commit}"$'\trefs/heads/main' ]] || return 1
+  quarantine_path_identity="$(safe_source_repository_regular_file_identity "${quarantine_path}" false 1048576)" || return 1
+  quarantine_descriptor_identity="$(safe_source_repository_regular_file_identity "/proc/self/fd/${quarantine_fd}" true 1048576)" || return 1
+  [[ ${quarantine_descriptor_identity} == "${quarantine_path_identity}" ]] || return 1
+  tree_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" ls-tree "${requested_commit}" -- scripts/quarantine-failed-bootstrap.sh 2>/dev/null)" || return 1
+  (( ${#tree_output} <= 256 )) || return 1
+  IFS=$'\t' read -r tree_metadata tree_path <<<"${tree_output}"
+  read -r tree_mode tree_type tree_blob tree_extra <<<"${tree_metadata}"
+  [[ ${tree_mode} == 100644 && ${tree_type} == blob && ${tree_blob} =~ ^[0-9a-f]{40}$ && -z ${tree_extra} ]] || return 1
+  [[ ${tree_path} == scripts/quarantine-failed-bootstrap.sh ]] || return 1
+  descriptor_blob="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" hash-object --no-filters "/proc/self/fd/${quarantine_fd}" 2>/dev/null)" || return 1
+  [[ ${descriptor_blob} == "${tree_blob}" ]] || return 1
+  validate_source_repository_clean_state "${source_directory_fd}" "${git_directory_fd}" || return 1
+  [[ "$(validated_source_repository_boundary_identity "${invocation_source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" == "${repository_config_identity}" ]] || return 1
+  validate_source_repository_operation_state "${git_directory_fd}" || return 1
+  output="$(/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C HOME=/nonexistent \
+    /bin/bash --noprofile --norc "/proc/self/fd/${quarantine_fd}" --upgrade-preflight "${requested_commit}" 2>/dev/null)" || return 1
+  (( ${#output} <= 64 )) || return 1
+  printf '%s\n' "${output}"
+  )
 }
 
 validate_failed_bootstrap_upgrade_exception() {
@@ -458,9 +996,7 @@ validate_failed_bootstrap_upgrade_exception() {
   [[ -f $0 && ! -L $0 ]] || return 1
   invocation_script="$(realpath -e -- "$0")" || return 1
   invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"
-  [[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]] || return 1
-  output="$(bash "${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight "${requested_commit}" 2>/dev/null)" || return 1
-  (( ${#output} <= 64 )) || return 1
+  output="$(read_bound_failed_bootstrap_preflight "${requested_commit}")" || return 1
   readarray -t state <<<"${output}"
   [[ ${#state[@]} -eq 1 && ${state[0]} =~ ^[0-9a-f]{40}$ ]] || return 1
   bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"
@@ -516,7 +1052,7 @@ restore_ssh_activation_predecessor() {
 }
 
 durable_remove_workdir() {
-  python3 -B - "$1" "${upgrades_root}" "${state_root}" <<'PY'
+  /usr/bin/python3 -I -S -B - "$1" "${upgrades_root}" "${state_root}" <<'PY'
 import os
 import pathlib
 import re
@@ -558,7 +1094,7 @@ reconcile_unjournaled_workdirs() {
 
 atomic_install() {
   local source="$1" target="$2" mode="$3"
-  python3 -B - "${source}" "${target}" "${mode}" <<'PY'
+  /usr/bin/python3 -I -S -B - "${source}" "${target}" "${mode}" <<'PY'
 import os
 import pathlib
 import stat
@@ -617,9 +1153,9 @@ retain_disaster_recovery_sources() {
   [[ "$(git -C /var/discourse config --local --get remote.origin.url)" == https://github.com/discourse/discourse_docker.git ]] || { rm -f -- "${deployment_archive}"; return 1; }
   [[ "$(git -C /var/discourse config --local --get remote.origin.pushurl)" == no_push://mochirii-forums-upstream ]] || { rm -f -- "${deployment_archive}"; return 1; }
   git -c tar.umask=0002 -C /var/discourse archive --format=tar --output="${deployment_archive}" "${deployment_source_commit}" >/dev/null 2>&1 || { rm -f -- "${deployment_archive}"; return 1; }
-  inspection="$(python3 -B "${source_root}/scripts/historical-release-disaster-recovery.py" inspect --archive "${repository_archive}" --expected-commit "${commit}")" || { rm -f -- "${deployment_archive}"; return 1; }
+  inspection="$(/usr/bin/python3 -I -S -B "${source_root}/scripts/historical-release-disaster-recovery.py" inspect --archive "${repository_archive}" --expected-commit "${commit}")" || { rm -f -- "${deployment_archive}"; return 1; }
   (( ${#inspection} <= 4096 )) || { rm -f -- "${deployment_archive}"; return 1; }
-  python3 -B - "${inspection}" "${commit}" "${expected_tree}" <<'PY' >/dev/null || { rm -f -- "${deployment_archive}"; return 1; }
+  /usr/bin/python3 -I -S -B - "${inspection}" "${commit}" "${expected_tree}" <<'PY' >/dev/null || { rm -f -- "${deployment_archive}"; return 1; }
 import json, sys
 document = json.loads(sys.argv[1])
 if document.get("repositoryCommit") != sys.argv[2] or document.get("repositoryTree") != sys.argv[3]:
@@ -634,7 +1170,7 @@ PY
 bind_previous_source() {
   local pointer="$1" work_root="$2" candidate_source="$3" action="$4"
   # PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN
-  bounded 120s python3 -B - \
+  bounded 120s /usr/bin/python3 -I -S -B - \
     "${pointer}" "${work_root}" "${candidate_source}" "${action}" \
     "${state_root}" "${upgrades_root}" "${host_control_releases_root}" 0 0 <<'PY'
 import hashlib
@@ -1010,7 +1546,7 @@ PY
 
 manifest_records() {
   local source_root="$1"
-  python3 -B - "${source_root}" <<'PY'
+  /usr/bin/python3 -I -S -B - "${source_root}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1121,7 +1657,7 @@ clear_transaction() {
 rollback_transaction() {
   local transaction="$1"
   local ssh_predecessor
-  ssh_predecessor="$(python3 -B - "${pending_journal}" <<'PY'
+  ssh_predecessor="$(/usr/bin/python3 -I -S -B - "${pending_journal}" <<'PY'
 import json
 import pathlib
 import sys
@@ -1132,7 +1668,7 @@ if value not in {"service", "socket"}:
 print(value)
 PY
 )" || return 1
-  python3 -B - "${pending_journal}" "${transaction}" "${control_pointer}" <<'PY'
+  /usr/bin/python3 -I -S -B - "${pending_journal}" "${transaction}" "${control_pointer}" <<'PY'
 import hashlib
 import json
 import os
@@ -1219,7 +1755,7 @@ verify_previous_host_controls() {
 }
 
 read_journal() {
-  python3 -B - "${pending_journal}" "${upgrades_root}" <<'PY'
+  /usr/bin/python3 -I -S -B - "${pending_journal}" "${upgrades_root}" <<'PY'
 import json
 import pathlib
 import re
@@ -1272,7 +1808,7 @@ PY
 }
 
 targets_are_new() {
-  python3 -B - "${pending_journal}" <<'PY'
+  /usr/bin/python3 -I -S -B - "${pending_journal}" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1375,12 +1911,12 @@ confirmation="$2"
 [[ ${SUDO_USER:-} == mochirii-forums-operator && -n ${SSH_CONNECTION:-} ]] || fail "Host-control upgrade requires the separately authenticated operator SSH session."
 
 lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py
-if python3 -B "${lock_helper}" assert-held --locks primary,media 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks primary,media 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks primary,media -- /bin/bash "$0" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks primary,media -- /bin/bash "$0" "$@"
 fi
 deployment_recovery_upgrade=false
 if [[ -e ${state_root}/deployment-mutation.json || -L ${state_root}/deployment-mutation.json ]]; then
@@ -1446,7 +1982,7 @@ trusted_tree="$(git "${trusted_git_options[@]}" -C "${bare}" rev-parse --verify 
 [[ ${trusted_tree} =~ ^[0-9a-f]{40}$ ]] || fail "Canonical host-control main tree is malformed."
 git "${trusted_git_options[@]}" -c tar.umask=0002 -C "${bare}" archive --format=tar --output="${archive}" "${trusted_commit}" >/dev/null 2>&1 || fail "Canonical host-control archive construction failed."
 tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${candidate}" || fail "Canonical host-control archive extraction failed."
-bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}" >/dev/null 2>&1 || fail "Canonical host-control repository validation failed."
+bounded 300s /usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}" >/dev/null 2>&1 || fail "Canonical host-control repository validation failed."
 mapfile -t records < <(manifest_records "${candidate}") || fail "Canonical host-control manifest validation failed."
 [[ ${#records[@]} -ge 20 ]] || fail "Canonical host-control target inventory is incomplete."
 previous_state_output=""
@@ -1466,7 +2002,7 @@ for record in "${records[@]}"; do
   IFS=$'\t' read -r group mode relative target digest <<<"${record}"
   case "${relative}" in
     *.sh) bash -n "${candidate}/${relative}" || fail "Candidate shell control failed syntax validation." ;;
-    *.py) python3 -B - "${candidate}/${relative}" <<'PY' >/dev/null || fail "Candidate Python control failed syntax validation."
+    *.py) /usr/bin/python3 -I -S -B - "${candidate}/${relative}" <<'PY' >/dev/null || fail "Candidate Python control failed syntax validation."
 import ast
 import pathlib
 import sys
@@ -1521,7 +2057,7 @@ install -d -m 0700 -o root -g root "${transaction}/backup"
 install -m 0600 -o root -g root "${control_pointer}" "${transaction}/backup/current-host-control.json"
 sync -d "${transaction}/backup" 2>/dev/null || true
 
-python3 -B - "${candidate}" "${transaction}" "${pending_journal}" "${expected_commit}" "${manifest_sha}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" "${previous_evidence_sha}" "${ssh_predecessor}" <<'PY'
+/usr/bin/python3 -I -S -B - "${candidate}" "${transaction}" "${pending_journal}" "${expected_commit}" "${manifest_sha}" "${certificate_installed}" "${timer_enabled}" "${timer_active}" "${previous_evidence_sha}" "${ssh_predecessor}" <<'PY'
 import hashlib
 import json
 import os
