@@ -23,9 +23,9 @@ readonly deployment_transaction="/var/lib/mochirii/forums/deployment-transaction
 readonly deployment_terminal="/var/lib/mochirii/forums/current-deployment.json"
 readonly launcher_timeout_seconds=7200
 readonly launcher_cumulative_budget_seconds=7800
-readonly repository_validator_sha256="5a21f33fd613fe4c8733deec55277943b03cf33e9d89c51339fd976409854f5f"
-readonly repository_contract_tests_sha256="5ded66a3b6325c30c2fea03a9755e2d8987cec89c2c1a62000acc13a444effd0"
-readonly repository_python_acceptance_root_sha256="243df14f0bbd001706a5de14bab276ae3142437951ad812eaca29e8f58ba381b"
+readonly repository_validator_sha256="8ec2a8224fa75b911600da94185bf3c62d3be9a23d7936be3e8a5b3957a6550e"
+readonly repository_contract_tests_sha256="cd4e3f9c43b4185e7dd7ca6580fa8121361b90094e28c982e33a1b6fa86df601"
+readonly repository_python_acceptance_root_sha256="667dce79c33d1822234ef0c33916d3c657828e31508b7dd5ec857a30ec93c211"
 readonly operation_started_epoch="$(date +%s)"
 
 fail() {
@@ -37,12 +37,12 @@ fail() {
 [[ $# -eq 5 || $# -eq 7 ]] || fail "Usage: host-deploy.sh ARCHIVE COMMIT SHA256 SIZE bootstrap|rebuild"
 
 lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py
-if python3 -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
 fi
 
 archive="$1"
@@ -2492,8 +2492,8 @@ export PYTHONDONTWRITEBYTECODE=1
 [[ "$(sha256sum -- "${candidate}/scripts/test-contracts.py" | awk '{print $1}')" == "${repository_contract_tests_sha256}" ]] || fail "Trusted hostile-fixture source differs."
 observed_python_acceptance_root_sha256="$(printf 'mochirii-forums-python-acceptance-root-v1\0%s\0%s\n' "${repository_validator_sha256}" "${repository_contract_tests_sha256}" | sha256sum | awk '{print $1}')"
 [[ "${observed_python_acceptance_root_sha256}" == "${repository_python_acceptance_root_sha256}" ]] || fail "Trusted Python acceptance root differs."
-python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"
-python3 -I -S -B "${candidate}/scripts/test-contracts.py"
+/usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"
+/usr/bin/python3 -I -S -B "${candidate}/scripts/test-contracts.py"
 python3 "${candidate}/scripts/verify-pinned-source.py" --online
 if [[ -n "$(find "${candidate}" \( \( -type d -name __pycache__ \) -o \( -type f \( -name '*.pyc' -o -name '*.pyo' \) \) \) -print -quit)" ]]; then
   fail "Generated Python cache entered the immutable release."

@@ -466,12 +466,12 @@ phase="$1"; shift
 script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "${script_root}/.." && pwd)"
 lock_helper="${repository_root}/scripts/host-operation-lock.py"
-if python3 -B "${lock_helper}" assert-held --locks primary,media 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks primary,media 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks primary,media -- /bin/bash "$0" "${phase}" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks primary,media -- /bin/bash "$0" "${phase}" "$@"
 fi
 [[ ! -e ${state_root}/deployment-mutation.json && ! -L ${state_root}/deployment-mutation.json ]] || fail "Host-control installation refuses an active deployment mutation."
 

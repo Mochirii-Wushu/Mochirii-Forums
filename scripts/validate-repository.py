@@ -551,7 +551,7 @@ NARRATIVE_AVATAR_FIXTURE_SHA256 = "4c3d3945c022ee9c344787f3331367b85bd5602dc0714
 NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-narrative-avatar.rb >/dev/null
 '''
-NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "ca9dd9dc65530f75fb8fd301100522b843a33a9b9ae86def99844c155799afe2"
+NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "1869a2fc47c6a49a81dab9fa57b5a5800280a1a7373d07498fb1d5f4872dd44a"
 BRANDING_EMAIL_RENDERER_SHA256 = "0b504c71c1de2053585a20848e0515d2507d6d0b2a41c24eb99b83204b88c15c"
 PINNED_SOURCE_VERIFIER_SHA256 = "4af86c3f95dc54b1e51790b8c7954c38e7fc0c1ccfc1a4ce607b5b56078927db"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
@@ -1007,11 +1007,30 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
             '"${repository_validator_sha256}" "${repository_contract_tests_sha256}" '
             "| sha256sum | awk '{print $1}')\"",
             '[[ "${observed_python_acceptance_root_sha256}" == "${repository_python_acceptance_root_sha256}" ]] || fail "Trusted Python acceptance root differs."',
-            'python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"',
-            'python3 -I -S -B "${candidate}/scripts/test-contracts.py"',
+            '/usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"',
+            '/usr/bin/python3 -I -S -B "${candidate}/scripts/test-contracts.py"',
+        ),
+        "scripts/quarantine-failed-bootstrap.sh": (
+            '/usr/bin/python3 -I -S -B - "${deployment_journal}"',
+            '/usr/bin/python3 -I -S -B - "${kind}" "${pending_journal}"',
+            '/usr/bin/python3 -I -S -B "${release_helper}" inspect',
+            'if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held',
+            'exec /usr/bin/python3 -I -S -B "${lock_helper}" run',
+            '/usr/bin/python3 -I -S -B - "${pending_journal}" "${deployment_journal}"',
         ),
         "scripts/upgrade-host-control.sh": (
-            'bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"',
+            'bounded 300s /usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py" --archive-root "${candidate}"',
+        ),
+        "scripts/verify-host-security.sh": (
+            "held_installed = read_held_helper(lock_helper_fd, require_root=True)",
+            'compile(held_installed, lock_target, "exec"),',
+            '/usr/bin/python3 -I -S -B - "${pending_upgrade}"',
+            '/usr/bin/python3 -I -S -B - "${access_pointer}"',
+            '/usr/bin/python3 -I -S -B - "${manifest}"',
+            '/usr/bin/python3 -I -S -B "${source_root}/scripts/historical-release-disaster-recovery.py" inspect',
+            '/usr/bin/python3 -I -S -B - "${control_pointer}" "${release_archive_inspection}"',
+            '/usr/bin/python3 -I -S -B - "${ufw_readback}"',
+            '/usr/bin/python3 -I -S -B - "${listeners_readback}"',
         ),
         "scripts/test-contracts.py": (
             "arguments = sys.argv[2:]\nsys.argv = [path, *arguments]",
@@ -1032,6 +1051,13 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
             '                ("--archive-root", str(safe_validator_archive_root))\n'
             '            )',
             "                run_exact_validator(archive_validator, archive_validator.read_bytes())",
+            '                sys.executable,\n'
+            '                "-I",\n'
+            '                "-S",\n'
+            '                "-B",\n'
+            '                "-c",\n'
+            '                "import os\\nos.umask(0o077)\\n" + code,',
+            '[sys.executable, "-I", "-S", "-B", "-c", probe]',
         ),
     }
     for relative, requirements in exact_requirements.items():
@@ -1041,6 +1067,20 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
         for value in requirements:
             if source.count(value) != 1:
                 fail("Trusted Python caller inventory or isolated startup flags differ.")
+    isolated_counts = {
+        "scripts/quarantine-failed-bootstrap.sh": 6,
+        "scripts/upgrade-host-control.sh": 16,
+        "scripts/verify-host-security.sh": 7,
+    }
+    for relative, expected_count in isolated_counts.items():
+        source = text_files.get(relative)
+        if (
+            not isinstance(source, str)
+            or source.count("/usr/bin/python3 -I -S -B") != expected_count
+            or "python3 -B" in source
+            or "python3 -I -B" in source
+        ):
+            fail("Trusted Python no-site isolation inventory differs.")
 
     workflow = text_files.get(".github/workflows/validate-repository.yml")
     root_contract = f'''      - name: Run required root Linux quarantine transaction contract
@@ -1071,10 +1111,53 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "5ded66a3b6325c30c2fea03a9755e2d8987cec89c2c1a62000acc13a444effd0"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "c885c0b5845adafe82f90b05eaadf2af1ac88db9cc71be01660553da0063d09a"
+CONTRACT_TEST_SOURCE_SHA256 = "cd4e3f9c43b4185e7dd7ca6580fa8121361b90094e28c982e33a1b6fa86df601"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "7ff2460dd923b1769f1322bd1751589de363f0f0a6eddd468b4d6a6a3c136eeb"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-FAILED_BOOTSTRAP_TEST_SHA256 = "76b4fbfc22f283d262ac63ae00888e206d53f373a9cadfc5af5e36f561033fae"
+CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "5fad18ecfaa1a9de37580e216032b65ef8f59b5cba94f6aa57118a0a401dc133"
+FAILED_BOOTSTRAP_TEST_SHA256 = "5764af97fcf7a75944f23322d843d182f7724b9b5d65460b723b2a7e718e5687"
+
+HOST_OPERATION_LOCK_SOURCE_SHA256 = {
+    "scripts/host-operation-lock.py": "120b12e7f963b59423c55e64610ac83ea2c51edd8def3dd944db8197dff0b364",
+    "scripts/test-host-operation-lock.py": "059503015373ecde6c048775af4306c15267992cfd060c4f499da5a5414f600b",
+    "scripts/verify-host-security.sh": "0ee38b1d22f236a7234133a08d7ee79e30b7f5b757bb6881315ae10293e0bfce",
+    "scripts/media-certificate-operation.sh": "d58d56bfbc9cc82e7144081b1e14b38c2ea043d54bfa0473059fcc7accbd29e1",
+    "scripts/finalize-member-rollout.sh": "a4ffdbe2759a44c749ec85244a15a92cbf3791c6efa61bc44c598ac87fb4b573",
+    "scripts/host-backup.sh": "b49803dac6e6c30c5f8042cb23961184d958ed7be74109736c62dc93e14bbeb3",
+    "scripts/host-break-glass-admin.sh": "6f0dbfce7194307e608f3d82874f90934c081c0dc53503588fab3dc62cb5907b",
+    "scripts/host-deploy.sh": "afc8c77f7c2e964511b83e4625cd1720dfc11f8f25a9118214863dcac3850377",
+    "scripts/host-finalize-authentication.sh": "cc58b669efd485b1bbe892a26cb1b8d3018876585ece59c47903b21638f160da",
+    "scripts/host-restore-validate.sh": "c31a22a2fb1021d04c7a003cea633d24fee2c84c29517eac6fd31d1c470e108a",
+    "scripts/host-stop-pending-activation.sh": "165d40c8370f8b933397ca35274ac9934aa8748d7b6e96bb3039747e242572cb",
+    "scripts/host-verify-wrapper.sh": "100e380dc49b3a88b232513f4dcde258d85b7ec1ae931a547d24d1eaae1e78a9",
+    "scripts/prepare-media-certificate.sh": "e1a3d69f6aa4a2a7d92bd6663270a7c00694cc5a735f4a21dec2e62c9b9777e2",
+    "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
+    "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
+    "scripts/install-media-certificate-renewal.sh": "3809145fb4d8591e79cfefec92ebad7b36d8f772a280650221cb589d07d9994b",
+    "scripts/quarantine-failed-bootstrap.sh": "3cdc33b1dbb65ec7bf70efd17ce9f66d8d09f7b537fda211d12fe5f75babc761",
+    "scripts/upgrade-host-control.sh": "eedade4901383325630654e3f9eb2e9b6a151fadc2a5d86877b615f41a092e97",
+}
+HOST_DEPLOY_ACCEPTANCE_SEALS = (
+    "repository_validator_sha256",
+    "repository_contract_tests_sha256",
+    "repository_python_acceptance_root_sha256",
+)
+
+
+def normalized_host_operation_lock_source(relative: str, source: str) -> str:
+    if relative != "scripts/host-deploy.sh":
+        return source
+    normalized = source
+    for seal_name in HOST_DEPLOY_ACCEPTANCE_SEALS:
+        normalized, replacements = re.subn(
+            rf'(?m)^(readonly {seal_name}=")[0-9a-f]{{64}}("$)',
+            rf'\g<1>0000000000000000000000000000000000000000000000000000000000000000\g<2>',
+            normalized,
+        )
+        if replacements != 1:
+            raise RuntimeError("Host-deploy acceptance seal normalization differs.")
+    return normalized
+
 
 
 def validate_validator_cli_acceptance_chain(source: str) -> None:
@@ -1181,6 +1264,7 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
         "CONTRACT_TEST_SOURCE_SHA256",
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256",
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256",
+        "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256",
         "FAILED_BOOTSTRAP_TEST_SHA256",
     }
     observed_protected_seals: set[str] = set()
@@ -1394,6 +1478,27 @@ def validate_contract_test_acceptance_chain(source: str) -> None:
         != CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256
     ):
         fail("Hostile fixture independent verifier source seal differs.")
+    independent_structural_verifier = independent_structural_verifiers[0]
+    independent_structural_verifier_source = "".join(
+        source_lines[
+            independent_structural_verifier.lineno
+            - 1 : independent_structural_verifier.end_lineno
+        ]
+    )
+    normalized_structural_verifier, replacements = re.subn(
+        r'("CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": \(\n\s*")[0-9a-f]{64}("\n\s*\),)',
+        r"\g<1>0000000000000000000000000000000000000000000000000000000000000000\g<2>",
+        independent_structural_verifier_source,
+        count=1,
+    )
+    if (
+        replacements != 1
+        or hashlib.sha256(
+            normalized_structural_verifier.encode("utf-8")
+        ).hexdigest()
+        != CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256
+    ):
+        fail("Hostile fixture independent structural verifier source seal differs.")
     failed_bootstrap_source = "".join(
         source_lines[failed_bootstrap.lineno - 1 : failed_bootstrap.end_lineno]
     )
@@ -1419,7 +1524,7 @@ def validate_contract_test_acceptance_chain(source: str) -> None:
     )
     if (
         hashlib.sha256(module_startup_source.encode("utf-8")).hexdigest()
-        != "1e27fb4b9835a84d26f8898b0f0763138424aaccf4264f84579cfee2e3eef662"
+        != "75af1b19f5fde047f71d7dccdb2e3a3ce24720b74963e8c8513bb5d8d5bda169"
     ):
         fail("Hostile fixture module-startup source seal differs.")
     if any(
@@ -6604,7 +6709,7 @@ def validate_secrets_and_workflows() -> None:
     if len(restore_launcher_fixture.findall(disposable)) != 1:
         fail("Restore launcher hostile fixture escaped the pinned root container.")
     host_lock_fixture = re.compile(
-        r'docker run "\$\{ruby_fixture_container\[@\]\}" -v "\$GITHUB_WORKSPACE:/repo:ro" "\$image" \\\n\s+python3 -B /repo/scripts/test-host-operation-lock[.]py >/dev/null'
+        r'if ! host_lock_fixture_output="\$\(docker run "\$\{ruby_fixture_container\[@\]\}" --tmpfs /run/lock:rw,nosuid,nodev,size=1m,mode=1777,uid=0,gid=0 -v "\$GITHUB_WORKSPACE:/repo:ro" "\$image" \\\n\s+/usr/bin/python3 -I -S -B /repo/scripts/test-host-operation-lock[.]py\)"; then\n\s+exit 1\n\s+fi\n\s+test "\$\{host_lock_fixture_output\}" = "Host operation lock hostile fixture passed[.]"\n'
     )
     if len(host_lock_fixture.findall(disposable)) != 1:
         fail("Host operation lock hostile fixture escaped the pinned root container.")
@@ -6774,7 +6879,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     ):
         fail("Deployment recovery claims or relies on an unproved launcher stop.")
     trust_cmp = host_deploy.index('cmp -s -- "${trusted_archive}" "${quarantine}"')
-    candidate_validation = host_deploy.index('python3 -I -S -B "${candidate}/scripts/validate-repository.py"')
+    candidate_validation = host_deploy.index('/usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py"')
     if trust_cmp >= candidate_validation:
         fail("Candidate-controlled source can execute before canonical-main byte comparison.")
     launcher_body = re.search(r"(?ms)^run_launcher\(\) \{.*?^\}", host_deploy)
@@ -7675,11 +7780,18 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     control_evidence = read("scripts/host-control-evidence.py")
     operation_lock = read("scripts/host-operation-lock.py")
     operation_lock_fixture = read("scripts/test-host-operation-lock.py")
+    media_certificate_common = read("scripts/media-certificate-operation.sh")
+    sealed_lock_sources = {
+        "scripts/host-operation-lock.py": operation_lock,
+        "scripts/test-host-operation-lock.py": operation_lock_fixture,
+        "scripts/verify-host-security.sh": host_security,
+        "scripts/media-certificate-operation.sh": media_certificate_common,
+    }
     if (
         hashlib.sha256(failed_bootstrap_quarantine.encode("utf-8")).hexdigest()
-        != "ef45fe4268304a4121b56d74ba84da6a2c961343655d147639efa9116d5617a7"
+        != "3cdc33b1dbb65ec7bf70efd17ce9f66d8d09f7b537fda211d12fe5f75babc761"
         or hashlib.sha256(control_upgrade.encode("utf-8")).hexdigest()
-        != "31feef91fa360393c9adcc658ad9243a5d08ecf9706a5e16e33dd95a0e2f5247"
+        != "eedade4901383325630654e3f9eb2e9b6a151fadc2a5d86877b615f41a092e97"
     ):
         fail("Failed-bootstrap production control source seal differs.")
     if operator_sudoers.splitlines() != [
@@ -7697,6 +7809,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             '"primary": 200',
             '"media": 201',
             'CONTEXT_ENV = "MOCHIRII_FORUMS_HOST_LOCK_FDS"',
+            '"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
+            'PRESERVED_CHILD_ENVIRONMENT = ("SUDO_USER", "SSH_CONNECTION")',
+            'MAX_PRESERVED_ENVIRONMENT_LENGTH = 512',
             'os.O_DIRECTORY',
             'os.O_NOFOLLOW',
             'os.O_CLOEXEC',
@@ -7711,6 +7826,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'fcntl.LOCK_EX | fcntl.LOCK_NB',
             'os.set_inheritable(LOCK_FDS[lock_id], True)',
             'if not command or not os.path.isabs(command[0]):',
+            'source_environment = os.environ if environment is None else environment',
+            'raise LockBoundaryError("Preserved host operation environment is malformed.")',
+            'def _require_reserved_lock_fds_available() -> None:',
+            'if error.errno == errno.EBADF:',
+            'raise LockBoundaryError("Reserved host lock descriptor is occupied.")',
             'os.execve(command[0], list(command), child_environment)',
             'def verify_namespace(',
             'if isinstance(cause, OSError) and cause.errno == errno.ENOENT:',
@@ -7741,6 +7861,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'Contending media acquisition was not blocked:',
             'Primary FD collision clobbered its caller-owned descriptor.',
             'Media FD collision clobbered its caller-owned descriptor.',
+            'Cross-lane FD collision clobbered its caller-owned descriptor.',
+            'Rejected cross-lane acquisition retained another reserved FD.',
+            'occupied nonrequested {occupied} descriptor',
             'Parent SIGKILL released a descendant-owned lock.',
             'Retry remained blocked after the last inherited FD closed.',
             'Primary-only clean reboot unexpectedly created the media lock.',
@@ -7749,11 +7872,27 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'nonregular existing media',
             'unsafe existing media mode',
             'unsafe existing media owner',
+            'Production host-lock CLI preserved an ambient environment value.',
+            'Production host-lock CLI executed an ambient startup hook.',
+            '/run/lock:rw,nosuid,nodev,size=1m,mode=1777,uid=0,gid=0',
         ],
         "host-operation lock hostile fixture",
     )
     if '"--network",\n        "none"' not in operation_lock_fixture or '"--read-only"' not in operation_lock_fixture:
         fail("Host-operation lock hostile wrapper differs from the pinned isolated Linux boundary.")
+    exact_fixture_call = (
+        'if ! host_lock_fixture_output="$(docker run "${ruby_fixture_container[@]}" --tmpfs '
+        '/run/lock:rw,nosuid,nodev,size=1m,mode=1777,uid=0,gid=0 '
+        '-v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\\n'
+        '            /usr/bin/python3 -I -S -B '
+        '/repo/scripts/test-host-operation-lock.py)"; then\n'
+        '            exit 1\n'
+        '          fi\n'
+        '          test "${host_lock_fixture_output}" = '
+        '"Host operation lock hostile fixture passed."\n'
+    )
+    if disposable.count(exact_fixture_call) != 1:
+        fail("Host-operation lock hostile fixture success output is not exact.")
 
     lock_consumers = {
         "primary": (
@@ -7778,23 +7917,159 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ),
     }
     lock_sources: dict[str, str] = {}
+    relative_lock_helper_assignments = {
+        "scripts/prepare-media-certificate.sh": 'lock_helper="${script_root}/host-operation-lock.py"',
+        "scripts/install-host-control.sh": 'lock_helper="${repository_root}/scripts/host-operation-lock.py"',
+        "scripts/install-media-certificate-renewal.sh": 'lock_helper="${script_root}/host-operation-lock.py"',
+    }
+    lock_wrapper_anchors = {
+        "scripts/finalize-member-rollout.sh": ('[[ ${confirmation} == "FINALIZE MOCHIRII FORUMS MEMBER ROLLOUT" ]] || fail "Exact member-rollout confirmation is required."', 1),
+        "scripts/host-backup.sh": ('[[ ${backup_operation_sha} =~ ^[0-9a-f]{64}$ ]] || fail "Backup operation digest is malformed."', 0),
+        "scripts/host-break-glass-admin.sh": ('[[ -t 0 && -t 1 && -t 2 ]] || fail "Administrator recovery requires an interactive operator console."', 1),
+        "scripts/host-deploy.sh": ('[[ $# -eq 5 || $# -eq 7 ]] || fail "Usage: host-deploy.sh ARCHIVE COMMIT SHA256 SIZE bootstrap|rebuild"', 1),
+        "scripts/host-finalize-authentication.sh": ('[[ ${confirmation} == "FINALIZE MOCHIRII FORUMS AUTHENTICATION" ]] || fail "Exact authentication finalization confirmation is required."', 1),
+        "scripts/host-restore-validate.sh": ("esac", 1),
+        "scripts/host-stop-pending-activation.sh": ('[[ ${confirmation} == "STOP MOCHIRII FORUMS PENDING ACTIVATION" ]] || fail "Exact pending activation stop confirmation is required."', 1),
+        "scripts/host-verify-wrapper.sh": ('commit="$1"', 0),
+        "scripts/prepare-media-certificate.sh": ('[[ -f ${common} && ! -L ${common} && -f ${acme_helper} && ! -L ${acme_helper} ]] || fail "Certificate operation helpers are absent."', 0),
+        "scripts/run-media-certificate-renewal.sh": ('[[ -f ${common} && ! -L ${common} && -f ${acme_helper} && ! -L ${acme_helper} ]] || fail "Installed media certificate operation helpers are absent."', 0),
+        "scripts/install-host-control.sh": ('repository_root="$(cd "${script_root}/.." && pwd)"', 0),
+        "scripts/install-media-certificate-renewal.sh": ('[[ -f ${common} && ! -L ${common} && -f ${acme_helper} && ! -L ${acme_helper} ]] || fail "Certificate operation helpers are absent."', 0),
+        "scripts/quarantine-failed-bootstrap.sh": ('[[ ${SUDO_USER:-} == mochirii-forums-operator && -n ${SSH_CONNECTION:-} ]] || fail "Failed-bootstrap quarantine requires the separately authenticated operator SSH session."', 1),
+        "scripts/upgrade-host-control.sh": ('[[ ${SUDO_USER:-} == mochirii-forums-operator && -n ${SSH_CONNECTION:-} ]] || fail "Host-control upgrade requires the separately authenticated operator SSH session."', 1),
+    }
+    lock_wrapper_prefix_sha256 = {
+        "scripts/finalize-member-rollout.sh": "ddc13528e6942b0717e09f790dfa6a161e1749c9a1057c6c06488ea9ae6e5a32",
+        "scripts/host-backup.sh": "7c8c23ca4213480be187c678ebfc3ccf15aa055e9cc76871b11884df7875eb36",
+        "scripts/host-break-glass-admin.sh": "546dc26353a6bc17dcb862c0161252b2e2068dc86cc68f0fa2af4c8f7df0de8a",
+        "scripts/host-deploy.sh": "314cb5665cdc9dbc4621487e843ddf5e90c0beb62cbba111c8917e8103a13d6c",
+        "scripts/host-finalize-authentication.sh": "721e2307e6f9e0c221781ab725aee29248670ba1398beaf0754fd057cc697c76",
+        "scripts/host-restore-validate.sh": "4d3e5c2a11ae03bd2aef7f3805959fc4a1d9d0ebea5a894e0be96bf9e1a8603f",
+        "scripts/host-stop-pending-activation.sh": "bdd313a57a694d15f5ca5b2accd5628724b52709ccbd3f959908c183f2b410ae",
+        "scripts/host-verify-wrapper.sh": "52aa4843660d4fc2607986acf4fd08e4c6ff09364f0340624ec963d93cf14adc",
+        "scripts/prepare-media-certificate.sh": "c1201a54cca70c442fdee8bba9bde38e2c6c6e82e2401fdd6721daeb94fd1001",
+        "scripts/run-media-certificate-renewal.sh": "66b78f777483ebf3d679a5c73b241c1f476756af85af32320feda90a34baa2f1",
+        "scripts/install-host-control.sh": "59ffa6abd659145f051c58e8130c89ec4349ac43b5dd5ede22fc4bb2ed714c28",
+        "scripts/install-media-certificate-renewal.sh": "cd98f7f929522d94031c3d5e5ed8fdfd6cac7ffb907d6a006fb079db3acffe94",
+        "scripts/quarantine-failed-bootstrap.sh": "2fb8b882747cd8001ed3203b3a9b61f44df5edf11709ea64dca0739453741fe0",
+        "scripts/upgrade-host-control.sh": "d00298b283bf7dfa44b8b1dbfbef06c6bda3333f2ac21329b40a073235368459",
+    }
+    post_lock_operation_anchors = {
+        "scripts/prepare-media-certificate.sh": '[[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate preparation refuses an active deployment mutation."',
+        "scripts/run-media-certificate-renewal.sh": '[[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate renewal refuses an active deployment mutation."',
+        "scripts/install-media-certificate-renewal.sh": '[[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate installation refuses an active deployment mutation."',
+    }
     for lock_set, paths in lock_consumers.items():
         for relative in paths:
             source = read(relative)
             lock_sources[relative] = source
-            require_text(
-                source,
-                [
-                    f"assert-held --locks {lock_set}",
-                    f"run --locks {lock_set}",
-                    '[[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."',
-                ],
-                f"{relative} host-operation lock wrapper",
+            sealed_lock_sources[relative] = source
+            assignment = relative_lock_helper_assignments.get(
+                relative,
+                "lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py",
             )
+            assert_line = (
+                f'if /usr/bin/python3 -I -S -B "${{lock_helper}}" assert-held --locks {lock_set} 2>/dev/null; then'
+            )
+            run_arguments = '"${phase}" "$@"' if relative == "scripts/install-host-control.sh" else '"$@"'
+            run_line = (
+                f'  exec /usr/bin/python3 -I -S -B "${{lock_helper}}" run --locks {lock_set} -- /bin/bash "$0" {run_arguments}'
+            )
+            wrapper = "\n".join(
+                (
+                    assignment,
+                    assert_line,
+                    "  :",
+                    "else",
+                    "  lock_status=$?",
+                    '  [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."',
+                    run_line,
+                    "fi",
+                )
+            )
+            exact_inventory = (
+                assignment,
+                assert_line,
+                "  lock_status=$?",
+                '  [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."',
+                run_line,
+            )
+            anchor, blank_lines = lock_wrapper_anchors[relative]
+            anchored_wrapper = anchor + "\n" * (blank_lines + 1) + wrapper
+            wrapper_end = source.index(anchored_wrapper) + len(anchored_wrapper) if source.count(anchored_wrapper) == 1 else -1
+            wrapper_prefix = source[:wrapper_end]
+            if relative == "scripts/host-deploy.sh":
+                for seal_name in (
+                    "repository_validator_sha256",
+                    "repository_contract_tests_sha256",
+                    "repository_python_acceptance_root_sha256",
+                ):
+                    wrapper_prefix, replacements = re.subn(
+                        rf'(?m)^(readonly {seal_name}=")[0-9a-f]{{64}}("$)',
+                        rf'\g<1>{"0" * 64}\g<2>',
+                        wrapper_prefix,
+                    )
+                    if replacements != 1:
+                        fail("Host-deploy acceptance seal normalization differs.")
+            if (
+                wrapper_end < 0
+                or hashlib.sha256(wrapper_prefix.encode("utf-8")).hexdigest()
+                != lock_wrapper_prefix_sha256[relative]
+                or any(source.count(value) != 1 for value in exact_inventory)
+            ):
+                fail(f"{relative} host-operation lock wrapper differs.")
+            if relative in post_lock_operation_anchors:
+                post_lock_prefix = (
+                    '\n# shellcheck source=media-certificate-operation.sh\n'
+                    'source "${common}"\n'
+                    + post_lock_operation_anchors[relative]
+                )
+                if not source.startswith(post_lock_prefix, wrapper_end):
+                    fail(f"{relative} executes media certificate operations outside the inherited lock.")
             if "--locks media,primary" in source:
                 fail(f"{relative} can acquire the media lock before the primary lock.")
     if len(lock_sources) != 14:
         fail("The complete primary/media lock-consumer inventory differs.")
+    if len(sealed_lock_sources) != 18 or set(sealed_lock_sources) != set(HOST_OPERATION_LOCK_SOURCE_SHA256):
+        fail("Host-operation lock complete source inventory differs.")
+    for relative, source in sealed_lock_sources.items():
+        observed = hashlib.sha256(
+            normalized_host_operation_lock_source(relative, source).encode("utf-8")
+        ).hexdigest()
+        if observed != HOST_OPERATION_LOCK_SOURCE_SHA256[relative]:
+            fail(f"{relative} complete source seal differs.")
+    direct_namespace = (
+        '/usr/bin/python3 -I -S -B "${lock_helper}" verify-namespace --locks primary,media'
+    )
+    if direct_namespace in host_security:
+        fail("Hosted host-security verification reopens the installed lock helper.")
+    helper_binding_order = (
+        'exec {lock_helper_fd}<"${lock_helper}" || fail "Installed host operation lock helper could not be held."',
+        'exec {lock_source_fd}<"${source_root}/scripts/host-operation-lock.py" || fail "Trusted host operation lock helper could not be held."',
+        '"${expected_commit}" "${lock_helper_fd}" "${lock_source_fd}" <<\'PY\' >/dev/null',
+        'lock_target = "/usr/local/libexec/mochirii-forums/host-operation-lock.py"',
+        'held_installed = read_held_helper(lock_helper_fd, require_root=True)',
+        'held_source = read_held_helper(lock_source_fd, require_root=False)',
+        'held_installed != held_source',
+        'evidence_targets.get(lock_target)',
+        'compile(held_installed, lock_target, "exec")',
+        'exec {lock_source_fd}<&-',
+        'exec {lock_helper_fd}<&-',
+    )
+    if any(host_security.count(value) != 1 for value in helper_binding_order):
+        fail("Host-security held-helper binding inventory differs.")
+    helper_binding_positions = [host_security.index(value) for value in helper_binding_order]
+    if helper_binding_positions != sorted(helper_binding_positions):
+        fail("Host-security executes or closes the held helper out of order.")
+    required_binding_fragments = (
+        "metadata = os.fstat(descriptor)",
+        "metadata.st_nlink != 1",
+        "not 1 <= metadata.st_size <= MAX_HELPER_BYTES",
+        "raw = os.pread(descriptor, metadata.st_size + 1, 0)",
+        'sys.argv = [lock_target, "verify-namespace", "--locks", "primary,media"]',
+    )
+    if any(host_security.count(value) != 1 for value in required_binding_fragments):
+        fail("Host-security held-helper metadata or execution binding differs.")
     retired_lock_paths = (
         "/run/lock/mochirii-forums.lock",
         "/run/lock/mochirii-forums-media-certificate.lock",
@@ -7837,7 +8112,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     require_text(
         host_security,
         [
-            'verify-namespace --locks primary,media',
+            'sys.argv = [lock_target, "verify-namespace", "--locks", "primary,media"]',
             'sudo -l -U mochirii-forums-deploy /usr/local/libexec/mochirii-forums/host-operation-lock.py',
         ],
         "host-security lock-node and deploy-authority proof",
@@ -8287,6 +8562,38 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'bash "${candidate_source}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --upgrade-socket-activation-recovery',
             'bash "${candidate}/scripts/verify-host-security.sh" "${previous_commit}" "${previous_source}" --socket-activation-recovery',
             'readonly host_control_releases_root="/opt/mochirii/forums/host-control-releases"',
+            'safe_source_repository_directory_identity() {',
+            'safe_source_repository_regular_file_identity() {',
+            'validated_source_repository_config_identity() {',
+            'validated_source_repository_boundary_identity() {',
+            'source_repository_git() {',
+            'validate_source_repository_operation_state() {',
+            'validate_source_repository_clean_state() {',
+            'GIT_ATTR_NOSYSTEM=1',
+            'GIT_OPTIONAL_LOCKS=0',
+            '-c core.untrackedCache=false',
+            'ls-files --resolve-undo',
+            'gc.pid refs/bisect refs/rewritten worktrees',
+            r"\( -type l -o -name '*.lock' \) -print -quit",
+            '[[ ${child_device} == "${git_device}" ]] || return 1',
+            'diff-index --cached --quiet --no-ext-diff HEAD --',
+            'hash-object --no-filters --',
+            'read_canonical_remote_main() {',
+            'local config="$1" descriptor="$2"',
+            '[[ ${keys_text} == *$\'\\n\' ]] || return 1',
+            '[[ ${repository} == /root/Mochirii-Forums ]] || return 1',
+            '--git-dir="/proc/self/fd/${git_directory_fd}"',
+            '-c core.commitGraph=false "$@"',
+            '--ignored=matching',
+            'rev-parse --shared-index-path',
+            'ls-files "${flag_option}" --stage',
+            '--file "${config}" --no-includes --name-only --list',
+            'remote.upstream.pushurl) expected=disabled://upstream-push',
+            'pull.ff) expected=only',
+            '--git-dir=/dev/null --work-tree=/dev/null',
+            '/usr/bin/timeout --signal=TERM --kill-after=5s 120s',
+            'GIT_CEILING_DIRECTORIES=/',
+            '-c protocol.allow=never -c protocol.https.allow=always',
             'bind_previous_source() {',
             'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
             'document.get("releaseArchiveFile") != str(archive)',
@@ -8303,6 +8610,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readarray -t previous_state <<<"${previous_state_output}"',
             'previous_source="${transaction}/previous-source/${previous_commit}"',
             'bind_invoked_canonical_successor() {',
+            'repository_config_identity="$(validated_source_repository_boundary_identity "${invocation_source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" || return 1',
+            'remote_output="$(read_canonical_remote_main)" || return 1',
+            '[[ "$(validated_source_repository_boundary_identity "${invocation_source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" == "${repository_config_identity}" ]] || return 1',
             '[[ -f $0 && ! -L $0 ]]',
             'invocation_source_root="$(dirname -- "$(dirname -- "${invocation_script}")")"',
             'rev-parse --verify "${requested_commit}^1"',
@@ -8341,6 +8651,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
             'readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"',
             'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
+            'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
+            'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
             'rev-parse --verify "${requested_commit}^1"',
             'rev-list --parents -n 1 "${requested_commit}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8358,12 +8670,16 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_stage_repair_expected_paths=(',
             'acme_stage_current_expected_paths=(',
             'acme_stage_expected_paths=(',
+            'acme_transport_repair_expected_paths=(',
+            'acme_transport_current_expected_paths=(',
+            'acme_transport_expected_paths=(',
             'diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}"',
             'GIT_NO_REPLACE_OBJECTS=1',
-            '${invocation_source_root}/.git/commondir',
-            '${invocation_source_root}/.git/info/grafts',
-            'actual_path_output="$(git -C "${invocation_source_root}" diff-tree',
-            '[[ -f ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -L ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh && ! -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh ]]',
+            'local config_descriptor="/proc/self/fd/${config_fd}"',
+            '"${info_descriptor}/grafts"',
+            '"${objects_info_descriptor}/alternates"',
+            'actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree',
+            'quarantine_path="${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh"',
             'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
             'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
             "deployment_recovery_upgrade=false",
@@ -8378,6 +8694,39 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         [
             'readonly pending_journal="${state_root}/failed-bootstrap-quarantine.pending.json"',
             'readonly recovery_root="${shared_root}/.mochirii-forums-failed-bootstrap"',
+            'safe_source_repository_directory_identity() {',
+            'safe_source_repository_regular_file_identity() {',
+            'validated_source_repository_config_identity() {',
+            'validated_source_repository_boundary_identity() {',
+            'source_repository_git() {',
+            'validate_source_repository_operation_state() {',
+            'validate_source_repository_clean_state() {',
+            'validate_bound_source_repository_file() {',
+            'GIT_ATTR_NOSYSTEM=1',
+            'GIT_OPTIONAL_LOCKS=0',
+            '-c core.untrackedCache=false',
+            'ls-files --resolve-undo',
+            'gc.pid refs/bisect refs/rewritten worktrees',
+            r"\( -type l -o -name '*.lock' \) -print -quit",
+            '[[ ${child_device} == "${git_device}" ]] || return 1',
+            'diff-index --cached --quiet --no-ext-diff HEAD --',
+            'hash-object --no-filters --',
+            'read_canonical_remote_main() {',
+            'local config="$1" descriptor="$2"',
+            '[[ ${keys_text} == *$\'\\n\' ]] || return 1',
+            '[[ ${repository} == /root/Mochirii-Forums ]] || return 1',
+            '--git-dir="/proc/self/fd/${git_directory_fd}"',
+            '-c core.commitGraph=false "$@"',
+            '--ignored=matching',
+            'rev-parse --shared-index-path',
+            'ls-files "${flag_option}" --stage',
+            '--file "${config}" --no-includes --name-only --list',
+            'remote.upstream.pushurl) expected=disabled://upstream-push',
+            'pull.ff) expected=only',
+            '--git-dir=/dev/null --work-tree=/dev/null',
+            '/usr/bin/timeout --signal=TERM --kill-after=5s 120s',
+            'GIT_CEILING_DIRECTORIES=/',
+            '-c protocol.allow=never -c protocol.https.allow=always',
             'readonly reviewed_legacy_failed_bootstrap_commit="b2eb4edb17d72f49b6f979b19d9ee4a39b9ffc6f"',
             'readonly reviewed_failed_bootstrap_recovery_commit="1d741eb75d08a226984935aa18e989ee324a0773"',
             'readonly reviewed_active_swap_failed_bootstrap_commit="26e793aada31faeaa8b56308625288164430647c"',
@@ -8397,6 +8746,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_material_review_authority_commit="af3540426051c94bf26e9661ac68ce8ee720f977"',
             'readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615beb4417074088ed"',
             'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
+            'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
+            'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
             'rev-parse --verify "${current}^1"',
             'rev-list --parents -n 1 "${current}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8408,9 +8759,13 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'rev-parse --verify "${reviewed_recovery_commit}^1"',
             'rev-list --parents -n 1 "${reviewed_recovery_commit}"',
             'GIT_NO_REPLACE_OBJECTS=1',
-            '${source_root}/.git/commondir',
-            '${source_root}/.git/info/grafts',
-            'actual_path_output="$(git -C "${source_root}" diff-tree',
+            'repository_config_identity="$(validated_source_repository_boundary_identity "${source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" || return 1',
+            'remote_output="$(read_canonical_remote_main)" || return 1',
+            '[[ "$(validated_source_repository_boundary_identity "${source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" == "${repository_config_identity}" ]] || return 1',
+            'local config_descriptor="/proc/self/fd/${config_fd}"',
+            '"${info_descriptor}/grafts"',
+            '"${objects_info_descriptor}/alternates"',
+            'actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree',
             'legacy_expected_paths=(',
             ".github/workflows/deploy-forums.yml",
             "config/host-control-manifest.v1.json",
@@ -8434,6 +8789,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_stage_repair_expected_paths=(',
             'acme_stage_current_expected_paths=(',
             'acme_stage_expected_paths=(',
+            'acme_transport_repair_expected_paths=(',
+            'acme_transport_current_expected_paths=(',
+            'acme_transport_expected_paths=(',
             'object_pairs_hook=reject_duplicate',
             'metadata.st_uid != 0',
             'metadata.st_gid != 0',
@@ -8484,7 +8842,10 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             "publish(terminal, terminal_document, True)",
             "pending.unlink()",
             "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
-            'verify-host-security.sh" "${current_commit}"',
+            'exec {source_verifier_fd}<"${source_root}/scripts/verify-host-security.sh"',
+            'validate_bound_source_repository_file "${current_commit}" scripts/verify-host-security.sh "${source_verifier_fd}"',
+            '/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C HOME=/nonexistent \\',
+            '/bin/bash --noprofile --norc "/proc/self/fd/${source_verifier_fd}" "${current_commit}" "${source_root}"',
             "mochirii-forums-media-certificate-renew.timer",
             '[[ ! -e ${deployment_journal} && ! -L ${deployment_journal} ]]',
         ],
@@ -8533,6 +8894,67 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         if block.splitlines().count(line) != 1:
             fail(f"{label} is absent, duplicated, or outside its live section.")
 
+    def exact_bound_verifier_transaction(source_text: str) -> str:
+        begin = "# BEGIN_FAILED_BOOTSTRAP_BOUND_VERIFIER_TRANSACTION"
+        end = "# END_FAILED_BOOTSTRAP_BOUND_VERIFIER_TRANSACTION"
+        if source_text.count(begin) != 1 or source_text.count(end) != 1:
+            fail("Failed-bootstrap bound verifier transaction markers differ.")
+        start = source_text.index(begin) + len(begin)
+        if source_text[start : start + 1] != "\n":
+            fail("Failed-bootstrap bound verifier transaction start differs.")
+        finish = source_text.index(end, start)
+        if source_text[finish - 1 : finish] != "\n":
+            fail("Failed-bootstrap bound verifier transaction end differs.")
+        section = source_text[start + 1 : finish]
+        if not section.startswith("shopt -u varredir_close\n"):
+            fail("Failed-bootstrap bound verifier transaction prefix differs.")
+        return section
+
+    quarantine_directory = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "safe_source_repository_directory_identity",
+        "Failed-bootstrap repository-directory identity",
+    )
+    quarantine_config = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "validated_source_repository_config_identity",
+        "Failed-bootstrap repository-config identity",
+    )
+    quarantine_regular = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "safe_source_repository_regular_file_identity",
+        "Failed-bootstrap repository regular-file identity",
+    )
+    quarantine_boundary = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "validated_source_repository_boundary_identity",
+        "Failed-bootstrap repository-boundary identity",
+    )
+    quarantine_git = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "source_repository_git",
+        "Failed-bootstrap descriptor-bound Git reader",
+    )
+    quarantine_operation = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "validate_source_repository_operation_state",
+        "Failed-bootstrap repository operation-state validator",
+    )
+    quarantine_clean = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "validate_source_repository_clean_state",
+        "Failed-bootstrap repository clean-state validator",
+    )
+    quarantine_bound_file = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "validate_bound_source_repository_file",
+        "Failed-bootstrap reviewed verifier binding",
+    )
+    quarantine_remote = exact_shell_function(
+        failed_bootstrap_quarantine,
+        "read_canonical_remote_main",
+        "Failed-bootstrap canonical-remote reader",
+    )
     quarantine_lineage = exact_shell_function(
         failed_bootstrap_quarantine,
         "validate_source_lineage",
@@ -8571,6 +8993,53 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     ]
     if not quarantine_lineage.startswith("validate_source_lineage() {\n"):
         fail("Failed-bootstrap lineage definition is not the live canonical function.")
+    pre_verifier_execution = '''/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C HOME=/nonexistent \\
+  /bin/bash --noprofile --norc "/proc/self/fd/${source_verifier_fd}" "${current_commit}" "${source_root}" \\
+  >/dev/null 2>&1 || fail "Current host controls failed before failed-bootstrap quarantine."'''
+    post_verifier_execution = '''/usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C HOME=/nonexistent \\
+  /bin/bash --noprofile --norc "/proc/self/fd/${source_verifier_fd}" "${current_commit}" "${source_root}" \\
+  >/dev/null 2>&1 || fail "Current host controls failed after failed-bootstrap quarantine."'''
+    verifier_descriptor = 'exec {source_verifier_fd}<"${source_root}/scripts/verify-host-security.sh" || fail "Current host-control verifier could not be held."'
+    pre_verifier_binding = 'validate_bound_source_repository_file "${current_commit}" scripts/verify-host-security.sh "${source_verifier_fd}" || fail "Current host-control verifier differs before failed-bootstrap quarantine."'
+    transaction_begin = "# BEGIN_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION"
+    transaction_end_marker = "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION"
+    post_verifier_binding = 'validate_bound_source_repository_file "${current_commit}" scripts/verify-host-security.sh "${source_verifier_fd}" || fail "Current host-control verifier differs after failed-bootstrap quarantine."'
+    verifier_close = 'exec {source_verifier_fd}<&-'
+    success_output = "printf '%s\\n' \"Mochirii Forums failed bootstrap was quarantined without deleting retained runtime evidence.\""
+    bound_transaction = exact_bound_verifier_transaction(failed_bootstrap_quarantine)
+    if (
+        bound_transaction.count(transaction_begin) != 1
+        or bound_transaction.count(transaction_end_marker) != 1
+    ):
+        fail("Failed-bootstrap transaction markers differ.")
+    verifier_transaction_offsets = (
+        bound_transaction.index(verifier_descriptor),
+        bound_transaction.index(pre_verifier_binding),
+        bound_transaction.index(pre_verifier_execution),
+        bound_transaction.index(transaction_begin),
+        bound_transaction.index(transaction_end_marker),
+        bound_transaction.index(post_verifier_binding),
+        bound_transaction.index(post_verifier_execution),
+        bound_transaction.index(verifier_close),
+        bound_transaction.index(success_output),
+    )
+    if any(
+        bound_transaction.count(anchor) != 1
+        for anchor in (
+            verifier_descriptor,
+            pre_verifier_binding,
+            pre_verifier_execution,
+            transaction_begin,
+            transaction_end_marker,
+            post_verifier_binding,
+            post_verifier_execution,
+            verifier_close,
+            success_output,
+        )
+    ):
+        fail("Failed-bootstrap bound verifier statement inventory differs.")
+    if verifier_transaction_offsets != tuple(sorted(verifier_transaction_offsets)):
+        fail("Failed-bootstrap transaction can move outside the held-verifier boundary.")
     for block, line, label in (
         (
             quarantine_state,
@@ -8623,6 +9092,62 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         if offsets != tuple(sorted(offsets)):
             fail(f"Failed-bootstrap {label} recovery can mutate before source authority.")
 
+    upgrade_directory = exact_shell_function(
+        control_upgrade,
+        "safe_source_repository_directory_identity",
+        "Host-control repository-directory identity",
+    )
+    upgrade_config = exact_shell_function(
+        control_upgrade,
+        "validated_source_repository_config_identity",
+        "Host-control repository-config identity",
+    )
+    upgrade_regular = exact_shell_function(
+        control_upgrade,
+        "safe_source_repository_regular_file_identity",
+        "Host-control repository regular-file identity",
+    )
+    upgrade_boundary = exact_shell_function(
+        control_upgrade,
+        "validated_source_repository_boundary_identity",
+        "Host-control repository-boundary identity",
+    )
+    upgrade_git = exact_shell_function(
+        control_upgrade,
+        "source_repository_git",
+        "Host-control descriptor-bound Git reader",
+    )
+    upgrade_operation = exact_shell_function(
+        control_upgrade,
+        "validate_source_repository_operation_state",
+        "Host-control repository operation-state validator",
+    )
+    upgrade_clean = exact_shell_function(
+        control_upgrade,
+        "validate_source_repository_clean_state",
+        "Host-control repository clean-state validator",
+    )
+    upgrade_remote = exact_shell_function(
+        control_upgrade,
+        "read_canonical_remote_main",
+        "Host-control canonical-remote reader",
+    )
+    upgrade_preflight = exact_shell_function(
+        control_upgrade,
+        "read_bound_failed_bootstrap_preflight",
+        "Host-control bound failed-bootstrap preflight",
+    )
+    if (
+        quarantine_directory != upgrade_directory
+        or quarantine_regular != upgrade_regular
+        or quarantine_config != upgrade_config
+        or quarantine_boundary != upgrade_boundary
+        or quarantine_git != upgrade_git
+        or quarantine_operation != upgrade_operation
+        or quarantine_clean != upgrade_clean
+        or quarantine_remote != upgrade_remote
+    ):
+        fail("Repository-boundary, Git, config, or canonical-remote trust helpers diverge.")
     upgrade_bind = exact_shell_function(
         control_upgrade,
         "bind_invoked_canonical_successor",
@@ -8657,20 +9182,39 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         control_upgrade.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."'):
     ]
     exact_section_sha256 = {
-        "quarantine-lineage": "6b2f78cf270e725764424ce223ff2cae974075cd83e21dd3c042f0662c4c88ff",
-        "quarantine-state": "c81b2fc822775b576c4f408a5f49e079923774e08569e2c43d42a9ca5db2bcc1",
-        "quarantine-identity": "8ea0576bac3f50f2ea87ff993d9e1f171c23940dba1dd6dd5b6bbe9c23d8e4b3",
+        "repository-directory": "13aee9b27bb13cd991f17d44c4576ffef38e13f7f8b6491d091a0cd810512191",
+        "repository-regular": "2a9101adb223557e8ed4d636e2f757a58444dfe08225f9adfdacbea71ce654f3",
+        "repository-config": "ff7c0c6530903ddfdb8484784a3c9c436676e3999a76bc78e6b29632ed1e6d5c",
+        "repository-boundary": "61d0acf50318675978ed8331b122ebb9731c1abbad98a8bfafc62f4e496dc006",
+        "repository-git": "e35273fb1fd470d780ebbadf720c9b231bd0bf608817430735f2d1d2f1e5ef73",
+        "repository-operation": "551e061d9234fc2edd8c9c368056acc56e888484e432e4842f6f7d38ceea4bac",
+        "repository-clean": "acbcc2f87c61ff09bbb0a1271e3ea1d91519ef66778739b04e6930c4a66156ac",
+        "repository-bound-file": "32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f",
+        "canonical-remote": "2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa",
+        "quarantine-lineage": "7b56ba734402061eff5864228101cd960bf6c9b57d9ddd4bf628543cfd4980ba",
+        "quarantine-state": "384733dad7fbc9bd502059dd1e6d71aaabcc99e3dd74ff4c426a85aefa6d0080",
+        "quarantine-identity": "a400d1c326e60627c30647bdea253193797d5bef71ff1697612c4df4c812e952",
         "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
         "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
-        "upgrade-selector": "6395509185af9cc94f80f6a6e0ee8b3cc8ebb588e75e12373e62552096f78d70",
-        "upgrade-path-validator": "bee4393c9fe4f1c143966daaaf6e2dd3072d93affea5b278bd5334cc556c7b47",
-        "upgrade-binder": "7b9a240168ec90ac2ea3f95e42e29236e9a6396d95d421801912334eef4a983b",
-        "upgrade-exception": "6ea0d4ff36175b26333ce78608d1f12092da953a192170897c33340411f5dbe3",
+        "upgrade-selector": "0e40b1ff2fb132ed69e3eead53e5ae3b3ffeac9dc9727bc689f5ffbb62c92268",
+        "upgrade-path-validator": "6a77840e198f1912b9101c30ffdafedd1381d8e1061d2278fee20737706d676e",
+        "upgrade-binder": "ac956388b10512e7e90dd6b943e25585d80981af7842b08991c2208554bc841e",
+        "upgrade-preflight": "9da1fb4f1b95523e4f5b45d2df7421b8537e05a02284308b6e218ebfd2b6d7b9",
+        "upgrade-exception": "1510782bf3acfcb04b9fbc473d88075e03c0ebc340785b61266bc6b96add9aae",
         "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
         "upgrade-signal": "e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f",
-        "upgrade-main": "ce155567c0b81494cf94f8a9a0b52c981d28b50c30215d460ec93c85cfd2e12a",
+        "upgrade-main": "68322af0fc3c0f70c6c1cf4a815bb3bf2196cc92ff3d0d05d05083aa6e9dd09e",
     }
     exact_sections = {
+        "repository-directory": quarantine_directory,
+        "repository-regular": quarantine_regular,
+        "repository-config": quarantine_config,
+        "repository-boundary": quarantine_boundary,
+        "repository-git": quarantine_git,
+        "repository-operation": quarantine_operation,
+        "repository-clean": quarantine_clean,
+        "repository-bound-file": quarantine_bound_file,
+        "canonical-remote": quarantine_remote,
         "quarantine-lineage": quarantine_lineage,
         "quarantine-state": quarantine_state,
         "quarantine-identity": quarantine_identity,
@@ -8679,6 +9223,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "upgrade-selector": upgrade_selector,
         "upgrade-path-validator": upgrade_path_validator,
         "upgrade-binder": upgrade_bind,
+        "upgrade-preflight": upgrade_preflight,
         "upgrade-exception": upgrade_exception,
         "upgrade-reconcile": upgrade_reconcile,
         "upgrade-signal": upgrade_signal,
@@ -8687,7 +9232,130 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     for label, block in exact_sections.items():
         if hashlib.sha256(block.encode("utf-8")).hexdigest() != exact_section_sha256[label]:
             fail(f"{label} exact live source section differs.")
+    for block, root_name, label in (
+        (quarantine_lineage, "source_root", "Failed-bootstrap source lineage"),
+        (upgrade_bind, "invocation_source_root", "Host-control successor binder"),
+        (
+            upgrade_preflight,
+            "invocation_source_root",
+            "Host-control bound failed-bootstrap preflight",
+        ),
+    ):
+        descriptor_lines = (
+            f'  exec {{config_fd}}<"${{{root_name}}}/.git/config" || return 1',
+            f'  exec {{info_directory_fd}}<"${{{root_name}}}/.git/info" || return 1',
+            f'  exec {{objects_directory_fd}}<"${{{root_name}}}/.git/objects" || return 1',
+            f'  exec {{objects_info_directory_fd}}<"${{{root_name}}}/.git/objects/info" || return 1',
+            f'  exec {{head_fd}}<"${{{root_name}}}/.git/HEAD" || return 1',
+            f'  exec {{refs_directory_fd}}<"${{{root_name}}}/.git/refs" || return 1',
+            f'  exec {{heads_directory_fd}}<"${{{root_name}}}/.git/refs/heads" || return 1',
+            f'  exec {{main_ref_fd}}<"${{{root_name}}}/.git/refs/heads/main" || return 1',
+            f'  exec {{index_fd}}<"${{{root_name}}}/.git/index" || return 1',
+        )
+        for descriptor_line in descriptor_lines:
+            require_exact_live_line(block, descriptor_line, f"{label} held metadata descriptor")
+        for line, suffix in (
+            (
+                f'  exec {{source_directory_fd}}<"${{{root_name}}}" || return 1',
+                "held source-directory descriptor",
+            ),
+            (
+                f'  exec {{git_directory_fd}}<"${{{root_name}}}/.git" || return 1',
+                "held Git-directory descriptor",
+            ),
+            (
+                f'  repository_config_identity="$(validated_source_repository_boundary_identity "${{{root_name}}}" "${{source_directory_fd}}" "${{git_directory_fd}}" "${{config_fd}}" "${{info_directory_fd}}" "${{objects_directory_fd}}" "${{objects_info_directory_fd}}" "${{head_fd}}" "${{refs_directory_fd}}" "${{heads_directory_fd}}" "${{main_ref_fd}}" "${{index_fd}}")" || return 1',
+                "initial repository-boundary identity call",
+            ),
+            (
+                '  remote_output="$(read_canonical_remote_main)" || return 1',
+                "isolated canonical-remote call",
+            ),
+            (
+                f'  [[ "$(validated_source_repository_boundary_identity "${{{root_name}}}" "${{source_directory_fd}}" "${{git_directory_fd}}" "${{config_fd}}" "${{info_directory_fd}}" "${{objects_directory_fd}}" "${{objects_info_directory_fd}}" "${{head_fd}}" "${{refs_directory_fd}}" "${{heads_directory_fd}}" "${{main_ref_fd}}" "${{index_fd}}")" == "${{repository_config_identity}}" ]] || return 1',
+                "final repository-boundary identity call",
+            ),
+        ):
+            require_exact_live_line(block, line, f"{label} {suffix}")
+        operation_line = (
+            '  validate_source_repository_operation_state "${git_directory_fd}" || return 1'
+        )
+        clean_line = (
+            '  validate_source_repository_clean_state "${source_directory_fd}" "${git_directory_fd}" || return 1'
+        )
+        initial_boundary_line = (
+            f'  repository_config_identity="$(validated_source_repository_boundary_identity "${{{root_name}}}" "${{source_directory_fd}}" "${{git_directory_fd}}" "${{config_fd}}" "${{info_directory_fd}}" "${{objects_directory_fd}}" "${{objects_info_directory_fd}}" "${{head_fd}}" "${{refs_directory_fd}}" "${{heads_directory_fd}}" "${{main_ref_fd}}" "${{index_fd}}")" || return 1'
+        )
+        final_boundary_line = (
+            f'  [[ "$(validated_source_repository_boundary_identity "${{{root_name}}}" "${{source_directory_fd}}" "${{git_directory_fd}}" "${{config_fd}}" "${{info_directory_fd}}" "${{objects_directory_fd}}" "${{objects_info_directory_fd}}" "${{head_fd}}" "${{refs_directory_fd}}" "${{heads_directory_fd}}" "${{main_ref_fd}}" "${{index_fd}}")" == "${{repository_config_identity}}" ]] || return 1'
+        )
+        block_lines = block.splitlines()
+        if block_lines.count(operation_line) != 2:
+            fail(f"{label} initial/final operation-state calls differ.")
+        if block_lines.count(clean_line) != 2:
+            fail(f"{label} initial/final clean-state calls differ.")
+        operation_offsets = tuple(
+            index for index, line in enumerate(block_lines) if line == operation_line
+        )
+        clean_offsets = tuple(
+            index for index, line in enumerate(block_lines) if line == clean_line
+        )
+        authority_offsets = (
+            operation_offsets[0],
+            block_lines.index(initial_boundary_line),
+            clean_offsets[0],
+            clean_offsets[1],
+            block_lines.index(final_boundary_line),
+            operation_offsets[1],
+        )
+        if authority_offsets != tuple(sorted(authority_offsets)):
+            fail(f"{label} repository operation/boundary/clean call order differs.")
+    bound_file_lines = quarantine_bound_file.splitlines()
+    bound_file_operation_line = (
+        '  validate_source_repository_operation_state "${git_directory_fd}" || return 1'
+    )
+    bound_file_clean_line = (
+        '  validate_source_repository_clean_state "${source_directory_fd}" "${git_directory_fd}" || return 1'
+    )
+    bound_file_initial_boundary_line = (
+        '  repository_config_identity="$(validated_source_repository_boundary_identity "${source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" || return 1'
+    )
+    bound_file_final_boundary_line = (
+        '  [[ "$(validated_source_repository_boundary_identity "${source_root}" "${source_directory_fd}" "${git_directory_fd}" "${config_fd}" "${info_directory_fd}" "${objects_directory_fd}" "${objects_info_directory_fd}" "${head_fd}" "${refs_directory_fd}" "${heads_directory_fd}" "${main_ref_fd}" "${index_fd}")" == "${repository_config_identity}" ]] || return 1'
+    )
+    if (
+        bound_file_lines.count(bound_file_operation_line) != 2
+        or bound_file_lines.count(bound_file_clean_line) != 2
+    ):
+        fail("Failed-bootstrap bound-file operation/clean call inventory differs.")
+    bound_file_offsets = (
+        bound_file_lines.index(bound_file_operation_line),
+        bound_file_lines.index(bound_file_initial_boundary_line),
+        bound_file_lines.index(bound_file_clean_line),
+        len(bound_file_lines) - 1 - bound_file_lines[::-1].index(bound_file_clean_line),
+        bound_file_lines.index(bound_file_final_boundary_line),
+        len(bound_file_lines)
+        - 1
+        - bound_file_lines[::-1].index(bound_file_operation_line),
+    )
+    if bound_file_offsets != tuple(sorted(bound_file_offsets)):
+        fail("Failed-bootstrap bound-file operation/boundary/clean call order differs.")
     for block, line, label in (
+        (
+            failed_bootstrap_quarantine,
+            'exec {source_verifier_fd}<"${source_root}/scripts/verify-host-security.sh" || fail "Current host-control verifier could not be held."',
+            "Failed-bootstrap held verifier descriptor",
+        ),
+        (
+            failed_bootstrap_quarantine,
+            'validate_bound_source_repository_file "${current_commit}" scripts/verify-host-security.sh "${source_verifier_fd}" || fail "Current host-control verifier differs before failed-bootstrap quarantine."',
+            "Failed-bootstrap pre-transaction verifier binding",
+        ),
+        (
+            failed_bootstrap_quarantine,
+            'validate_bound_source_repository_file "${current_commit}" scripts/verify-host-security.sh "${source_verifier_fd}" || fail "Current host-control verifier differs after failed-bootstrap quarantine."',
+            "Failed-bootstrap post-transaction verifier binding",
+        ),
         (
             upgrade_bind,
             '  reviewed_recovery_commit="$(select_reviewed_failed_bootstrap_recovery_commit "${pending_commit}")" || return 1',
@@ -8695,8 +9363,13 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ),
         (
             upgrade_bind,
-            '  validate_reviewed_failed_bootstrap_successor_paths "${invocation_source_root}" "${requested_commit}" "${pending_commit}"',
+            '  validate_reviewed_failed_bootstrap_successor_paths "${source_directory_fd}" "${git_directory_fd}" "${requested_commit}" "${pending_commit}" || return 1',
             "Host-control successor-path validator call",
+        ),
+        (
+            upgrade_exception,
+            '  output="$(read_bound_failed_bootstrap_preflight "${requested_commit}")" || return 1',
+            "Host-control bound failed-bootstrap preflight call",
         ),
         (
             upgrade_exception,
@@ -8725,6 +9398,13 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ),
     ):
         require_exact_live_line(block, line, label)
+
+    if any(
+        unsafe in block
+        for block in (quarantine_lineage, upgrade_bind, upgrade_path_validator)
+        for unsafe in ('git -C "${source_root}"', 'git -C "${invocation_source_root}"')
+    ):
+        fail("Source authority still reopens repository pathnames for Git reads.")
 
     if any(
         value in failed_bootstrap_quarantine
@@ -8932,7 +9612,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     if not upgrade_exception_gate < upgrade_first_mutation < upgrade_seal < upgrade_recovery_readback < upgrade_terminal_verifier:
         fail("Failed-bootstrap host-control exception can bypass pre-mutation or terminal verification.")
     candidate_validation = control_upgrade.index(
-        'bounded 300s python3 -I -S -B "${candidate}/scripts/validate-repository.py"'
+        'bounded 300s /usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py"'
     )
     predecessor_binding = control_upgrade.index(
         'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
