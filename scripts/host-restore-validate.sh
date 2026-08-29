@@ -25,12 +25,12 @@ case "${confirmation}" in
 esac
 
 lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py
-if python3 -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
 fi
 historical_adoption=false
 historical_journal="/var/lib/mochirii/forums/historical-release-adoption.json"

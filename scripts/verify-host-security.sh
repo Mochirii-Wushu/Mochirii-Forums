@@ -42,7 +42,9 @@ deploy_dispatcher="${libexec_root}/ssh-deploy-dispatch.py"
 [[ -x ${deploy_dispatcher} && ! -L ${deploy_dispatcher} && "$(stat -c '%U:%G %a' "${deploy_dispatcher}")" == "root:root 755" ]] || fail "Deploy SSH dispatcher is absent or unsafe."
 sudo -u mochirii-forums-deploy test -x "${deploy_dispatcher}" || fail "Deploy principal cannot traverse the forced-command boundary."
 [[ -x ${lock_helper} && ! -L ${lock_helper} && "$(stat -c '%U:%G %a' "${lock_helper}")" == "root:root 755" ]] || fail "Installed host operation lock helper is unsafe."
-"${lock_helper}" verify-namespace --locks primary,media || fail "Host operation lock namespace is unsafe."
+exec {lock_helper_fd}<"${lock_helper}" || fail "Installed host operation lock helper could not be held."
+exec {lock_source_fd}<"${source_root}/scripts/host-operation-lock.py" || fail "Trusted host operation lock helper could not be held."
+[[ ${lock_helper_fd} != 200 && ${lock_helper_fd} != 201 && ${lock_source_fd} != 200 && ${lock_source_fd} != 201 ]] || fail "Host operation lock helper descriptor conflicts with the reserved namespace."
 
 [[ "$(stat -c '%U:%G %a' "${state_root}")" == "root:root 755" ]] || fail "Host-control state root must remain root:root mode 0755 for account traversal."
 for directory in evidence logs operator-evidence quarantine; do
@@ -50,7 +52,7 @@ for directory in evidence logs operator-evidence quarantine; do
   [[ -d ${path} && ! -L ${path} && "$(stat -c '%U:%G %a' "${path}")" == "root:root 700" ]] || fail "Sensitive host-control directory ${directory} is unsafe."
 done
 if [[ ${transaction_mode} == true ]]; then
-  python3 -B - "${pending_upgrade}" "${upgrades_root}" "${source_root}" "${expected_commit}" "${control_pointer}" <<'PY' >/dev/null
+  /usr/bin/python3 -I -S -B - "${pending_upgrade}" "${upgrades_root}" "${source_root}" "${expected_commit}" "${control_pointer}" <<'PY' >/dev/null
 import json
 import pathlib
 import re
@@ -153,7 +155,7 @@ done
 [[ -f ${operator_proof} && ! -L ${operator_proof} && "$(stat -c '%U:%G %a' "${operator_proof}")" == "root:root 600" ]] || fail "Operator SSH proof is absent or unsafe."
 [[ "$(cat -- "${operator_proof}")" == operatorSshAndSudoVerified=true ]] || fail "Operator SSH proof content differs."
 [[ -f ${access_pointer} && ! -L ${access_pointer} && "$(stat -c '%U:%G %a' "${access_pointer}")" == "root:root 600" ]] || fail "Current host-access evidence is absent or unsafe."
-python3 -B - "${access_pointer}" "${evidence_root}" \
+/usr/bin/python3 -I -S -B - "${access_pointer}" "${evidence_root}" \
   "${state_root}/deploy/.ssh/authorized_keys" "${state_root}/operator/.ssh/authorized_keys" \
   "${operator_proof}" <<'PY' >/dev/null
 import hashlib
@@ -261,7 +263,7 @@ done
 [[ -f ${control_pointer} && ! -L ${control_pointer} && "$(stat -c '%U:%G %a' "${control_pointer}")" == "root:root 600" ]] || fail "Current host-control evidence is absent or unsafe."
 [[ "$(stat -c '%s' "${control_pointer}")" =~ ^[1-9][0-9]*$ ]] || fail "Current host-control evidence is empty or unreadable."
 (( $(stat -c '%s' "${control_pointer}") <= 65536 )) || fail "Current host-control evidence exceeds its byte boundary."
-python3 -B - "${manifest}" "${source_root}" "${control_pointer}" "${evidence_root}" "${expected_commit}" <<'PY' >/dev/null
+/usr/bin/python3 -I -S -B - "${manifest}" "${source_root}" "${control_pointer}" "${evidence_root}" "${expected_commit}" "${lock_helper_fd}" "${lock_source_fd}" <<'PY' >/dev/null
 import hashlib
 import json
 import os
@@ -275,8 +277,11 @@ source_root = pathlib.Path(sys.argv[2])
 pointer_path = pathlib.Path(sys.argv[3])
 evidence_root = pathlib.Path(sys.argv[4])
 commit = sys.argv[5]
+lock_helper_fd = int(sys.argv[6])
+lock_source_fd = int(sys.argv[7])
 MAX_JSON_BYTES = 65_536
 MAX_ARCHIVE_BYTES = 67_108_864
+MAX_HELPER_BYTES = 1_048_576
 
 
 def bounded_read(path: pathlib.Path, maximum: int, label: str) -> bytes:
@@ -475,12 +480,61 @@ if all(certificate_presence):
             raise SystemExit("certificate automation target permissions differ")
         if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha:
             raise SystemExit("certificate automation differs from trusted source")
-PY
 
-release_archive_inspection="$(python3 -B "${source_root}/scripts/historical-release-disaster-recovery.py" inspect \
+lock_target = "/usr/local/libexec/mochirii-forums/host-operation-lock.py"
+lock_rows = [
+    (target, mode, expected_sha)
+    for group in ("coreTargets", "hostPolicyTargets", "certificateTargets")
+    for target, mode, expected_sha in groups[group]
+    if target == lock_target
+]
+if len(lock_rows) != 1 or lock_rows[0][1] != "0755":
+    raise SystemExit("host operation lock helper binding differs")
+
+
+def read_held_helper(descriptor: int, *, require_root: bool) -> bytes:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or not 1 <= metadata.st_size <= MAX_HELPER_BYTES
+        or (require_root and (metadata.st_uid != 0 or metadata.st_gid != 0))
+        or (require_root and stat.S_IMODE(metadata.st_mode) != 0o755)
+    ):
+        raise SystemExit("host operation lock helper binding differs")
+    raw = os.pread(descriptor, metadata.st_size + 1, 0)
+    if len(raw) != metadata.st_size:
+        raise SystemExit("host operation lock helper binding differs")
+    return raw
+
+
+held_installed = read_held_helper(lock_helper_fd, require_root=True)
+held_source = read_held_helper(lock_source_fd, require_root=False)
+held_sha = hashlib.sha256(held_installed).hexdigest()
+if (
+    held_installed != held_source
+    or held_sha != lock_rows[0][2]
+    or evidence_targets.get(lock_target) != {"mode": "0755", "sha256": held_sha}
+):
+    raise SystemExit("host operation lock helper binding differs")
+sys.argv = [lock_target, "verify-namespace", "--locks", "primary,media"]
+exec(
+    compile(held_installed, lock_target, "exec"),
+    {
+        "__name__": "__main__",
+        "__file__": lock_target,
+        "__package__": None,
+        "__spec__": None,
+    },
+)
+PY
+exec {lock_source_fd}<&-
+exec {lock_helper_fd}<&-
+
+release_archive_inspection="$(/usr/bin/python3 -I -S -B "${source_root}/scripts/historical-release-disaster-recovery.py" inspect \
   --archive "/opt/mochirii/forums/host-control-releases/${expected_commit}/mochirii-release.tar" \
   --expected-commit "${expected_commit}")" || fail "Retained host-control recovery archive inspection failed."
-python3 -B - "${control_pointer}" "${release_archive_inspection}" <<'PY' >/dev/null || fail "Retained host-control recovery archive binding differs."
+/usr/bin/python3 -I -S -B - "${control_pointer}" "${release_archive_inspection}" <<'PY' >/dev/null || fail "Retained host-control recovery archive binding differs."
 import json
 import pathlib
 import sys
@@ -558,7 +612,7 @@ listeners_readback="$(mktemp "${state_root}/logs/.listeners.XXXXXXXX")"
 trap 'rm -f -- "${ufw_readback}" "${listeners_readback}"' EXIT
 chmod 0600 "${ufw_readback}" "${listeners_readback}"
 bounded 20s ufw status verbose >"${ufw_readback}" 2>/dev/null || fail "UFW readback failed or timed out."
-python3 -B - "${ufw_readback}" <<'PY' >/dev/null
+/usr/bin/python3 -I -S -B - "${ufw_readback}" <<'PY' >/dev/null
 import pathlib
 import re
 import sys
@@ -585,7 +639,7 @@ if rules != expected:
 PY
 
 bounded 15s ss -H -ltn >"${listeners_readback}" 2>/dev/null || fail "Host listener readback failed or timed out."
-python3 -B - "${listeners_readback}" <<'PY' >/dev/null
+/usr/bin/python3 -I -S -B - "${listeners_readback}" <<'PY' >/dev/null
 import pathlib
 import sys
 for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():

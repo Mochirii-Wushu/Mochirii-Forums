@@ -829,6 +829,67 @@ cause. The same retained journal and runtime, stopped/absent publication,
 root-owned state, unrelated-journal exclusion, and evidence-preserving
 quarantine rules apply.
 
+The later bootstrap at exact release
+`ed2d1f0bedf4e7865c5ac3737fdae2308630e25a` has a ninth,
+non-interchangeable recovery chain for the proved ACME transport boundary.
+That failed release is the sole parent of reviewed clean-transport repair
+commit `5272554d33e9fcfc8f634ea14bc8e1f295b4278b`; the recovery source must
+be one exact sole-parent child of that repair and the current canonical
+`main`. The two exact path segments are independently bound. The transport
+repair changes only `.github/workflows/disposable-bootstrap.yml`,
+`.github/workflows/validate-repository.yml`, both retired `acme-sh` 3.0.6
+license/archive paths, both replacement 3.1.4 license/archive paths,
+`config/immutable-letsencrypt.fragment.yml`,
+`docs/operations/PROVIDER-DNS-TLS.md`,
+`docs/operations/SOURCE-PROVENANCE.md`,
+`docs/operations/THIRD-PARTY-NOTICES.md`,
+`docs/operations/third-party-components.v1.json`,
+`scripts/check-repository.ps1`, `scripts/check-source-introduction.ps1`,
+`scripts/host-deploy.sh`, `scripts/test-contracts.py`,
+`scripts/test-source-introduction.ps1`, `scripts/validate-repository.py`, and
+  `scripts/verify-runtime-assets.sh`. The final recovery child changes only
+  `.github/workflows/disposable-bootstrap.yml`,
+  `.github/workflows/validate-repository.yml`, this document,
+  `docs/operations/RECOVERY.md`, `scripts/check-repository.ps1`,
+  `scripts/check-source-introduction.ps1`, `scripts/finalize-member-rollout.sh`,
+  `scripts/host-backup.sh`, `scripts/host-break-glass-admin.sh`,
+  `scripts/host-deploy.sh`, `scripts/host-finalize-authentication.sh`,
+  `scripts/host-operation-lock.py`, `scripts/host-restore-validate.sh`,
+  `scripts/host-stop-pending-activation.sh`, `scripts/host-verify-wrapper.sh`,
+  `scripts/install-host-control.sh`,
+  `scripts/install-media-certificate-renewal.sh`,
+  `scripts/prepare-media-certificate.sh`,
+  `scripts/quarantine-failed-bootstrap.sh`,
+  `scripts/run-media-certificate-renewal.sh`, `scripts/test-contracts.py`,
+  `scripts/test-host-operation-lock.py`,
+  `scripts/test-source-introduction.ps1`, `scripts/upgrade-host-control.sh`,
+  `scripts/validate-repository.py`, and `scripts/verify-host-security.sh`. The
+  cumulative diff from the failed release is exactly the resulting thirty-five
+unique paths. Selection remains by exact
+failed commit, so this exception cannot substitute for another lineage, admit
+another descendant or merge commit, or authorize another path set. The
+  reviewed repair replaces the historical client with the pinned official
+3.1.4 source and invokes its transport in a clean environment with curl's
+configuration-file suppression as the first option. It neither authorizes an
+identical-byte retry nor claims another retained-runtime cause. The same
+retained journal and runtime, stopped/absent publication, root-owned state,
+unrelated-journal exclusion, and evidence-preserving quarantine rules apply.
+
+Before any local lineage query, the recovery control binds the ordinary,
+root-owned repository directories plus `.git/config`, `.git/HEAD`, the required
+loose `refs/heads/main`, and `.git/index` to exact identities. The configuration
+must have the exact reviewed key/value inventory; includes, worktree
+configuration, URL rewrites, proxies, credential helpers, aliases, and every
+unrecognized or duplicate key are rejected. Split-index authority, index flags
+that can hide working-tree drift, ignored or other untracked files, shallow or
+alternate object authority, grafts, and commit-graph reads are rejected or
+disabled. The same identities are checked again after path validation.
+Canonical remote `main` is read separately from `/` under an empty environment,
+with repository discovery, ambient configuration, credentials, proxies,
+redirects, and every non-HTTPS transport disabled. This keeps the local
+object/ancestry checks and the independent remote-head check inside distinct,
+fail-closed trust boundaries.
+
 Every direct acceptance launcher pins the exact validator or hostile-fixture
 bytes before execution and invokes Python with `-I -S -B`. Both entrypoints
 also reject ambiguous import paths and incompatible startup flags before any
