@@ -20,12 +20,12 @@ confirmation="$3"
 [[ -t 0 && -t 1 && -t 2 ]] || fail "Administrator recovery requires an interactive operator console."
 
 lock_helper=/usr/local/libexec/mochirii-forums/host-operation-lock.py
-if python3 -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks primary 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks primary -- /bin/bash "$0" "$@"
 fi
 active_operation_pid=""
 operation_armed=false
