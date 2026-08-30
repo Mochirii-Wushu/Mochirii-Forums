@@ -433,13 +433,13 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "094040811b55293f19fea53d4714dc8ef8052656490c42301d3a4fccf113fa16"
+            "21d4b8923ca9a93da86ab05df3ab40c0d0891c572554f0d710ba2569ea5738f7"
         ),
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
             "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
         ),
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "505f65a69d1a369351c443af35c315213dffe8da21bfc52cb18acadf08833587"
+            "98d68b030f0e11f378a33b86a4fd998f728d4ba60863f31c87863ff0f15c8403"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
             "98f0a5b1faede67bf4a11e886da3cc6503f087b292c21befa12ddaeb76a8c653"
@@ -13758,6 +13758,7 @@ bash() { printf '%s\n' bash-verify; }
 rollback_transaction() { printf '%s\n' rollback; }
 verify_previous_host_controls() { printf '%s\n' verify-previous; }
 clear_transaction() { printf '%s\n' clear; }
+require_postfailure_predecessor() { :; }
 ''' + reconcile + r'''
 reconcile_pending "${REQUESTED_COMMIT:-new}"
 printf 'continue:%s\n' "${recovery_continue}"
