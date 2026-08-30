@@ -433,16 +433,16 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "396c8d71bf98f2f28e27a5b3811b259e639abd693e75b6638178e4f1a9fc5afb"
+            "459a97be80f26d0f172022787a5f0553e7887eaa93dc6e4b17780afb27fe0b08"
         ),
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
             "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
         ),
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "5850fac655ec926e45557a6af95f0d0fc45f1112ba58aa0256595ef14f6d138e"
+            "651831266c6ce9c3e63f185726300517bad89ad79ea546bdedf6b22bd047cf25"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
-            "dacc0a4fe8a2b8939487c2b253341579a0b7d6de35017bad15678fe54c9eb9f8"
+            "98f0a5b1faede67bf4a11e886da3cc6503f087b292c21befa12ddaeb76a8c653"
         ),
     }
     observed_contract_seals: dict[str, str] = {}
@@ -17463,6 +17463,7 @@ reviewed_acme_stage_failed_bootstrap_commit=637a7c315574840156ac46615beb44170740
 reviewed_acme_stage_recovery_commit=9683e62abd3d0f41c41fc2a126a49eb33216c265
 reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
 reviewed_acme_transport_recovery_commit=5272554d33e9fcfc8f634ea14bc8e1f295b4278b
+reviewed_acme_transport_postfailure_parent_commit=da21f45b6b7b0ed5514b7242113b3c5cf95e86f6
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
