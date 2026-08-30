@@ -24,16 +24,16 @@ repository_root="$(cd "${script_root}/.." && pwd)"
 common="${script_root}/media-certificate-operation.sh"
 acme_helper="${script_root}/reconcile-acme-dns.py"
 [[ -f ${common} && ! -L ${common} && -f ${acme_helper} && ! -L ${acme_helper} ]] || fail "Certificate operation helpers are absent."
-# shellcheck source=media-certificate-operation.sh
-source "${common}"
 lock_helper="${script_root}/host-operation-lock.py"
-if python3 -B "${lock_helper}" assert-held --locks primary,media 2>/dev/null; then
+if /usr/bin/python3 -I -S -B "${lock_helper}" assert-held --locks primary,media 2>/dev/null; then
   :
 else
   lock_status=$?
   [[ ${lock_status} -eq 3 ]] || fail "Host operation lock context is invalid."
-  exec python3 -B "${lock_helper}" run --locks primary,media -- /bin/bash "$0" "$@"
+  exec /usr/bin/python3 -I -S -B "${lock_helper}" run --locks primary,media -- /bin/bash "$0" "$@"
 fi
+# shellcheck source=media-certificate-operation.sh
+source "${common}"
 [[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate installation refuses an active deployment mutation."
 media_boundary_initialize 900 120 || fail "Certificate installation boundary initialization failed."
 MEDIA_ACME_HELPER="${acme_helper}"

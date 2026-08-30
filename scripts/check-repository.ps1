@@ -7,9 +7,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath $RepositoryRoot).Path
-$expectedValidatorSha256 = '5a21f33fd613fe4c8733deec55277943b03cf33e9d89c51339fd976409854f5f'
-$expectedContractSha256 = '5ded66a3b6325c30c2fea03a9755e2d8987cec89c2c1a62000acc13a444effd0'
-$expectedPythonAcceptanceRootSha256 = '243df14f0bbd001706a5de14bab276ae3142437951ad812eaca29e8f58ba381b'
+$expectedValidatorSha256 = 'ffea5da08788b2b34b8b5ac95a0e45e0227966211b1ee38feffca2fc24f28129'
+$expectedContractSha256 = 'e8323a357042beb31a4879a756a43ce7fd86226b19bd48a804e14e7431c3cdb5'
+$expectedPythonAcceptanceRootSha256 = 'dbd7588e9141c315cc161fd81d9cfd6f062d8795e001964bb8783a4fb63d9a57'
 
 function Get-PythonAcceptanceRootSha256 {
     param(
