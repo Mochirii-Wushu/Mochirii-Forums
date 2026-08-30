@@ -710,10 +710,12 @@ the next clean bootstrap to target the then-current canonical main.
 A ninth exact bootstrap-only exception covers the proved ACME transport
 boundary. Failed release `ed2d1f0bedf4e7865c5ac3737fdae2308630e25a`,
 reviewed clean-transport repair
-`5272554d33e9fcfc8f634ea14bc8e1f295b4278b`, and one canonical-main
-control/quarantine child must form an exact sole-parent chain. The repair and
-recovery-child path segments are checked independently against their exact
-eighteen- and twenty-six-path inventories. The cumulative thirty-six-path
+`5272554d33e9fcfc8f634ea14bc8e1f295b4278b`, reviewed post-failure boundary
+`da21f45b6b7b0ed5514b7242113b3c5cf95e86f6`, and one canonical-main
+control/quarantine child must form an exact sole-parent chain. The repair,
+boundary, and changed recovery-child path segments are checked independently
+against their exact eighteen-, twenty-six-, and thirty-one-path Git-order
+inventories. The cumulative forty-nine-path
 inventory additionally binds the retired 3.0.6 and replacement 3.1.4 ACME
 archive/license pairs, the immutable transport configuration, official source
 provenance and notices, both validation workflows, the runtime-asset verifier,
@@ -723,7 +725,12 @@ Selection by exact failed commit keeps this lineage separate from every earlier
 exception; the final child cannot be another descendant or a merge commit. The
 reviewed repair uses the pinned official 3.1.4 client and a clean curl
 environment whose first option suppresses ambient configuration. It neither
-authorizes an identical-byte retry nor claims another retained-runtime cause.
+authorizes an identical-byte retry of the failed outer operation or the older
+`da21f45b6b7b0ed5514b7242113b3c5cf95e86f6` host-control bytes, nor claims
+another retained-runtime cause. The changed recovery child must prove the
+installed control pointer, evidence, retained source, and all target bytes bind
+exactly to predecessor `ed2d1f0bedf4e7865c5ac3737fdae2308630e25a` before
+publishing any target.
 It uses the same root-only, evidence-preserving quarantine and requires the
 next clean bootstrap to target the then-current canonical main.
 

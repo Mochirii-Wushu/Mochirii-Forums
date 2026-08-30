@@ -27,6 +27,7 @@ readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615b
 readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"
 readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"
 readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"
+readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"
 readonly state_root="/var/lib/mochirii/forums"
 readonly evidence_root="${state_root}/evidence"
 readonly upgrades_root="${state_root}/control-upgrades"
@@ -39,6 +40,7 @@ readonly ssh_generator_mask="/etc/systemd/system-generators/sshd-socket-generato
 active_transaction=""
 upgrade_complete=false
 recovery_continue=false
+postfailure_control_recovery=false
 
 safe_source_repository_directory_identity() {
   local path="$1" descriptor="$2" metadata kind device inode uid gid mode links modified changed
@@ -758,20 +760,63 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     scripts/validate-repository.py
     scripts/verify-host-security.sh
   )
-  local -ar acme_transport_expected_paths=(
+  local -ar acme_transport_postfailure_current_expected_paths=(
+    .github/pull_request_template.md
     .github/workflows/disposable-bootstrap.yml
     .github/workflows/validate-repository.yml
+    README.md
+    config/app.yml.example
+    docs/adr/0005-promote-discourse-v2026-8-0.md
+    docs/operations/CURRENT-STATE.md
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    docs/operations/RUNTIME-READINESS.md
+    docs/operations/SOURCE-PROVENANCE.md
+    docs/operations/THIRD-PARTY-NOTICES.md
+    docs/operations/forum-central-identity.consumer.v1.json
+    docs/operations/release-evidence.v2.example.json
+    docs/operations/runtime-config.v1.example.json
+    docs/operations/third-party-components.v1.json
+    scripts/authentication-state.py
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-backup.sh
+    scripts/host-deploy.sh
+    scripts/host-restore-validate.sh
+    scripts/host-verify-wrapper.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host.sh
+    scripts/verify-pinned-source.py
+    scripts/verify-site.rb
+  )
+  local -ar acme_transport_expected_paths=(
+    .github/pull_request_template.md
+    .github/workflows/disposable-bootstrap.yml
+    .github/workflows/validate-repository.yml
+    README.md
     config/acme-sh-3.0.6.LICENSE.md
     config/acme-sh-3.0.6.gz.b64
     config/acme-sh-3.1.4.LICENSE.md
     config/acme-sh-3.1.4.gz.b64
+    config/app.yml.example
     config/immutable-letsencrypt.fragment.yml
+    docs/adr/0005-promote-discourse-v2026-8-0.md
+    docs/operations/CURRENT-STATE.md
     docs/operations/DEPLOYMENT.md
     docs/operations/PROVIDER-DNS-TLS.md
     docs/operations/RECOVERY.md
+    docs/operations/RUNTIME-READINESS.md
     docs/operations/SOURCE-PROVENANCE.md
     docs/operations/THIRD-PARTY-NOTICES.md
+    docs/operations/forum-central-identity.consumer.v1.json
+    docs/operations/release-evidence.v2.example.json
+    docs/operations/runtime-config.v1.example.json
     docs/operations/third-party-components.v1.json
+    scripts/authentication-state.py
     scripts/check-repository.ps1
     scripts/check-source-introduction.ps1
     scripts/finalize-member-rollout.sh
@@ -794,7 +839,10 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
     scripts/verify-host-security.sh
+    scripts/verify-host.sh
+    scripts/verify-pinned-source.py
     scripts/verify-runtime-assets.sh
+    scripts/verify-site.rb
   )
   local actual_path_output
   local -a actual_paths expected_paths
@@ -857,12 +905,19 @@ validate_reviewed_failed_bootstrap_successor_paths() {
     for index in "${!acme_transport_repair_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_transport_repair_expected_paths[$index]}" ]] || return 1
     done
-    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${reviewed_acme_transport_postfailure_parent_commit}" 2>/dev/null)" || return 1
     (( ${#actual_path_output} <= 65536 )) || return 1
     mapfile -t actual_paths <<< "${actual_path_output}"
     [[ ${#actual_paths[@]} -eq ${#acme_transport_current_expected_paths[@]} ]] || return 1
     for index in "${!acme_transport_current_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_transport_current_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_transport_postfailure_parent_commit}" "${requested_commit}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_transport_postfailure_current_expected_paths[@]} ]] || return 1
+    for index in "${!acme_transport_postfailure_current_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_transport_postfailure_current_expected_paths[$index]}" ]] || return 1
     done
   fi
   actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}" 2>/dev/null)" || return 1
@@ -886,6 +941,9 @@ bind_invoked_canonical_successor() {
   fi
   if [[ ${pending_commit} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
     requested_parent_commit="${reviewed_acme_material_review_authority_commit}"
+  fi
+  if [[ ${pending_commit} == "${reviewed_acme_transport_failed_bootstrap_commit}" ]]; then
+    requested_parent_commit="${reviewed_acme_transport_postfailure_parent_commit}"
   fi
   [[ -f $0 && ! -L $0 ]] || return 1
   invocation_script="$(realpath -e -- "$0")" || return 1
@@ -921,6 +979,10 @@ bind_invoked_canonical_successor() {
   if [[ ${pending_commit} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
     [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
     [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" == "${reviewed_acme_material_review_authority_commit} ${reviewed_recovery_commit}" ]] || return 1
+  fi
+  if [[ ${pending_commit} == "${reviewed_acme_transport_failed_bootstrap_commit}" ]]; then
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_acme_transport_postfailure_parent_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_acme_transport_postfailure_parent_commit}" 2>/dev/null)" == "${reviewed_acme_transport_postfailure_parent_commit} ${reviewed_recovery_commit}" ]] || return 1
   fi
   [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${pending_commit}" ]] || return 1
   [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${pending_commit}" ]] || return 1
@@ -1000,7 +1062,10 @@ validate_failed_bootstrap_upgrade_exception() {
   output="$(read_bound_failed_bootstrap_preflight "${requested_commit}")" || return 1
   readarray -t state <<<"${output}"
   [[ ${#state[@]} -eq 1 && ${state[0]} =~ ^[0-9a-f]{40}$ ]] || return 1
-  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"
+  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}" || return 1
+  if [[ ${state[0]} == "${reviewed_acme_transport_failed_bootstrap_commit}" ]]; then
+    postfailure_control_recovery=true
+  fi
 }
 
 publish_ssh_generator_mask() {
@@ -1247,6 +1312,48 @@ def exact_directory(path: pathlib.Path, mode: int, label: str) -> os.stat_result
     return metadata
 
 
+def same_path_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev == right.st_dev
+        and left.st_ino == right.st_ino
+        and left.st_mode == right.st_mode
+        and left.st_mtime_ns == right.st_mtime_ns
+    )
+
+
+def exact_relative_directory(
+    parent_descriptor: int,
+    name: str,
+    path: pathlib.Path,
+    mode: int,
+    label: str,
+) -> tuple[int, os.stat_result]:
+    metadata = exact_directory(path, mode, label)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+    except OSError:
+        reject(f"{label} is unsafe")
+    opened = os.fstat(descriptor)
+    if (
+        not same_path_identity(opened, metadata)
+        or not stat.S_ISDIR(opened.st_mode)
+        or (os.name != "nt" and (
+            opened.st_uid != expected_uid
+            or opened.st_gid != expected_gid
+            or stat.S_IMODE(opened.st_mode) != mode
+        ))
+    ):
+        os.close(descriptor)
+        reject(f"{label} changed before read")
+    return descriptor, metadata
+
+
 def strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -1256,15 +1363,28 @@ def strict_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-if action not in {"prepare", "verify"}:
+if action not in {"identity", "prepare", "verify"}:
     reject("Predecessor binding action differs")
 if expected_uid < 0 or expected_gid < 0:
     reject("Predecessor binding ownership tuple differs")
-exact_directory(state_root, 0o755, "Host-control state root")
+state_metadata = exact_directory(state_root, 0o755, "Host-control state root")
 exact_directory(upgrades_root, 0o700, "Host-control upgrades root")
 exact_directory(archive_root, 0o755, "Host-control archive root")
-exact_directory(work_root, 0o700, "Host-control work root")
-if action == "prepare":
+if upgrades_root != state_root / "control-upgrades":
+    reject("Host-control upgrades root differs")
+backed_up_pointer = pointer != state_root / "current-host-control.json"
+if action == "identity":
+    if not backed_up_pointer:
+        if work_root != state_root:
+            reject("Current host-control identity root differs")
+    else:
+        exact_directory(work_root, 0o700, "Host-control work root")
+        if work_root.parent != upgrades_root or re.fullmatch(
+            r"[0-9a-f]{40}-[0-9a-f]{64}", work_root.name
+        ) is None or pointer != work_root / "backup/current-host-control.json":
+            reject("Backed-up host-control pointer path differs")
+elif action == "prepare":
+    exact_directory(work_root, 0o700, "Host-control work root")
     if pointer != state_root / "current-host-control.json":
         reject("Current host-control pointer path differs")
     if work_root.parent != state_root or re.fullmatch(
@@ -1272,6 +1392,7 @@ if action == "prepare":
     ) is None:
         reject("Host-control preparation root differs")
 else:
+    exact_directory(work_root, 0o700, "Host-control work root")
     if work_root.parent != upgrades_root or re.fullmatch(
         r"[0-9a-f]{40}-[0-9a-f]{64}", work_root.name
     ) is None:
@@ -1279,14 +1400,99 @@ else:
     if pointer != work_root / "backup/current-host-control.json":
         reject("Backed-up host-control pointer path differs")
 
-pointer_metadata = exact_regular(pointer, 0o600, 64 * 1024, "Host-control pointer")
+work_descriptor = -1
+backup_descriptor = -1
+work_metadata = None
+backup_metadata = None
+if backed_up_pointer and os.name != "nt":
+    if (
+        not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.open not in os.supports_dir_fd
+        or os.stat not in os.supports_dir_fd
+        or os.stat not in os.supports_follow_symlinks
+    ):
+        reject("Host-control backup boundary is unavailable")
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        state_descriptor = os.open(state_root, directory_flags)
+    except OSError:
+        reject("Host-control state root is unsafe")
+    if not same_path_identity(os.fstat(state_descriptor), state_metadata):
+        os.close(state_descriptor)
+        reject("Host-control state root changed before read")
+    try:
+        upgrades_descriptor, _ = exact_relative_directory(
+            state_descriptor,
+            upgrades_root.name,
+            upgrades_root,
+            0o700,
+            "Host-control upgrades root",
+        )
+    finally:
+        os.close(state_descriptor)
+    try:
+        work_descriptor, work_metadata = exact_relative_directory(
+            upgrades_descriptor,
+            work_root.name,
+            work_root,
+            0o700,
+            "Host-control work root",
+        )
+    finally:
+        os.close(upgrades_descriptor)
+    backup_root = work_root / "backup"
+    backup_descriptor, backup_metadata = exact_relative_directory(
+        work_descriptor,
+        "backup",
+        backup_root,
+        0o700,
+        "Host-control backup root",
+    )
+    try:
+        pointer_metadata = os.stat(
+            "current-host-control.json",
+            dir_fd=backup_descriptor,
+            follow_symlinks=False,
+        )
+    except OSError:
+        reject("Host-control pointer is absent")
+    if (
+        not stat.S_ISREG(pointer_metadata.st_mode)
+        or pointer_metadata.st_size < 1
+        or pointer_metadata.st_size > 64 * 1024
+        or pointer_metadata.st_nlink != 1
+        or pointer_metadata.st_uid != expected_uid
+        or pointer_metadata.st_gid != expected_gid
+        or stat.S_IMODE(pointer_metadata.st_mode) != 0o600
+    ):
+        reject("Host-control pointer is unsafe")
+else:
+    if backed_up_pointer:
+        exact_directory(work_root / "backup", 0o700, "Host-control backup root")
+    pointer_metadata = exact_regular(pointer, 0o600, 64 * 1024, "Host-control pointer")
 pointer_flags = (
     os.O_RDONLY
     | getattr(os, "O_NOFOLLOW", 0)
     | getattr(os, "O_NONBLOCK", 0)
     | getattr(os, "O_BINARY", 0)
 )
-pointer_descriptor = os.open(pointer, pointer_flags)
+try:
+    if backup_descriptor >= 0:
+        pointer_descriptor = os.open(
+            "current-host-control.json",
+            pointer_flags,
+            dir_fd=backup_descriptor,
+        )
+    else:
+        pointer_descriptor = os.open(pointer, pointer_flags)
+except OSError:
+    reject("Host-control pointer is unsafe")
 try:
     pointer_before = os.fstat(pointer_descriptor)
     if (
@@ -1332,7 +1538,17 @@ finally:
     os.close(pointer_descriptor)
 if len(raw_pointer) != pointer_metadata.st_size:
     reject("Host-control pointer byte count differs")
-pointer_path_after = pointer.lstat()
+try:
+    if backup_descriptor >= 0:
+        pointer_path_after = os.stat(
+            "current-host-control.json",
+            dir_fd=backup_descriptor,
+            follow_symlinks=False,
+        )
+    else:
+        pointer_path_after = pointer.lstat()
+except OSError:
+    reject("Host-control pointer path changed while read")
 if (
     pointer_path_after.st_dev != pointer_metadata.st_dev
     or pointer_path_after.st_ino != pointer_metadata.st_ino
@@ -1340,6 +1556,19 @@ if (
     or pointer_path_after.st_mtime_ns != pointer_metadata.st_mtime_ns
 ):
     reject("Host-control pointer path changed while read")
+if backup_descriptor >= 0:
+    try:
+        backup_path_after = os.stat("backup", dir_fd=work_descriptor, follow_symlinks=False)
+        work_path_after = work_root.lstat()
+    except OSError:
+        reject("Host-control backup path changed while read")
+    if (
+        not same_path_identity(backup_path_after, backup_metadata)
+        or not same_path_identity(work_path_after, work_metadata)
+    ):
+        reject("Host-control backup path changed while read")
+    os.close(backup_descriptor)
+    os.close(work_descriptor)
 try:
     document = json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)
 except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1375,6 +1604,11 @@ commit_archive_root = archive_root / commit
 archive = commit_archive_root / "mochirii-release.tar"
 if document.get("releaseArchiveFile") != str(archive):
     reject("Host-control predecessor archive path differs")
+
+if action == "identity":
+    print(commit)
+    print(evidence_sha)
+    raise SystemExit(0)
 
 helper_path = candidate_source / "scripts/historical-release-disaster-recovery.py"
 exact_directory(candidate_source, 0o700, "Candidate source root")
@@ -1829,6 +2063,38 @@ for row in document["targets"]:
 PY
 }
 
+require_postfailure_predecessor() {
+  [[ ${postfailure_control_recovery} == false ]] ||
+    [[ $1 == "${reviewed_acme_transport_failed_bootstrap_commit}" ]] ||
+    fail "Post-failure host-control recovery requires the exact reviewed predecessor controls."
+}
+
+preflight_postfailure_predecessor() {
+  [[ ${postfailure_control_recovery} == true ]] || return 0
+  local output="" transaction previous_sha previous_commit previous_evidence_sha
+  local -a state predecessor_state
+  if [[ -e ${pending_journal} || -L ${pending_journal} ]]; then
+    output="$(read_journal 2>/dev/null)" || fail "Pending host-control upgrade journal is invalid."
+    (( ${#output} <= 4096 )) || fail "Pending host-control upgrade journal output exceeds its boundary."
+    readarray -t state <<<"${output}"
+    [[ ${#state[@]} -eq 8 ]] || fail "Pending host-control upgrade state is malformed."
+    transaction="${state[2]}"
+    previous_sha="${state[6]}"
+    output="$(bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${state_root}" identity 2>/dev/null)" ||
+      fail "Pending host-control predecessor identity is invalid."
+  else
+    output="$(bind_previous_source "${control_pointer}" "${state_root}" "${state_root}" identity 2>/dev/null)" ||
+      fail "Current host-control predecessor identity is invalid."
+  fi
+  (( ${#output} <= 256 )) || fail "Host-control predecessor identity output exceeds its boundary."
+  readarray -t predecessor_state <<<"${output}"
+  [[ ${#predecessor_state[@]} -eq 2 ]] || fail "Host-control predecessor identity is malformed."
+  previous_commit="${predecessor_state[0]}"
+  previous_evidence_sha="${predecessor_state[1]}"
+  [[ -z ${previous_sha:-} || ${previous_evidence_sha} == "${previous_sha}" ]] || fail "Pending host-control predecessor evidence differs."
+  require_postfailure_predecessor "${previous_commit}"
+}
+
 reconcile_pending() {
   local requested_commit="$1"
   local journal_output="" successor_recovery=false
@@ -1856,6 +2122,7 @@ reconcile_pending() {
   [[ ${#predecessor_state[@]} -eq 3 ]] || fail "Pending host-control predecessor state is malformed."
   local previous_commit="${predecessor_state[0]}" previous_evidence_sha="${predecessor_state[1]}" previous_source="${predecessor_state[2]}"
   [[ ${previous_evidence_sha} == "${previous_sha}" ]] || fail "Pending host-control predecessor evidence differs."
+  require_postfailure_predecessor "${previous_commit}"
   if [[ ${successor_recovery} == false ]] && targets_are_new; then
     if ! ensure_ssh_service_activation; then
       rollback_transaction "${transaction}" || fail "OpenSSH activation commit-forward failed and exact rollback is blocked."
@@ -1924,6 +2191,7 @@ if [[ -e ${state_root}/deployment-mutation.json || -L ${state_root}/deployment-m
   validate_failed_bootstrap_upgrade_exception "${expected_commit}" || fail "Host-control upgrade refuses this active deployment mutation."
   deployment_recovery_upgrade=true
 fi
+preflight_postfailure_predecessor
 trap handle_signal HUP INT TERM
 
 install -d -m 0755 -o root -g root /var/lib/mochirii "${state_root}"
@@ -1998,6 +2266,7 @@ readarray -t previous_state <<<"${previous_state_output}"
 previous_commit="${previous_state[0]}"
 previous_evidence_sha="${previous_state[1]}"
 previous_source="${previous_state[2]}"
+require_postfailure_predecessor "${previous_commit}"
 
 for record in "${records[@]}"; do
   IFS=$'\t' read -r group mode relative target digest <<<"${record}"

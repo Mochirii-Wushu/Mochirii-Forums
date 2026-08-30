@@ -1112,11 +1112,11 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "4655e94aac76366e35eaf6e69ad613a45a8426bed0ab590e6af64941a9235e56"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "3498bd4d10f923f0bd1170951269eb6a43a3cf473fa8b8a79b236cf75348d611"
+CONTRACT_TEST_SOURCE_SHA256 = "a3252b4316abec528ed9e87d09a02ff2283adccbc2bf63a4a551dba88dd203bb"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "5abc810da012e3489b2a75ad286f450396998d94d99d425d5ca1417980b12923"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "f4038e8c2dce1c35da6fb4ec36da0b785db5024707fcbae4573e04ad1b8c5464"
-FAILED_BOOTSTRAP_TEST_SHA256 = "5df44cfd21d07b18552e0d608ad885631f7703b2b6a2a97a1d0766e6a8e8fa09"
+CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "15c6ee7c22753441dd0a7ded2e141ee2dd8dcee27f1a5e704acb7af6e4cfc976"
+FAILED_BOOTSTRAP_TEST_SHA256 = "7bb5fb4240e53ac620db9f87c2da1aec142e0d99e7615e6bc534392e30ac59ef"
 
 HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/host-operation-lock.py": "120b12e7f963b59423c55e64610ac83ea2c51edd8def3dd944db8197dff0b364",
@@ -1135,8 +1135,8 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
     "scripts/install-media-certificate-renewal.sh": "3809145fb4d8591e79cfefec92ebad7b36d8f772a280650221cb589d07d9994b",
-    "scripts/quarantine-failed-bootstrap.sh": "ff1e9104f31708c430ff3ec0568e746e6cf92a1d07f4505f8574d1df5c5fee95",
-    "scripts/upgrade-host-control.sh": "3cc886900dd735f1b54b58d1ac6dff14077e58ce846cd782e7a498172ed1ae14",
+    "scripts/quarantine-failed-bootstrap.sh": "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2",
+    "scripts/upgrade-host-control.sh": "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649",
 }
 HOST_DEPLOY_ACCEPTANCE_SEALS = (
     "repository_validator_sha256",
@@ -1525,7 +1525,7 @@ def validate_contract_test_acceptance_chain(source: str) -> None:
     )
     if (
         hashlib.sha256(module_startup_source.encode("utf-8")).hexdigest()
-        != "a2048f7928b16af6f31f7bb3e9c0f6331695c6e1e1362a032cb8a75bc2118dfc"
+        != "bac2f329fc465b29c221578dd996767fd08fc9175946fcb1e32d417837cc6df7"
     ):
         fail("Hostile fixture module-startup source seal differs.")
     if any(
@@ -7790,9 +7790,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     }
     if (
         hashlib.sha256(failed_bootstrap_quarantine.encode("utf-8")).hexdigest()
-        != "ff1e9104f31708c430ff3ec0568e746e6cf92a1d07f4505f8574d1df5c5fee95"
+        != "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2"
         or hashlib.sha256(control_upgrade.encode("utf-8")).hexdigest()
-        != "3cc886900dd735f1b54b58d1ac6dff14077e58ce846cd782e7a498172ed1ae14"
+        != "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649"
     ):
         fail("Failed-bootstrap production control source seal differs.")
     if operator_sudoers.splitlines() != [
@@ -7952,8 +7952,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "scripts/run-media-certificate-renewal.sh": "66b78f777483ebf3d679a5c73b241c1f476756af85af32320feda90a34baa2f1",
         "scripts/install-host-control.sh": "59ffa6abd659145f051c58e8130c89ec4349ac43b5dd5ede22fc4bb2ed714c28",
         "scripts/install-media-certificate-renewal.sh": "cd98f7f929522d94031c3d5e5ed8fdfd6cac7ffb907d6a006fb079db3acffe94",
-        "scripts/quarantine-failed-bootstrap.sh": "dc0fcd021a335a2056430ad12ee2ef5452d00c2abbc982bc933ba32da602acc0",
-        "scripts/upgrade-host-control.sh": "e1696b40ec32ee99e72a49144d53eb789f80344c9cb1fb3c21c2b9e0a41c5dfc",
+        "scripts/quarantine-failed-bootstrap.sh": "ff994510e57177c68be93b7c4b11100e6f3f7a59ddf6c71dabf89984c97bb9f8",
+        "scripts/upgrade-host-control.sh": "df51f1c583f4777eecffd0b78fddb6927c2d788a29149e620bfe9ae389f8e396",
     }
     post_lock_operation_anchors = {
         "scripts/prepare-media-certificate.sh": '[[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate preparation refuses an active deployment mutation."',
@@ -8596,6 +8596,12 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'GIT_CEILING_DIRECTORIES=/',
             '-c protocol.allow=never -c protocol.https.allow=always',
             'bind_previous_source() {',
+            'if action not in {"identity", "prepare", "verify"}:',
+            'if upgrades_root != state_root / "control-upgrades":',
+            'def exact_relative_directory(',
+            'dir_fd=parent_descriptor',
+            'dir_fd=backup_descriptor',
+            'follow_symlinks=False',
             'json.loads(raw_pointer.decode("utf-8"), object_pairs_hook=strict_object)',
             'document.get("releaseArchiveFile") != str(archive)',
             'exact_regular(helper_path, 0o600, 2 * 1024 * 1024, "Candidate archive authority")',
@@ -8607,6 +8613,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readarray -t predecessor_state <<<"${predecessor_output}"',
             '[[ ${previous_evidence_sha} == "${previous_sha}" ]]',
             'bind_previous_source "${control_pointer}" "${staging}" "${candidate}" prepare',
+            'bind_previous_source "${control_pointer}" "${state_root}" "${state_root}" identity',
+            'bind_previous_source "${transaction}/backup/current-host-control.json" "${transaction}" "${state_root}" identity',
             'if ! previous_state_output="$(',
             'readarray -t previous_state <<<"${previous_state_output}"',
             'previous_source="${transaction}/previous-source/${previous_commit}"',
@@ -8654,6 +8662,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
             'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
             'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
+            'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
             'rev-parse --verify "${requested_commit}^1"',
             'rev-list --parents -n 1 "${requested_commit}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8673,6 +8682,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_stage_expected_paths=(',
             'acme_transport_repair_expected_paths=(',
             'acme_transport_current_expected_paths=(',
+            'acme_transport_postfailure_current_expected_paths=(',
             'acme_transport_expected_paths=(',
             'diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}"',
             'GIT_NO_REPLACE_OBJECTS=1',
@@ -8684,6 +8694,11 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
             'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
             "deployment_recovery_upgrade=false",
+            "postfailure_control_recovery=true",
+            "require_postfailure_predecessor() {",
+            "preflight_postfailure_predecessor() {",
+            'require_postfailure_predecessor "${previous_commit}"',
+            "preflight_postfailure_predecessor",
             'validate_failed_bootstrap_upgrade_exception "${expected_commit}"',
             'terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
             '[[ ${terminal_recovery_passed} != true ]] || ! bash "${candidate}/scripts/verify-host-security.sh"',
@@ -8749,6 +8764,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
             'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
             'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
+            'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
             'rev-parse --verify "${current}^1"',
             'rev-list --parents -n 1 "${current}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8792,6 +8808,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_stage_expected_paths=(',
             'acme_transport_repair_expected_paths=(',
             'acme_transport_current_expected_paths=(',
+            'acme_transport_postfailure_current_expected_paths=(',
             'acme_transport_expected_paths=(',
             'object_pairs_hook=reject_duplicate',
             'metadata.st_uid != 0',
@@ -9164,6 +9181,16 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "reconcile_pending",
         "Host-control pending-journal reconciler",
     )
+    upgrade_predecessor_requirement = exact_shell_function(
+        control_upgrade,
+        "require_postfailure_predecessor",
+        "Host-control post-failure predecessor requirement",
+    )
+    upgrade_predecessor_preflight = exact_shell_function(
+        control_upgrade,
+        "preflight_postfailure_predecessor",
+        "Host-control post-failure predecessor preflight",
+    )
     upgrade_signal = exact_shell_function(
         control_upgrade,
         "handle_signal",
@@ -9192,19 +9219,21 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "repository-clean": "acbcc2f87c61ff09bbb0a1271e3ea1d91519ef66778739b04e6930c4a66156ac",
         "repository-bound-file": "32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f",
         "canonical-remote": "2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa",
-        "quarantine-lineage": "214cefc045416410a1cc116a0d4a54d17f626c839bbdefa18f8c8154e7f6fe69",
+        "quarantine-lineage": "90d30f29d1e2136dfa24596ae2adcdfc4d2825a12e82f72eb6986df644580333",
         "quarantine-state": "384733dad7fbc9bd502059dd1e6d71aaabcc99e3dd74ff4c426a85aefa6d0080",
         "quarantine-identity": "a400d1c326e60627c30647bdea253193797d5bef71ff1697612c4df4c812e952",
         "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
         "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
         "upgrade-selector": "0e40b1ff2fb132ed69e3eead53e5ae3b3ffeac9dc9727bc689f5ffbb62c92268",
-        "upgrade-path-validator": "2bb27fa9fafa52082afb8a3183e844d3c0aaa9d3deaea568ce283f9a5f50cb20",
-        "upgrade-binder": "ac956388b10512e7e90dd6b943e25585d80981af7842b08991c2208554bc841e",
+        "upgrade-path-validator": "82a960c090f3520a7f08d6a8bd47e38b518d50ba2edab0095c4328aef7dbf1ed",
+        "upgrade-binder": "5cd5c1c9608bf6f12f57278caaeec05bdd04a98a4254a86632a826b70e41d419",
         "upgrade-preflight": "9da1fb4f1b95523e4f5b45d2df7421b8537e05a02284308b6e218ebfd2b6d7b9",
-        "upgrade-exception": "1510782bf3acfcb04b9fbc473d88075e03c0ebc340785b61266bc6b96add9aae",
-        "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
+        "upgrade-exception": "f772ab41e59c625de9c3d73cfe4d0638dd966396a198a32c3d235acef310df76",
+        "upgrade-predecessor-requirement": "83fab62655d7a4eb81261d65415018d9fed720f5cf92d276675c93e728ac2493",
+        "upgrade-predecessor-preflight": "58ccef78be8852cc36f12d3a09ee9839cab4a2eed68158616357fa8e660e94e9",
+        "upgrade-reconcile": "2ec3ce5f86d8f99b61e470caac2a40fe21adaf265d47bdb9c0cbdc26fc028422",
         "upgrade-signal": "e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f",
-        "upgrade-main": "68322af0fc3c0f70c6c1cf4a815bb3bf2196cc92ff3d0d05d05083aa6e9dd09e",
+        "upgrade-main": "3f75a3ae9ec2677aafd8ee30a4e6c49eae4bf867a343ca06266fde2b23e8bf1c",
     }
     exact_sections = {
         "repository-directory": quarantine_directory,
@@ -9226,6 +9255,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "upgrade-binder": upgrade_bind,
         "upgrade-preflight": upgrade_preflight,
         "upgrade-exception": upgrade_exception,
+        "upgrade-predecessor-requirement": upgrade_predecessor_requirement,
+        "upgrade-predecessor-preflight": upgrade_predecessor_preflight,
         "upgrade-reconcile": upgrade_reconcile,
         "upgrade-signal": upgrade_signal,
         "upgrade-main": upgrade_main,
@@ -9374,7 +9405,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ),
         (
             upgrade_exception,
-            '  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
+            '  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}" || return 1',
             "Host-control active-mutation successor binder call",
         ),
         (
@@ -9603,6 +9634,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     upgrade_exception_gate = control_upgrade.index(
         'if [[ -e ${state_root}/deployment-mutation.json || -L ${state_root}/deployment-mutation.json ]]'
     )
+    upgrade_predecessor_preflight = control_upgrade.index(
+        "preflight_postfailure_predecessor", upgrade_exception_gate
+    )
     upgrade_first_mutation = control_upgrade.index('install -d -m 0755 -o root -g root /var/lib/mochirii', upgrade_exception_gate)
     upgrade_seal = control_upgrade.index('seal_control_state upgrade "${expected_commit}"')
     upgrade_recovery_readback = control_upgrade.index('terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh"', upgrade_seal)
@@ -9610,7 +9644,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         'bash "${candidate}/scripts/verify-host-security.sh" "${expected_commit}" "${candidate}" --upgrade-transaction',
         upgrade_recovery_readback,
     )
-    if not upgrade_exception_gate < upgrade_first_mutation < upgrade_seal < upgrade_recovery_readback < upgrade_terminal_verifier:
+    if not upgrade_exception_gate < upgrade_predecessor_preflight < upgrade_first_mutation < upgrade_seal < upgrade_recovery_readback < upgrade_terminal_verifier:
         fail("Failed-bootstrap host-control exception can bypass pre-mutation or terminal verification.")
     candidate_validation = control_upgrade.index(
         'bounded 300s /usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py"'
@@ -9703,15 +9737,31 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     recovery_predecessor_binding = control_upgrade.index(
         'bind_previous_source "${transaction}/backup/current-host-control.json"', reconcile_start
     )
+    recovery_predecessor_gate = control_upgrade.index(
+        'require_postfailure_predecessor "${previous_commit}"', recovery_predecessor_binding
+    )
     recovery_target_classification = control_upgrade.index(
         "if [[ ${successor_recovery} == false ]] && targets_are_new; then", recovery_predecessor_binding
     )
-    if not reconcile_start < recovery_predecessor_binding < recovery_target_classification:
+    if not reconcile_start < recovery_predecessor_binding < recovery_predecessor_gate < recovery_target_classification:
         fail("Interrupted host-control recovery trusts installed targets before predecessor reconstruction.")
     if '/opt/mochirii/forums/releases/${previous_commit}' in control_upgrade:
         fail("Host-control upgrade assumes an application release exists for its predecessor.")
-    if control_upgrade.count("metadata.st_nlink != 1") != 2:
+    if control_upgrade.count("metadata.st_nlink != 1") != 3:
         fail("Host-control predecessor archive or extracted-source link guard differs.")
+    predecessor_binding = control_upgrade.split("PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN", 1)[1].split(
+        "PREDECESSOR_ARCHIVE_BINDING_PYTHON_END", 1
+    )[0]
+    if any(
+        value not in predecessor_binding
+        for value in (
+            'dir_fd=parent_descriptor',
+            '"backup",\n        backup_root,',
+            'dir_fd=backup_descriptor',
+            'follow_symlinks=False',
+        )
+    ):
+        fail("Host-control predecessor backup boundary differs.")
     if re.search(r"readarray -t (?:predecessor_state|previous_state) < <\(\s*bind_previous_source", control_upgrade):
         fail("Host-control predecessor binding status is hidden by process substitution.")
     if re.search(r"readarray -t state < <\(\s*read_journal", control_upgrade):
