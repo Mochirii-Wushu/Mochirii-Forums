@@ -707,6 +707,39 @@ authorizes an identical-byte retry nor claims an unproved retained-runtime
 cause. It uses the same root-only, evidence-preserving quarantine and requires
 the next clean bootstrap to target the then-current canonical main.
 
+A ninth exact bootstrap-only exception covers the proved ACME transport
+boundary. Failed release `ed2d1f0bedf4e7865c5ac3737fdae2308630e25a`,
+reviewed clean-transport repair
+`5272554d33e9fcfc8f634ea14bc8e1f295b4278b`, and one canonical-main
+control/quarantine child must form an exact sole-parent chain. The repair and
+recovery-child path segments are checked independently against their exact
+eighteen- and twenty-six-path inventories. The cumulative thirty-six-path
+inventory additionally binds the retired 3.0.6 and replacement 3.1.4 ACME
+archive/license pairs, the immutable transport configuration, official source
+provenance and notices, both validation workflows, the runtime-asset verifier,
+the host-security verifier, the provider operations contract, and every exact
+host-lock/recovery-control consumer changed by the final child.
+Selection by exact failed commit keeps this lineage separate from every earlier
+exception; the final child cannot be another descendant or a merge commit. The
+reviewed repair uses the pinned official 3.1.4 client and a clean curl
+environment whose first option suppresses ambient configuration. It neither
+authorizes an identical-byte retry nor claims another retained-runtime cause.
+It uses the same root-only, evidence-preserving quarantine and requires the
+next clean bootstrap to target the then-current canonical main.
+
+Replay first binds the source checkout's ordinary root-owned repository
+directories, `.git/config`, `.git/HEAD`, required loose `refs/heads/main`, and
+`.git/index`. It rejects includes, worktree configuration, URL rewrites,
+proxies, credential helpers, aliases, duplicate or unknown keys, split-index
+authority, hidden index flags, ignored or other untracked files, shallow or
+alternate object authority, grafts, and commit-graph reads. All bound
+identities must remain exact through path validation. The canonical remote
+`main` lookup runs independently from `/` with an empty environment and with
+repository discovery, ambient configuration, credentials, proxies, redirects,
+and every non-HTTPS transport disabled. A local source-boundary change or a
+remote-head mismatch therefore fails before retained evidence or runtime state
+can be changed.
+
 The acceptance boundary for that final child is external to the mutually
 editable validator and hostile fixture: every direct launcher pins the exact
 bytes, uses Python `-I -S -B`, and both entrypoints reject ambiguous startup
