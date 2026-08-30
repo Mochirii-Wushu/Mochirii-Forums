@@ -433,16 +433,16 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "5abc810da012e3489b2a75ad286f450396998d94d99d425d5ca1417980b12923"
+            "396c8d71bf98f2f28e27a5b3811b259e639abd693e75b6638178e4f1a9fc5afb"
         ),
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
             "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
         ),
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "15c6ee7c22753441dd0a7ded2e141ee2dd8dcee27f1a5e704acb7af6e4cfc976"
+            "5850fac655ec926e45557a6af95f0d0fc45f1112ba58aa0256595ef14f6d138e"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
-            "7bb5fb4240e53ac620db9f87c2da1aec142e0d99e7615e6bc534392e30ac59ef"
+            "dacc0a4fe8a2b8939487c2b253341579a0b7d6de35017bad15678fe54c9eb9f8"
         ),
     }
     observed_contract_seals: dict[str, str] = {}
@@ -16536,6 +16536,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
     shlex.quote("")
 
     if os.name == "posix":
+        bash = shutil.which("bash")
         if bash is None:
             raise RuntimeError("Bash is required for the failed-bootstrap source-mode fixture.")
         with tempfile.TemporaryDirectory(prefix="mochirii-held-verifier-") as directory:
