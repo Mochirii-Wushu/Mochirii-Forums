@@ -433,13 +433,13 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "459a97be80f26d0f172022787a5f0553e7887eaa93dc6e4b17780afb27fe0b08"
+            "094040811b55293f19fea53d4714dc8ef8052656490c42301d3a4fccf113fa16"
         ),
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
             "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
         ),
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "651831266c6ce9c3e63f185726300517bad89ad79ea546bdedf6b22bd047cf25"
+            "505f65a69d1a369351c443af35c315213dffe8da21bfc52cb18acadf08833587"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
             "98f0a5b1faede67bf4a11e886da3cc6503f087b292c21befa12ddaeb76a8c653"
@@ -13499,46 +13499,59 @@ source_repository_git() {{
             scripts/validate-repository.py
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
           ;;
-        transport)
-          printf '%s\n' \
-            .github/workflows/disposable-bootstrap.yml \
-            .github/workflows/validate-repository.yml \
-            config/acme-sh-3.0.6.LICENSE.md \
-            config/acme-sh-3.0.6.gz.b64 \
-            config/acme-sh-3.1.4.LICENSE.md \
-            config/acme-sh-3.1.4.gz.b64 \
-            config/immutable-letsencrypt.fragment.yml \
-            docs/operations/DEPLOYMENT.md \
-            docs/operations/PROVIDER-DNS-TLS.md \
-            docs/operations/RECOVERY.md \
-            docs/operations/SOURCE-PROVENANCE.md \
-            docs/operations/THIRD-PARTY-NOTICES.md \
-            docs/operations/third-party-components.v1.json \
-            scripts/check-repository.ps1 \
-            scripts/check-source-introduction.ps1 \
-            scripts/finalize-member-rollout.sh \
-            scripts/host-backup.sh \
-            scripts/host-break-glass-admin.sh \
-            scripts/host-deploy.sh \
-            scripts/host-finalize-authentication.sh \
-            scripts/host-operation-lock.py \
-            scripts/host-restore-validate.sh \
-            scripts/host-stop-pending-activation.sh \
-            scripts/host-verify-wrapper.sh \
-            scripts/install-host-control.sh \
-            scripts/install-media-certificate-renewal.sh \
-            scripts/prepare-media-certificate.sh \
-            scripts/quarantine-failed-bootstrap.sh \
-            scripts/run-media-certificate-renewal.sh \
-            scripts/test-contracts.py \
-            scripts/test-host-operation-lock.py \
-            scripts/test-source-introduction.ps1 \
-            scripts/upgrade-host-control.sh \
-            scripts/validate-repository.py \
-            scripts/verify-host-security.sh \
-            scripts/verify-runtime-assets.sh
-          [[ ${{BINDER_MUTATION:-none}} != paths ]] || printf '%s\n' unexpected
-          ;;
+    transport)
+      printf '%s\n' \
+        .github/pull_request_template.md \
+        .github/workflows/disposable-bootstrap.yml \
+        .github/workflows/validate-repository.yml \
+        README.md \
+        config/acme-sh-3.0.6.LICENSE.md \
+        config/acme-sh-3.0.6.gz.b64 \
+        config/acme-sh-3.1.4.LICENSE.md \
+        config/acme-sh-3.1.4.gz.b64 \
+        config/app.yml.example \
+        config/immutable-letsencrypt.fragment.yml \
+        docs/adr/0005-promote-discourse-v2026-8-0.md \
+        docs/operations/CURRENT-STATE.md \
+        docs/operations/DEPLOYMENT.md \
+        docs/operations/PROVIDER-DNS-TLS.md \
+        docs/operations/RECOVERY.md \
+        docs/operations/RUNTIME-READINESS.md \
+        docs/operations/SOURCE-PROVENANCE.md \
+        docs/operations/THIRD-PARTY-NOTICES.md \
+        docs/operations/forum-central-identity.consumer.v1.json \
+        docs/operations/release-evidence.v2.example.json \
+        docs/operations/runtime-config.v1.example.json \
+        docs/operations/third-party-components.v1.json \
+        scripts/authentication-state.py \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/finalize-member-rollout.sh \
+        scripts/host-backup.sh \
+        scripts/host-break-glass-admin.sh \
+        scripts/host-deploy.sh \
+        scripts/host-finalize-authentication.sh \
+        scripts/host-operation-lock.py \
+        scripts/host-restore-validate.sh \
+        scripts/host-stop-pending-activation.sh \
+        scripts/host-verify-wrapper.sh \
+        scripts/install-host-control.sh \
+        scripts/install-media-certificate-renewal.sh \
+        scripts/prepare-media-certificate.sh \
+        scripts/quarantine-failed-bootstrap.sh \
+        scripts/run-media-certificate-renewal.sh \
+        scripts/test-contracts.py \
+        scripts/test-host-operation-lock.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/upgrade-host-control.sh \
+        scripts/validate-repository.py \
+        scripts/verify-host-security.sh \
+        scripts/verify-host.sh \
+        scripts/verify-pinned-source.py \
+        scripts/verify-runtime-assets.sh \
+        scripts/verify-site.rb
+      [[ ${{BINDER_MUTATION:-none}} != paths ]] || printf '%s\n' unexpected
+      ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
