@@ -12,8 +12,8 @@ immutable upstream inputs:
 
 - `discourse_docker`:
   `ed9f680b0df1de28f062de1769d89d22b2644d1b`;
-- Discourse core `v2026.7.1`:
-  `cbf996f65aae3da1843224aa624bcd9a225931ac`;
+- Discourse core `v2026.8.0`:
+  `badad7b0456a628e578bc48b9f8c1259422b5d58`;
 - Docker Manager, included by the official standalone template:
   `c008c3ca7fcc44775215843992e88190adb7b3bf`; and
 - Linux AMD64 base image:

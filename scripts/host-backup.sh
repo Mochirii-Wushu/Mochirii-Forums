@@ -61,7 +61,7 @@ if (
     release.get("schemaVersion") != 2
     or release.get("repositoryCommit") != sys.argv[2]
     or release.get("productionConfigurationSha256") != value
-    or release.get("discourseRevision") != "cbf996f65aae3da1843224aa624bcd9a225931ac"
+    or release.get("discourseRevision") != "badad7b0456a628e578bc48b9f8c1259422b5d58"
     or release.get("dockerManagerRevision") != "c008c3ca7fcc44775215843992e88190adb7b3bf"
     or release.get("discourseConnectEnabled") is not document.get("discourseConnectEnabled")
 ):
@@ -449,7 +449,7 @@ prove_running_backup_identity() {
   prove_bound_runtime_contract true || return 1
   [[ "$(timeout --signal=TERM --kill-after=5s 15 docker inspect --type container --format '{{.State.Status}}' app 2>/dev/null)" == running ]] || return 1
   timeout --signal=TERM --kill-after=5s 30 docker exec -u discourse app bash -lc \
-    'test "$MOCHIRII_REPOSITORY_COMMIT" = "$1" && test "$MOCHIRII_RELEASE_ASSET_ROOT" = /opt/mochirii-release && test "$DISCOURSE_ENABLE_DISCOURSE_CONNECT" = "$2" && test "$DISCOURSE_DISABLE_EMAILS" = no && test "$(git -C /var/www/discourse rev-parse HEAD)" = cbf996f65aae3da1843224aa624bcd9a225931ac && test "$(git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf' \
+    'test "$MOCHIRII_REPOSITORY_COMMIT" = "$1" && test "$MOCHIRII_RELEASE_ASSET_ROOT" = /opt/mochirii-release && test "$DISCOURSE_ENABLE_DISCOURSE_CONNECT" = "$2" && test "$DISCOURSE_DISABLE_EMAILS" = no && test "$(git -C /var/www/discourse rev-parse HEAD)" = badad7b0456a628e578bc48b9f8c1259422b5d58 && test "$(git -C /var/www/discourse/plugins/docker_manager rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf' \
     bash "${commit}" "${discourse_connect}" >/dev/null 2>&1 || return 1
 }
 
@@ -1225,7 +1225,7 @@ document.update(
         "releaseEvidenceFile": pathlib.Path(sys.argv[8]).name,
         "releaseEvidenceSha256": digest(sys.argv[8]),
         "discourseDockerRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
-        "discourseRevision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+        "discourseRevision": "badad7b0456a628e578bc48b9f8c1259422b5d58",
         "dockerManagerRevision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
         "baseImageDigest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
         "discourseConnectEnabled": sys.argv[9] == "true",

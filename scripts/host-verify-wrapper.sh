@@ -86,7 +86,7 @@ if (
     release.get("repositoryCommit") != sys.argv[2]
     or release.get("productionConfigurationSha256") != value
     or release.get("discourseDockerRevision") != "ed9f680b0df1de28f062de1769d89d22b2644d1b"
-    or release.get("discourseRevision") != "cbf996f65aae3da1843224aa624bcd9a225931ac"
+    or release.get("discourseRevision") != "badad7b0456a628e578bc48b9f8c1259422b5d58"
     or release.get("dockerManagerRevision") != "c008c3ca7fcc44775215843992e88190adb7b3bf"
     or release.get("baseImageDigest") != "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
     or release.get("discourseConnectEnabled") is not connect

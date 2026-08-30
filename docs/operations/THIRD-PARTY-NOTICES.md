@@ -6,10 +6,10 @@ member-facing product presentation Mochirii-only.
 ## Discourse core
 
 - Source: <https://github.com/discourse/discourse>
-- Selected revision: `cbf996f65aae3da1843224aa624bcd9a225931ac`
+- Selected revision: `badad7b0456a628e578bc48b9f8c1259422b5d58`
 - License: GPL-2.0-or-later
-- License: <https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/LICENSE.txt>
-- Copyright notice: <https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/COPYRIGHT.md>
+- License: <https://github.com/discourse/discourse/blob/badad7b0456a628e578bc48b9f8c1259422b5d58/LICENSE.txt>
+- Copyright notice: <https://github.com/discourse/discourse/blob/badad7b0456a628e578bc48b9f8c1259422b5d58/COPYRIGHT.md>
 
 ## Discourse Docker
 

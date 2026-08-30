@@ -1,6 +1,6 @@
 # Current State
 
-- Recorded: 2026-08-20
+- Recorded: 2026-08-30
 - Repository: `Mochirii-Wushu/Mochirii-Forums`
 - Visibility: Public
 - Default branch: `main`
@@ -19,8 +19,8 @@ backup, certificate, private key, or member data.
 
 The selected empty-install baseline is:
 
-- application `v2026.7.1` at
-  `cbf996f65aae3da1843224aa624bcd9a225931ac`;
+- application `v2026.8.0` at
+  `badad7b0456a628e578bc48b9f8c1259422b5d58`;
 - deployment source at
   `ed9f680b0df1de28f062de1769d89d22b2644d1b`;
 - Docker Manager, the sole official standalone component, at

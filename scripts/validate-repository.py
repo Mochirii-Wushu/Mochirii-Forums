@@ -98,7 +98,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE_MODE = False
 DOCKER_REVISION = "ed9f680b0df1de28f062de1769d89d22b2644d1b"
-CORE_REVISION = "cbf996f65aae3da1843224aa624bcd9a225931ac"
+CORE_REVISION = "badad7b0456a628e578bc48b9f8c1259422b5d58"
 DOCKER_MANAGER_REVISION = "c008c3ca7fcc44775215843992e88190adb7b3bf"
 BASE_DIGEST = "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
 ACME_REVISION = "3661fd86b6304115e42f43910e6dd452ab9866d6"
@@ -437,7 +437,7 @@ checks["narrative_system_user_branded"] =
 ADMIN_QUICK_START_TEMPLATE_SHA256 = "61215146fdcd1c7e3555ca9c98d7a44217f10bc4c9eb5ee81a931a5492d03f5c"
 ADMIN_QUICK_START_STORED_TEMPLATE_BYTES = 1305
 ADMIN_QUICK_START_STORED_TEMPLATE_SHA256 = "797e8a4616d96ed775fc51b1df92ee3d6bac0ce1b431050ba2af306894bdc766"
-RUNTIME_VERIFIER_SHA256 = "8bbef62aa9f74ce8372292a784d30c2ad5b0da9d4061e8a4184b128f499e0896"
+RUNTIME_VERIFIER_SHA256 = "919305d36344453f886695b2480e5c35c4fc42716d887b2659e72336aa384ab7"
 RESTORED_BACKUP_VERIFIER_SHA256 = "2804d9bfc738ff083f6a286bfa0fbca6bbe0c986e29d69dd732ab9453f832189"
 RESTORED_CHECK_EXIT_CODES = (
     ("repository_revision", 64, "repository-revision"),
@@ -453,17 +453,17 @@ RESTORED_CHECK_EXIT_CODES = (
     ("normal_upload_inventory", 74, "normal-upload-inventory"),
 )
 CONFIGURE_SITE_SHA256 = "b4c38e0c734ce7b1300756beee970578ee7f1521d10497a0820880808c714dd3"
-APP_TEMPLATE_SHA256 = "889de69b3a2f9e82a9d1ca33034d7cf6ec3717a124a767ad9028af3499313ccf"
+APP_TEMPLATE_SHA256 = "a6812c3dea49c28e8648cea102aae3dfab6708ba2337e916c63d74d102672fe4"
 ADMIN_RECOVERY_FIXTURE_SHA256 = "a9cee13eabafa16cba8bc4f0e2cf6fdef457df229d3157d761e65b936c95e733"
 SENSITIVE_LOG_VERIFIER_SHA256 = "dcd105f619674983c42c92eeff2f06dbdc37fca3779aa5e13acdbc8b80ffc09c"
 SENSITIVE_LOG_EXECUTABLE_SHA256 = "3e9ca44f8d9f4e2f89463fca323ba63388f2c059664cc4e0d25ebd1c9fcad6fa"
 DISCOURSE_CONNECT_VERIFIER_SHA256 = "f12739d6baba4eb4267509fd35b5e6f9ce79be19e5ec63b07e2134140041a360"
 CONTAINED_ACTIVATION_VERIFIER_SHA256 = "1ef24d7e9422a007fcc55a88f8c86d06fc618cae8e1ab311b6f91586e3e23bf1"
-HOST_NGINX_FILE_VERIFIER_SHA256 = "b7356abad4a80964825cf3a8cf1290ccd7c33d65fe0095c2dd47328f046ce9d9"
-HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "9300c08808e054a565bb41759f3bdc8dd0349f23971db715c10403cf07f34327"
+HOST_NGINX_FILE_VERIFIER_SHA256 = "e67a40acc0ea5108e329ff0ca66665e02595178fffcd00116ffb6fd9a56d3bac"
+HOST_NGINX_FILE_VERIFIER_PREFIX_SHA256 = "f4ac6e9b0bf13088e5113511143815bda57316132945aac20e43e75c94f36dc6"
 HOST_SENSITIVE_RESPONSE_VERIFIER_SHA256 = "cefc6ba11ee9810f228a9f47048c95d5d441e6de854a60d0a3629de7e6d3a0e7"
-HOST_VERIFY_SOURCE_SHA256 = "d506422d76d140591da3d0aa3291188d4738e6b23ba2ccb87ba56329da996129"
-DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "9aa1279010aac1a5b7c65b6634053792d15c17f788090456660f1a575aa9b98e"
+HOST_VERIFY_SOURCE_SHA256 = "a3326d759722a64251f36d6b12fba2b30f25b322241b5e5078a1b3550da0995c"
+DISPOSABLE_NGINX_HEADER_PROOF_SHA256 = "40d235147d0e82a40c40038cb965b9783561b11808cfbfe86cdb07c3cf2af422"
 DISPOSABLE_NGINX_OUTLET_EXTRACTOR_RUBY = r"""
 require "yaml"
 
@@ -541,7 +541,7 @@ EXPECTED_SERVER_TLS_SHA256 = tuple(
     for value in (PINNED_WEB_SSL_SERVER_OUTLET, MANAGED_WEB_SSL_SERVER_OUTLET)
 )
 OPENSEARCH_FILTER_BLOCK = '''        sub_filter_once off;
-        sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
+        sub_filter '<meta name="generator" content="Discourse 2026.8.0 - https://github.com/discourse/discourse version badad7b0456a628e578bc48b9f8c1259422b5d58">' '<meta name="generator" content="Mochirii Forums">';
         sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
         # The pinned metadata controller renders formats: [:xml], which Rails
         # serves as application/xml. Bind the replacement to that exact type.
@@ -553,7 +553,7 @@ NARRATIVE_AVATAR_WORKFLOW_CALL = '''          docker run "${ruby_fixture_contain
 '''
 NARRATIVE_AVATAR_WORKFLOW_STEP_SHA256 = "1869a2fc47c6a49a81dab9fa57b5a5800280a1a7373d07498fb1d5f4872dd44a"
 BRANDING_EMAIL_RENDERER_SHA256 = "0b504c71c1de2053585a20848e0515d2507d6d0b2a41c24eb99b83204b88c15c"
-PINNED_SOURCE_VERIFIER_SHA256 = "4af86c3f95dc54b1e51790b8c7954c38e7fc0c1ccfc1a4ce607b5b56078927db"
+PINNED_SOURCE_VERIFIER_SHA256 = "8abf93d00f5dc1ada28b91facf5e64d2a3403ba1fd88eaf30ab99ed98ef4d925"
 ADMIN_LOGIN_LINK_FIXTURE_SHA256 = "b3d459fdaf0bc78b01a3584c35d4c70f1d28369ffdde17b5debc809f95650dba"
 ADMIN_LOGIN_LINK_WORKFLOW_CALL = '''          docker run "${ruby_fixture_container[@]}" -v "$GITHUB_WORKSPACE:/repo:ro" "$image" \\
             ruby /repo/scripts/test-admin-login-link.rb >/dev/null
@@ -578,13 +578,13 @@ PINNED_OPENSEARCH_EVIDENCE = [
 PINNED_MAIL_RENDERING_EVIDENCE = [
     {
         "path": "app/mailers/user_notifications.rb",
-        "bytes": 28133,
-        "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
+        "bytes": 28162,
+        "sha256": "3602630baacc40c9f12668509f2687f1acc27cc3ce2c2a48da70aef71d855413",
     },
     {
         "path": "app/models/topic.rb",
-        "bytes": 78502,
-        "sha256": "fd6468dd779edc6767dd8fb380e36c735b0698f6f4a2951a5e8a3b186ea6f056",
+        "bytes": 79508,
+        "sha256": "2a03991616609352e91c12acfc25bc0ac4f6bb8dfb7be6fac15d1b4cad467593",
     },
     {
         "path": "app/mailers/admin_confirmation_mailer.rb",
@@ -608,13 +608,13 @@ PINNED_MAIL_RENDERING_EVIDENCE = [
     },
     {
         "path": "lib/discourse.rb",
-        "bytes": 39279,
-        "sha256": "351e1170f79acb9b321746df618339de5412c95b1ce4c13db2c17e96bf1d0678",
+        "bytes": 40115,
+        "sha256": "38c3087e26679edab92abd14be633e699bf9e66310b51fab5676b51836683ee2",
     },
     {
         "path": "config/locales/server.en.yml",
-        "bytes": 420250,
-        "sha256": "0ff18443abac07e496e27142f21b33e8935242ca3d55fd33531c1ace43a92f50",
+        "bytes": 425283,
+        "sha256": "d0da1bb59b0a7bcb9aa3dc9fc18435f81f5653af808bb326814ae5f4e9c9b0bf",
     },
     {
         "path": "app/helpers/user_notifications_helper.rb",
@@ -623,8 +623,8 @@ PINNED_MAIL_RENDERING_EVIDENCE = [
     },
     {
         "path": "config/routes.rb",
-        "bytes": 81601,
-        "sha256": "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b",
+        "bytes": 82005,
+        "sha256": "45f02f92b7542ecace6996eb3bdc4ba123138378f97ff3f796ed80907bfdedba",
     },
 ]
 PINNED_TOPIC_SEED_EVIDENCE = [
@@ -650,8 +650,8 @@ PINNED_TOPIC_SEED_EVIDENCE = [
     },
     {
         "path": "lib/post_revisor.rb",
-        "bytes": 29992,
-        "sha256": "f92dfd0ff095b0a72b181e0b5a8d649e331a22cf1a669de98718feecc1a9a2a2",
+        "bytes": 30381,
+        "sha256": "685de07e47f54b4fa3ce102602984d1a7101a743d76a909d0808a44f21447d43",
     },
     {
         "path": "lib/text_cleaner.rb",
@@ -674,8 +674,8 @@ PINNED_RESTORE_EVIDENCE = [
 PINNED_GRAVATAR_EVIDENCE = [
     {
         "path": "app/models/user.rb",
-        "bytes": 73523,
-        "sha256": "79c453b7bf56a69f7919572020ffa5fdf9b32de37255439d0a22c2b73f3ff7ca",
+        "bytes": 73778,
+        "sha256": "f4616cd846d65e1dc7fe4ef77d0ec13f2f9f52e78b5c2da2ca65e4defe632ce3",
     },
     {
         "path": "app/models/user_avatar.rb",
@@ -739,6 +739,7 @@ ALLOWED_FILES = frozenset(
     "docs/adr/0002-pull-only-upstream-and-source-introduction.md",
     "docs/adr/0003-supported-source-introduction-packet.md",
     "docs/adr/0004-authorized-standalone-deployment.md",
+    "docs/adr/0005-promote-discourse-v2026-8-0.md",
     "docs/operations/CURRENT-STATE.md",
     "docs/operations/DEPLOYMENT.md",
     "docs/operations/PROVIDER-DNS-TLS.md",
@@ -1111,10 +1112,10 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "c71fdbb50065245b5c965c63931c46cf36d4d8bc34d2877b7ffb1a477203bb1f"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "5c13215371f0440b390f631b8144c77830d54fa5eb560c1571045347bff70f5b"
+CONTRACT_TEST_SOURCE_SHA256 = "4655e94aac76366e35eaf6e69ad613a45a8426bed0ab590e6af64941a9235e56"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "3498bd4d10f923f0bd1170951269eb6a43a3cf473fa8b8a79b236cf75348d611"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "2b5f859bd11b5baacd31e08d3fd7499e88671e6f9989b4872c7867322871a9ff"
+CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "f4038e8c2dce1c35da6fb4ec36da0b785db5024707fcbae4573e04ad1b8c5464"
 FAILED_BOOTSTRAP_TEST_SHA256 = "5df44cfd21d07b18552e0d608ad885631f7703b2b6a2a97a1d0766e6a8e8fa09"
 
 HOST_OPERATION_LOCK_SOURCE_SHA256 = {
@@ -1123,13 +1124,13 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/verify-host-security.sh": "0ee38b1d22f236a7234133a08d7ee79e30b7f5b757bb6881315ae10293e0bfce",
     "scripts/media-certificate-operation.sh": "d58d56bfbc9cc82e7144081b1e14b38c2ea043d54bfa0473059fcc7accbd29e1",
     "scripts/finalize-member-rollout.sh": "a4ffdbe2759a44c749ec85244a15a92cbf3791c6efa61bc44c598ac87fb4b573",
-    "scripts/host-backup.sh": "b49803dac6e6c30c5f8042cb23961184d958ed7be74109736c62dc93e14bbeb3",
+    "scripts/host-backup.sh": "d9b8e543b1a066df7ac96d7043d6832fab35af4dde1f8bf92fbb0fe7b3806543",
     "scripts/host-break-glass-admin.sh": "6f0dbfce7194307e608f3d82874f90934c081c0dc53503588fab3dc62cb5907b",
-    "scripts/host-deploy.sh": "afc8c77f7c2e964511b83e4625cd1720dfc11f8f25a9118214863dcac3850377",
+    "scripts/host-deploy.sh": "3dc62905966c02262cb8a2dc65946e1a0dbe0d42bdb2daf4b633040bf3265d71",
     "scripts/host-finalize-authentication.sh": "cc58b669efd485b1bbe892a26cb1b8d3018876585ece59c47903b21638f160da",
-    "scripts/host-restore-validate.sh": "c31a22a2fb1021d04c7a003cea633d24fee2c84c29517eac6fd31d1c470e108a",
+    "scripts/host-restore-validate.sh": "136685b79abde05d4f0d057ce7e2839bc3015d7064c05de3563f3ef7aeee3f63",
     "scripts/host-stop-pending-activation.sh": "165d40c8370f8b933397ca35274ac9934aa8748d7b6e96bb3039747e242572cb",
-    "scripts/host-verify-wrapper.sh": "100e380dc49b3a88b232513f4dcde258d85b7ec1ae931a547d24d1eaae1e78a9",
+    "scripts/host-verify-wrapper.sh": "f4c64391e9a9c7cadca5a654b1e8d3e495b005f28a96ed136e9d715a717820d1",
     "scripts/prepare-media-certificate.sh": "e1a3d69f6aa4a2a7d92bd6663270a7c00694cc5a735f4a21dec2e62c9b9777e2",
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
@@ -1257,7 +1258,7 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
         "ROOT": "6c0caf441a1aad2240e7aaccbb2a73915fc5ce62a90eb857836d905c68760c7d",
         "MANAGED_WEB_SSL_SERVER_OUTLET": "611b3941a610ea9d23805d773cbba7dbf7ce57c06b2355f10d65a8720196c8e0",
         "EXPECTED_SERVER_TLS_SHA256": "885cfdce0ad10ad670c604584bf51bc0e05027d1e6ab92cf45b35a23209914ce",
-        "ALLOWED_FILES": "e7367ee329fa1492f2951dc2df311f3a5927ed4013320792b6b72080edba692e",
+        "ALLOWED_FILES": "c3fa267c540e72125db18f3b8be7109368f991c94ad438be59ecd528fa0bfd40",
     }
     protected_seal_names = {
         "VALIDATOR_CLI_SOURCE_SHA256",
@@ -1524,7 +1525,7 @@ def validate_contract_test_acceptance_chain(source: str) -> None:
     )
     if (
         hashlib.sha256(module_startup_source.encode("utf-8")).hexdigest()
-        != "51fcf8c0d167a8fcca5229c7f5790fc41aabee2a72467ba8e54943dfa7e5846c"
+        != "a2048f7928b16af6f31f7bb3e9c0f6331695c6e1e1362a032cb8a75bc2118dfc"
     ):
         fail("Hostile fixture module-startup source seal differs.")
     if any(
@@ -4078,7 +4079,7 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
     outlet_required = {
         shared_include,
         "sub_filter_once off;",
-        "sub_filter '<meta name=\"generator\" content=\"Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac\">' '<meta name=\"generator\" content=\"Mochirii Forums\">';",
+        "sub_filter '<meta name=\"generator\" content=\"Discourse 2026.8.0 - https://github.com/discourse/discourse version badad7b0456a628e578bc48b9f8c1259422b5d58\">' '<meta name=\"generator\" content=\"Mochirii Forums\">';",
         "sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';",
         "sub_filter_types application/xml;",
     }
@@ -4235,7 +4236,7 @@ def validate_sensitive_response_header_contract(app: str, host_verify: str) -> N
             "855b446d8b3d803097b970fd14f5696f0395e01464d8518dba152a200d51bfa2",
         ),
         "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf": (
-            "12bb9c934b236c6885b02f3dbf59d809ce66a5ea75b8522f76f9f59cc626df2e",
+            "d635bd4990ee665503dbdf6607c8dc2e3dc6cd291096c96a6b2cc88b2abdc55f",
         ),
         "/etc/nginx/conf.d/outlets/server/10-http.conf": (
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -7942,7 +7943,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "scripts/finalize-member-rollout.sh": "ddc13528e6942b0717e09f790dfa6a161e1749c9a1057c6c06488ea9ae6e5a32",
         "scripts/host-backup.sh": "7c8c23ca4213480be187c678ebfc3ccf15aa055e9cc76871b11884df7875eb36",
         "scripts/host-break-glass-admin.sh": "546dc26353a6bc17dcb862c0161252b2e2068dc86cc68f0fa2af4c8f7df0de8a",
-        "scripts/host-deploy.sh": "314cb5665cdc9dbc4621487e843ddf5e90c0beb62cbba111c8917e8103a13d6c",
+        "scripts/host-deploy.sh": "b68cae76cbf1ef7fd2e8907d4b8a6ec196ad8798d4c8bb1160ad00a7f0712150",
         "scripts/host-finalize-authentication.sh": "721e2307e6f9e0c221781ab725aee29248670ba1398beaf0754fd057cc697c76",
         "scripts/host-restore-validate.sh": "4d3e5c2a11ae03bd2aef7f3805959fc4a1d9d0ebea5a894e0be96bf9e1a8603f",
         "scripts/host-stop-pending-activation.sh": "bdd313a57a694d15f5ca5b2accd5628724b52709ccbd3f959908c183f2b410ae",
@@ -9775,7 +9776,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         ],
         "bounded full hosted source verification",
     )
-    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = cbf996f65aae3da1843224aa624bcd9a225931ac'"
+    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = badad7b0456a628e578bc48b9f8c1259422b5d58'"
     hosted_manager_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)\" = c008c3ca7fcc44775215843992e88190adb7b3bf'"
     hosted_source_block = '''timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc '
   set -e
@@ -10375,7 +10376,7 @@ def validate_runtime_rails_execution_contract() -> None:
         fail("Build-time Rails runner is not explicitly owner-scoped.")
 
     workflow = read(".github/workflows/disposable-bootstrap.yml")
-    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
+    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"badad7b0456a628e578bc48b9f8c1259422b5d58\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
     if workflow.count(owner_probe) != 1:
         fail("Disposable bootstrap does not prove Rails UID, Git, and database ownership together.")
 

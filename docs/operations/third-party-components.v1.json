@@ -1,14 +1,14 @@
 {
   "schemaVersion": 3,
-  "recordedAt": "2026-08-14",
-  "status": "stage4-exact-revisions-selected-runtime-inactive",
+  "recordedAt": "2026-08-30",
+  "status": "current-monthly-release-exact-revisions-selected-runtime-inactive",
   "application": {
     "name": "Discourse core",
     "repository": "https://github.com/discourse/discourse.git",
-    "release": "v2026.7.1",
-    "tagObjectSha1": "11c70a765e46c3229d66e108883fa2d33f5d0b81",
-    "revision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
-    "revisionTree": "0aeceebe79c4d2da8cf0fab213514335c201bfa7",
+    "release": "v2026.8.0",
+    "tagObjectSha1": "ac9de1e10018989468ded7fe40d71fe009d97632",
+    "revision": "badad7b0456a628e578bc48b9f8c1259422b5d58",
+    "revisionTree": "81f61aa5bf0c84fb305ea26910d15d37da7967bb",
     "sourceImported": false,
     "coreForked": false,
     "licenseSpdx": "GPL-2.0-or-later",
@@ -36,7 +36,7 @@
       {
         "path": "lib/version.rb",
         "bytes": 456,
-        "sha256": "03c22af27c90cb46d96f6964b0c1d7776c4e6e4fcc47f3665a2c8dab8722cbbb"
+        "sha256": "02d208ce461d574bfe7e730d1a48e5c38e2a2aac637d3248268d350952ba135c"
       }
     ],
     "semanticEvidenceFiles": [
@@ -52,13 +52,13 @@
       },
       {
         "path": "app/models/theme.rb",
-        "bytes": 34639,
-        "sha256": "ac66d5c93971418cafdf23dc7f511759b5d305eb5e5bf2ffab0b8b65057e5c73"
+        "bytes": 34946,
+        "sha256": "22418bd0cfaf38fefadfc419b5b0e1aa9ec8757a775d9517d52199dd6ef1d2a7"
       },
       {
         "path": "app/models/user.rb",
-        "bytes": 73523,
-        "sha256": "79c453b7bf56a69f7919572020ffa5fdf9b32de37255439d0a22c2b73f3ff7ca"
+        "bytes": 73778,
+        "sha256": "f4616cd846d65e1dc7fe4ef77d0ec13f2f9f52e78b5c2da2ca65e4defe632ce3"
       },
       {
         "path": "app/models/user_avatar.rb",
@@ -77,8 +77,8 @@
       },
       {
         "path": "lib/tasks/themes.rake",
-        "bytes": 17809,
-        "sha256": "39650acb10dc1bf4be1ddd180ec45532f6b030e07df1f57a8894fec508e0d54e"
+        "bytes": 17867,
+        "sha256": "be0adb3de47edf87142e9decab3de50e08febf7057b3e9073fa4fce685a8bdc1"
       },
       {
         "path": "config/nginx.sample.conf",
@@ -107,13 +107,13 @@
       },
       {
         "path": "app/mailers/user_notifications.rb",
-        "bytes": 28133,
-        "sha256": "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4"
+        "bytes": 28162,
+        "sha256": "3602630baacc40c9f12668509f2687f1acc27cc3ce2c2a48da70aef71d855413"
       },
       {
         "path": "app/models/topic.rb",
-        "bytes": 78502,
-        "sha256": "fd6468dd779edc6767dd8fb380e36c735b0698f6f4a2951a5e8a3b186ea6f056"
+        "bytes": 79508,
+        "sha256": "2a03991616609352e91c12acfc25bc0ac4f6bb8dfb7be6fac15d1b4cad467593"
       },
       {
         "path": "db/fixtures/990_topics.rb",
@@ -137,8 +137,8 @@
       },
       {
         "path": "lib/post_revisor.rb",
-        "bytes": 29992,
-        "sha256": "f92dfd0ff095b0a72b181e0b5a8d649e331a22cf1a669de98718feecc1a9a2a2"
+        "bytes": 30381,
+        "sha256": "685de07e47f54b4fa3ce102602984d1a7101a743d76a909d0808a44f21447d43"
       },
       {
         "path": "lib/text_cleaner.rb",
@@ -177,13 +177,13 @@
       },
       {
         "path": "lib/discourse.rb",
-        "bytes": 39279,
-        "sha256": "351e1170f79acb9b321746df618339de5412c95b1ce4c13db2c17e96bf1d0678"
+        "bytes": 40115,
+        "sha256": "38c3087e26679edab92abd14be633e699bf9e66310b51fab5676b51836683ee2"
       },
       {
         "path": "config/locales/server.en.yml",
-        "bytes": 420250,
-        "sha256": "0ff18443abac07e496e27142f21b33e8935242ca3d55fd33531c1ace43a92f50"
+        "bytes": 425283,
+        "sha256": "d0da1bb59b0a7bcb9aa3dc9fc18435f81f5653af808bb326814ae5f4e9c9b0bf"
       },
       {
         "path": "app/helpers/user_notifications_helper.rb",
@@ -202,18 +202,18 @@
       },
       {
         "path": "app/controllers/users_controller.rb",
-        "bytes": 77502,
-        "sha256": "af7c12efc5ae29e96fb251737e8438783726c930745e9eed95de9b33a94ddb69"
+        "bytes": 77653,
+        "sha256": "b8a70542bf4ec847406eb1a16f14eb8b698bf47d5241ef46cd865965297f1622"
       },
       {
         "path": "app/controllers/session_controller.rb",
-        "bytes": 39512,
-        "sha256": "022627791f2a237c4bfb789d9523b077f995c8a649d91a01a7006898ecc256e2"
+        "bytes": 40149,
+        "sha256": "7d54021d1ce7e21a6ab8b9ba8202aca37386b2676af5168c7177da3e23338c85"
       },
       {
         "path": "config/routes.rb",
-        "bytes": 81601,
-        "sha256": "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b"
+        "bytes": 82005,
+        "sha256": "45f02f92b7542ecace6996eb3bdc4ba123138378f97ff3f796ed80907bfdedba"
       },
       {
         "path": "plugins/discourse-apple-auth/config/settings.yml",

@@ -16,7 +16,7 @@ layout with persistent `/shared` data:
 | Component | Exact selection |
 | --- | --- |
 | Discourse Docker | `ed9f680b0df1de28f062de1769d89d22b2644d1b` |
-| Discourse core | `v2026.7.1` / `cbf996f65aae3da1843224aa624bcd9a225931ac` |
+| Discourse core | `v2026.8.0` / `badad7b0456a628e578bc48b9f8c1259422b5d58` |
 | Docker Manager | `c008c3ca7fcc44775215843992e88190adb7b3bf` |
 | Linux AMD64 base | `sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48` |
 | Host | Ubuntu 24.04 LTS, SGP1, 1 vCPU, 2 GiB RAM, 50 GiB disk, 2 GiB swap |
@@ -182,8 +182,8 @@ preserve sanitized evidence. Never destroy imported or pre-existing data.
 ## Primary references
 
 - [Official Discourse Docker repository](https://github.com/discourse/discourse_docker)
-- [Pinned installation requirements](https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/docs/INSTALL.md)
-- [Pinned cloud standalone layout](https://github.com/discourse/discourse/blob/cbf996f65aae3da1843224aa624bcd9a225931ac/docs/INSTALL-cloud.md)
+- [Pinned installation requirements](https://github.com/discourse/discourse/blob/badad7b0456a628e578bc48b9f8c1259422b5d58/docs/INSTALL.md)
+- [Pinned cloud standalone layout](https://github.com/discourse/discourse/blob/badad7b0456a628e578bc48b9f8c1259422b5d58/docs/INSTALL-cloud.md)
 - [Official S3-compatible storage guidance](https://meta.discourse.org/t/configure-an-s3-compatible-object-storage-provider-for-uploads/148916)
 - [Official Discourse backup and restore guidance](https://meta.discourse.org/t/create-download-and-restore-a-backup-of-your-discourse-database/122710)
 - [Official Droplet backup pricing](https://docs.digitalocean.com/products/backups/details/pricing/)

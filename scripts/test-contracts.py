@@ -113,13 +113,13 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/verify-host-security.sh": "0ee38b1d22f236a7234133a08d7ee79e30b7f5b757bb6881315ae10293e0bfce",
     "scripts/media-certificate-operation.sh": "d58d56bfbc9cc82e7144081b1e14b38c2ea043d54bfa0473059fcc7accbd29e1",
     "scripts/finalize-member-rollout.sh": "a4ffdbe2759a44c749ec85244a15a92cbf3791c6efa61bc44c598ac87fb4b573",
-    "scripts/host-backup.sh": "b49803dac6e6c30c5f8042cb23961184d958ed7be74109736c62dc93e14bbeb3",
+    "scripts/host-backup.sh": "d9b8e543b1a066df7ac96d7043d6832fab35af4dde1f8bf92fbb0fe7b3806543",
     "scripts/host-break-glass-admin.sh": "6f0dbfce7194307e608f3d82874f90934c081c0dc53503588fab3dc62cb5907b",
-    "scripts/host-deploy.sh": "afc8c77f7c2e964511b83e4625cd1720dfc11f8f25a9118214863dcac3850377",
+    "scripts/host-deploy.sh": "3dc62905966c02262cb8a2dc65946e1a0dbe0d42bdb2daf4b633040bf3265d71",
     "scripts/host-finalize-authentication.sh": "cc58b669efd485b1bbe892a26cb1b8d3018876585ece59c47903b21638f160da",
-    "scripts/host-restore-validate.sh": "c31a22a2fb1021d04c7a003cea633d24fee2c84c29517eac6fd31d1c470e108a",
+    "scripts/host-restore-validate.sh": "136685b79abde05d4f0d057ce7e2839bc3015d7064c05de3563f3ef7aeee3f63",
     "scripts/host-stop-pending-activation.sh": "165d40c8370f8b933397ca35274ac9934aa8748d7b6e96bb3039747e242572cb",
-    "scripts/host-verify-wrapper.sh": "100e380dc49b3a88b232513f4dcde258d85b7ec1ae931a547d24d1eaae1e78a9",
+    "scripts/host-verify-wrapper.sh": "f4c64391e9a9c7cadca5a654b1e8d3e495b005f28a96ed136e9d715a717820d1",
     "scripts/prepare-media-certificate.sh": "e1a3d69f6aa4a2a7d92bd6663270a7c00694cc5a735f4a21dec2e62c9b9777e2",
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
@@ -426,13 +426,13 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "5c13215371f0440b390f631b8144c77830d54fa5eb560c1571045347bff70f5b"
+            "3498bd4d10f923f0bd1170951269eb6a43a3cf473fa8b8a79b236cf75348d611"
         ),
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
             "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
         ),
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "2b5f859bd11b5baacd31e08d3fd7499e88671e6f9989b4872c7867322871a9ff"
+            "f4038e8c2dce1c35da6fb4ec36da0b785db5024707fcbae4573e04ad1b8c5464"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
             "5df44cfd21d07b18552e0d608ad885631f7703b2b6a2a97a1d0766e6a8e8fa09"
@@ -570,7 +570,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
         "ROOT": "6c0caf441a1aad2240e7aaccbb2a73915fc5ce62a90eb857836d905c68760c7d",
         "MANAGED_WEB_SSL_SERVER_OUTLET": "611b3941a610ea9d23805d773cbba7dbf7ce57c06b2355f10d65a8720196c8e0",
         "EXPECTED_SERVER_TLS_SHA256": "885cfdce0ad10ad670c604584bf51bc0e05027d1e6ab92cf45b35a23209914ce",
-        "ALLOWED_FILES": "e7367ee329fa1492f2951dc2df311f3a5927ed4013320792b6b72080edba692e",
+        "ALLOWED_FILES": "c3fa267c540e72125db18f3b8be7109368f991c94ad438be59ecd528fa0bfd40",
     }
     observed_executable_assignments = set()
     forbidden_assignment_nodes = (
@@ -636,9 +636,9 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
     )
     if (
         hashlib.sha256(verifier_source.encode("utf-8")).hexdigest()
-        != "b3ffc4342b2953c7df83e4219923323fc7b9b2783e75fedbbb8dcdb25066c028"
+        != "b955ccda630222800d334cfdf0f6e5e6a751ff4549230650f30bf3ca0dce6bfd"
         or hashlib.sha256(contract_verifier_source.encode("utf-8")).hexdigest()
-        != "43d5902ddb176b28013ab7043fd8751b1d23ef1aaa33569432da5a146d42f6db"
+        != "daba23b8074dcc330ebe3cb4b37ba33b2cef440c3a941bc9995861cf32c15a5a"
         or hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
         != "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
     ):
@@ -4431,7 +4431,7 @@ def test_sensitive_response_header_contract() -> None:
     owner_probe_line = (
         "          sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; "
         "raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; "
-        "raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; "
+        "raise unless GitUtils.git_version == \"badad7b0456a628e578bc48b9f8c1259422b5d58\"; "
         "ActiveRecord::Base.connection.execute(\"SELECT 1\"); "
         "raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"
     )
@@ -8248,7 +8248,7 @@ def expect_validation_failure(action, label: str) -> None:
 
 def test_repository_governance() -> None:
     allowed = sorted(VALIDATOR.ALLOWED_FILES)
-    if len(allowed) != 164:
+    if len(allowed) != 165:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")
@@ -9220,7 +9220,7 @@ def test_authentication_state_machine() -> None:
             "releaseArchiveBytes": 1024,
             "releaseArchiveContentManifestSha256": "8" * 64,
             "discourseDockerRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
-            "discourseRevision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+            "discourseRevision": "badad7b0456a628e578bc48b9f8c1259422b5d58",
             "dockerManagerRevision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
             "baseImageDigest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
             "productionConfigurationSha256": configuration,
@@ -9308,7 +9308,7 @@ def test_authentication_state_machine() -> None:
                 "releaseArchiveBytes": 1024,
                 "releaseArchiveContentManifestSha256": "8" * 64,
                 "discourseDockerRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
-                "discourseRevision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+                "discourseRevision": "badad7b0456a628e578bc48b9f8c1259422b5d58",
                 "dockerManagerRevision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
                 "baseImageDigest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
                 "productionConfigurationSha256": release_configuration,
@@ -10881,7 +10881,7 @@ def test_host_containment_contract() -> None:
         or "safe.directory" in backup
     ):
         raise RuntimeError("Backup runtime Git proof is not bound to the repository owner.")
-    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = cbf996f65aae3da1843224aa624bcd9a225931ac'"
+    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = badad7b0456a628e578bc48b9f8c1259422b5d58'"
     hosted_manager_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)\" = c008c3ca7fcc44775215843992e88190adb7b3bf'"
     hosted_source_block = '''timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc '
   set -e
@@ -12598,7 +12598,7 @@ def test_host_operation_lock_contract() -> None:
         "scripts/finalize-member-rollout.sh": "ddc13528e6942b0717e09f790dfa6a161e1749c9a1057c6c06488ea9ae6e5a32",
         "scripts/host-backup.sh": "7c8c23ca4213480be187c678ebfc3ccf15aa055e9cc76871b11884df7875eb36",
         "scripts/host-break-glass-admin.sh": "546dc26353a6bc17dcb862c0161252b2e2068dc86cc68f0fa2af4c8f7df0de8a",
-        "scripts/host-deploy.sh": "314cb5665cdc9dbc4621487e843ddf5e90c0beb62cbba111c8917e8103a13d6c",
+        "scripts/host-deploy.sh": "b68cae76cbf1ef7fd2e8907d4b8a6ec196ad8798d4c8bb1160ad00a7f0712150",
         "scripts/host-finalize-authentication.sh": "721e2307e6f9e0c221781ab725aee29248670ba1398beaf0754fd057cc697c76",
         "scripts/host-restore-validate.sh": "4d3e5c2a11ae03bd2aef7f3805959fc4a1d9d0ebea5a894e0be96bf9e1a8603f",
         "scripts/host-stop-pending-activation.sh": "bdd313a57a694d15f5ca5b2accd5628724b52709ccbd3f959908c183f2b410ae",
@@ -14324,7 +14324,7 @@ def test_runtime_rails_execution_contract() -> None:
     template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
     owner_scoped_build_runner = """su discourse -c 'bundle exec rails runner
           \"$MOCHIRII_RELEASE_ASSET_ROOT/configure-site.rb\"'"""
-    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
+    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"badad7b0456a628e578bc48b9f8c1259422b5d58\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
 
     def assert_contract(candidate_sources: dict[str, str], candidate_template: str) -> None:
         for relative, expected in expected_wrappers.items():

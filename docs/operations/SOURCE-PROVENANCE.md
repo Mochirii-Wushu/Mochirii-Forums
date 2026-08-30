@@ -11,7 +11,7 @@ The immutable selections are recorded in
 
 | Component | Exact selection |
 | --- | --- |
-| Application | `cbf996f65aae3da1843224aa624bcd9a225931ac` |
+| Application | `badad7b0456a628e578bc48b9f8c1259422b5d58` |
 | Deployment source | `ed9f680b0df1de28f062de1769d89d22b2644d1b` |
 | Docker Manager | `c008c3ca7fcc44775215843992e88190adb7b3bf` |
 | Base image, Linux AMD64 | `sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48` |
@@ -98,6 +98,6 @@ moving branch or tag because drift exists.
 ## Primary references
 
 - [Selected deployment source](https://github.com/discourse/discourse_docker/tree/ed9f680b0df1de28f062de1769d89d22b2644d1b)
-- [Selected application source](https://github.com/discourse/discourse/tree/cbf996f65aae3da1843224aa624bcd9a225931ac)
+- [Selected application source](https://github.com/discourse/discourse/tree/badad7b0456a628e578bc48b9f8c1259422b5d58)
 - [Official one-core correction](https://github.com/discourse/discourse_docker/commit/ed9f680b0df1de28f062de1769d89d22b2644d1b)
 - [Official release support index](https://releases.discourse.org/)

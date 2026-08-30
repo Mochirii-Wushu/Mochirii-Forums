@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 readonly docker_revision="ed9f680b0df1de28f062de1769d89d22b2644d1b"
-readonly core_revision="cbf996f65aae3da1843224aa624bcd9a225931ac"
+readonly core_revision="badad7b0456a628e578bc48b9f8c1259422b5d58"
 readonly manager_revision="c008c3ca7fcc44775215843992e88190adb7b3bf"
 readonly base_image="discourse/base@sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
 readonly incoming_root="/var/lib/mochirii/forums/incoming"
@@ -23,9 +23,9 @@ readonly deployment_transaction="/var/lib/mochirii/forums/deployment-transaction
 readonly deployment_terminal="/var/lib/mochirii/forums/current-deployment.json"
 readonly launcher_timeout_seconds=7200
 readonly launcher_cumulative_budget_seconds=7800
-readonly repository_validator_sha256="86b31cb000de32830165e10c4e93d91c22215ead8b6ae34212e283c965ee1ba5"
-readonly repository_contract_tests_sha256="c71fdbb50065245b5c965c63931c46cf36d4d8bc34d2877b7ffb1a477203bb1f"
-readonly repository_python_acceptance_root_sha256="72c920501378b0ffbbb679d605f57ab802c06f3298a77b8cbd10fcc9577e8b9d"
+readonly repository_validator_sha256="dedeb5ab815c96bd32d549ddcb1b0c0ec7a3cac3250503345db106a5e8e8fd7d"
+readonly repository_contract_tests_sha256="4655e94aac76366e35eaf6e69ad613a45a8426bed0ab590e6af64941a9235e56"
+readonly repository_python_acceptance_root_sha256="019eae4742ecdaf9d34f84fee2ebca8a29de9e628d69fe2cd85b91e6139a3b5b"
 readonly operation_started_epoch="$(date +%s)"
 
 fail() {
@@ -1967,7 +1967,7 @@ if (
     or document.get("releaseArchiveBytes") != int(sys.argv[11])
     or document.get("releaseArchiveContentManifestSha256") != sys.argv[12]
     or document.get("discourseDockerRevision") != "ed9f680b0df1de28f062de1769d89d22b2644d1b"
-    or document.get("discourseRevision") != "cbf996f65aae3da1843224aa624bcd9a225931ac"
+    or document.get("discourseRevision") != "badad7b0456a628e578bc48b9f8c1259422b5d58"
     or document.get("dockerManagerRevision") != "c008c3ca7fcc44775215843992e88190adb7b3bf"
     or document.get("baseImageDigest") != "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
     or document.get("discourseConnectEnabled") is not connect
@@ -3433,7 +3433,7 @@ document = {
     "releaseArchiveBytes": int(sys.argv[15]),
     "releaseArchiveContentManifestSha256": sys.argv[16],
     "discourseDockerRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
-    "discourseRevision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+    "discourseRevision": "badad7b0456a628e578bc48b9f8c1259422b5d58",
     "dockerManagerRevision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
     "baseImageDigest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
     "productionConfigurationSha256": sys.argv[4],
