@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 30
     env:
       EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256: 72c920501378b0ffbbb679d605f57ab802c06f3298a77b8cbd10fcc9577e8b9d
+      MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256: 82eb4ec81cd638a7195ff9e1211bf8e8abc72a5cbb485b30a038112ac49ad6f8
     steps:
       - name: Check out exact event head without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,8 +45,8 @@ jobs:
           set -euo pipefail
           validator_sha256="$(sha256sum -- scripts/validate-repository.py | awk '{print $1}')"
           contract_sha256="$(sha256sum -- scripts/test-contracts.py | awk '{print $1}')"
-          [[ "$validator_sha256" == 86b31cb000de32830165e10c4e93d91c22215ead8b6ae34212e283c965ee1ba5 ]]
-          [[ "$contract_sha256" == c71fdbb50065245b5c965c63931c46cf36d4d8bc34d2877b7ffb1a477203bb1f ]]
+          [[ "$validator_sha256" == fc4d4d4721ca10869fd9285e082d6e23027017a54f835d1948f4ce5976efc5a8 ]]
+          [[ "$contract_sha256" == e54b1931383d843efaffd6e1fe37a816af47633c9fea9cb2574882ae9e72d8e5 ]]
           observed_python_acceptance_root_sha256="$(printf 'mochirii-forums-python-acceptance-root-v1\0%s\0%s\n' "$validator_sha256" "$contract_sha256" | sha256sum | awk '{print $1}')"
           [[ "$observed_python_acceptance_root_sha256" == "$MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256" ]]
           sudo -n env -i \

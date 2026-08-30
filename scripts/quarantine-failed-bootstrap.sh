@@ -42,6 +42,7 @@ readonly reviewed_acme_stage_failed_bootstrap_commit="637a7c315574840156ac46615b
 readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"
 readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"
 readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"
+readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"
 
 safe_source_repository_directory_identity() {
   local path="$1" descriptor="$2" metadata kind device inode uid gid mode links modified changed
@@ -638,20 +639,63 @@ validate_source_lineage() {
     scripts/validate-repository.py
     scripts/verify-host-security.sh
   )
-  local -ar acme_transport_expected_paths=(
+  local -ar acme_transport_postfailure_current_expected_paths=(
+    .github/pull_request_template.md
     .github/workflows/disposable-bootstrap.yml
     .github/workflows/validate-repository.yml
+    README.md
+    config/app.yml.example
+    docs/adr/0005-promote-discourse-v2026-8-0.md
+    docs/operations/CURRENT-STATE.md
+    docs/operations/DEPLOYMENT.md
+    docs/operations/RECOVERY.md
+    docs/operations/RUNTIME-READINESS.md
+    docs/operations/SOURCE-PROVENANCE.md
+    docs/operations/THIRD-PARTY-NOTICES.md
+    docs/operations/forum-central-identity.consumer.v1.json
+    docs/operations/release-evidence.v2.example.json
+    docs/operations/runtime-config.v1.example.json
+    docs/operations/third-party-components.v1.json
+    scripts/authentication-state.py
+    scripts/check-repository.ps1
+    scripts/check-source-introduction.ps1
+    scripts/host-backup.sh
+    scripts/host-deploy.sh
+    scripts/host-restore-validate.sh
+    scripts/host-verify-wrapper.sh
+    scripts/quarantine-failed-bootstrap.sh
+    scripts/test-contracts.py
+    scripts/test-source-introduction.ps1
+    scripts/upgrade-host-control.sh
+    scripts/validate-repository.py
+    scripts/verify-host.sh
+    scripts/verify-pinned-source.py
+    scripts/verify-site.rb
+  )
+  local -ar acme_transport_expected_paths=(
+    .github/pull_request_template.md
+    .github/workflows/disposable-bootstrap.yml
+    .github/workflows/validate-repository.yml
+    README.md
     config/acme-sh-3.0.6.LICENSE.md
     config/acme-sh-3.0.6.gz.b64
     config/acme-sh-3.1.4.LICENSE.md
     config/acme-sh-3.1.4.gz.b64
+    config/app.yml.example
     config/immutable-letsencrypt.fragment.yml
+    docs/adr/0005-promote-discourse-v2026-8-0.md
+    docs/operations/CURRENT-STATE.md
     docs/operations/DEPLOYMENT.md
     docs/operations/PROVIDER-DNS-TLS.md
     docs/operations/RECOVERY.md
+    docs/operations/RUNTIME-READINESS.md
     docs/operations/SOURCE-PROVENANCE.md
     docs/operations/THIRD-PARTY-NOTICES.md
+    docs/operations/forum-central-identity.consumer.v1.json
+    docs/operations/release-evidence.v2.example.json
+    docs/operations/runtime-config.v1.example.json
     docs/operations/third-party-components.v1.json
+    scripts/authentication-state.py
     scripts/check-repository.ps1
     scripts/check-source-introduction.ps1
     scripts/finalize-member-rollout.sh
@@ -674,7 +718,10 @@ validate_source_lineage() {
     scripts/upgrade-host-control.sh
     scripts/validate-repository.py
     scripts/verify-host-security.sh
+    scripts/verify-host.sh
+    scripts/verify-pinned-source.py
     scripts/verify-runtime-assets.sh
+    scripts/verify-site.rb
   )
   local -a actual_paths expected_paths
   case "${failed}" in
@@ -720,7 +767,7 @@ validate_source_lineage() {
       ;;
     "${reviewed_acme_transport_failed_bootstrap_commit}")
       reviewed_recovery_commit="${reviewed_acme_transport_recovery_commit}"
-      current_parent_commit="${reviewed_recovery_commit}"
+      current_parent_commit="${reviewed_acme_transport_postfailure_parent_commit}"
       expected_paths=("${acme_transport_expected_paths[@]}")
       ;;
     *) return 1 ;;
@@ -756,6 +803,10 @@ validate_source_lineage() {
   if [[ ${failed} == "${reviewed_acme_material_failed_bootstrap_commit}" ]]; then
     [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
     [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}" 2>/dev/null)" == "${reviewed_acme_material_review_authority_commit} ${reviewed_recovery_commit}" ]] || return 1
+  fi
+  if [[ ${failed} == "${reviewed_acme_transport_failed_bootstrap_commit}" ]]; then
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_acme_transport_postfailure_parent_commit}^1" 2>/dev/null)" == "${reviewed_recovery_commit}" ]] || return 1
+    [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_acme_transport_postfailure_parent_commit}" 2>/dev/null)" == "${reviewed_acme_transport_postfailure_parent_commit} ${reviewed_recovery_commit}" ]] || return 1
   fi
   [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-parse --verify "${reviewed_recovery_commit}^1" 2>/dev/null)" == "${failed}" ]] || return 1
   [[ "$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" rev-list --parents -n 1 "${reviewed_recovery_commit}" 2>/dev/null)" == "${reviewed_recovery_commit} ${failed}" ]] || return 1
@@ -809,12 +860,19 @@ validate_source_lineage() {
     for index in "${!acme_transport_repair_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_transport_repair_expected_paths[$index]}" ]] || return 1
     done
-    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${current}" 2>/dev/null)" || return 1
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_recovery_commit}" "${reviewed_acme_transport_postfailure_parent_commit}" 2>/dev/null)" || return 1
     (( ${#actual_path_output} <= 65536 )) || return 1
     mapfile -t actual_paths <<< "${actual_path_output}"
     [[ ${#actual_paths[@]} -eq ${#acme_transport_current_expected_paths[@]} ]] || return 1
     for index in "${!acme_transport_current_expected_paths[@]}"; do
       [[ ${actual_paths[$index]} == "${acme_transport_current_expected_paths[$index]}" ]] || return 1
+    done
+    actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${reviewed_acme_transport_postfailure_parent_commit}" "${current}" 2>/dev/null)" || return 1
+    (( ${#actual_path_output} <= 65536 )) || return 1
+    mapfile -t actual_paths <<< "${actual_path_output}"
+    [[ ${#actual_paths[@]} -eq ${#acme_transport_postfailure_current_expected_paths[@]} ]] || return 1
+    for index in "${!acme_transport_postfailure_current_expected_paths[@]}"; do
+      [[ ${actual_paths[$index]} == "${acme_transport_postfailure_current_expected_paths[$index]}" ]] || return 1
     done
   fi
   actual_path_output="$(source_repository_git "${source_directory_fd}" "${git_directory_fd}" diff-tree --no-commit-id --name-only -r "${failed}" "${current}" 2>/dev/null)" || return 1

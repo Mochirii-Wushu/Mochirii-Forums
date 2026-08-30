@@ -975,7 +975,7 @@ local_image_id="$(timeout --signal=TERM --kill-after=5s 30s docker image inspect
 [[ ${container_image_id} == "${local_image_id}" && ${container_image_id} =~ ^sha256:[0-9a-f]{64}$ ]] || fail "Running container differs from the exact local launcher image."
 timeout --signal=TERM --kill-after=5s 30s docker exec app bash -lc 'test "$MOCHIRII_REPOSITORY_COMMIT" = "$1"' bash "${expected_commit}"
 timeout --signal=TERM --kill-after=5s 30s docker exec app bash -lc 'test "$MOCHIRII_RELEASE_ASSET_ROOT" = "/opt/mochirii-release"'
-timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test "$(cd /var/www/discourse && git rev-parse HEAD)" = cbf996f65aae3da1843224aa624bcd9a225931ac'
+timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test "$(cd /var/www/discourse && git rev-parse HEAD)" = badad7b0456a628e578bc48b9f8c1259422b5d58'
 timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test "$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)" = c008c3ca7fcc44775215843992e88190adb7b3bf'
 timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc '
   set -e
@@ -1050,7 +1050,7 @@ EXPECTED_FILE_SHA256 = {
         "855b446d8b3d803097b970fd14f5696f0395e01464d8518dba152a200d51bfa2",
     ),
     "/etc/nginx/conf.d/outlets/discourse/40-mochirii-public-metadata.conf": (
-        "12bb9c934b236c6885b02f3dbf59d809ce66a5ea75b8522f76f9f59cc626df2e",
+        "d635bd4990ee665503dbdf6607c8dc2e3dc6cd291096c96a6b2cc88b2abdc55f",
     ),
     "/etc/nginx/conf.d/outlets/server/10-http.conf": (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

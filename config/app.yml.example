@@ -19,7 +19,7 @@ __MOCHIRII_EXPOSE__
 params:
   db_default_text_search_config: "pg_catalog.english"
   db_shared_buffers: "256MB"
-  version: "cbf996f65aae3da1843224aa624bcd9a225931ac"
+  version: "badad7b0456a628e578bc48b9f8c1259422b5d58"
 
 env:
   LC_ALL: "C.UTF-8"
@@ -322,7 +322,7 @@ __MOCHIRII_TLS_RUN__
         # change must update and revalidate them before release.
         include conf.d/outlets/discourse/35-mochirii-public-response-headers.inc;
         sub_filter_once off;
-        sub_filter '<meta name="generator" content="Discourse 2026.7.1 - https://github.com/discourse/discourse version cbf996f65aae3da1843224aa624bcd9a225931ac">' '<meta name="generator" content="Mochirii Forums">';
+        sub_filter '<meta name="generator" content="Discourse 2026.8.0 - https://github.com/discourse/discourse version badad7b0456a628e578bc48b9f8c1259422b5d58">' '<meta name="generator" content="Mochirii Forums">';
         sub_filter '<Tags>discourse forum</Tags>' '<Tags>Mochirii Forums</Tags>';
         # The pinned metadata controller renders formats: [:xml], which Rails
         # serves as application/xml. Bind the replacement to that exact type.

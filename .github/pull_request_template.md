@@ -10,7 +10,7 @@
 - [ ] Forums base commit: `<full protected main SHA>`
 - [ ] Candidate head commit: `<full pull request head SHA>`
 - [ ] Discourse Docker: `ed9f680b0df1de28f062de1769d89d22b2644d1b`
-- [ ] Discourse application: `cbf996f65aae3da1843224aa624bcd9a225931ac`
+- [ ] Discourse application: `badad7b0456a628e578bc48b9f8c1259422b5d58`
 - [ ] Docker Manager: `c008c3ca7fcc44775215843992e88190adb7b3bf`
 - [ ] Linux AMD64 base image: `sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48`
 - [ ] The complete repository file inventory remains allowlisted; every added, removed, or renamed path is intentional and reflected in validation.

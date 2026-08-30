@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Hostile fixture tests for rendering and deterministic theme packaging."""
-
+""""""
 from __future__ import annotations
 
 import sys
@@ -106,6 +105,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+def _paths(value):
+    return [item.replace("@", ".github/", 1).replace("%", "config/", 1).replace("^", "docs/operations/", 1).replace("$", "scripts/", 1) for item in value.split()]
+
+
+TRANSPORT_PATHS = _paths(
+    "@pull_request_template.md @workflows/disposable-bootstrap.yml @workflows/validate-repository.yml README.md %app.yml.example docs/adr/0005-promote-discourse-v2026-8-0.md ^CURRENT-STATE.md ^DEPLOYMENT.md ^RECOVERY.md ^RUNTIME-READINESS.md ^SOURCE-PROVENANCE.md ^THIRD-PARTY-NOTICES.md ^forum-central-identity.consumer.v1.json ^release-evidence.v2.example.json ^runtime-config.v1.example.json ^third-party-components.v1.json $authentication-state.py $check-repository.ps1 $check-source-introduction.ps1 $host-backup.sh $host-deploy.sh $host-restore-validate.sh $host-verify-wrapper.sh $quarantine-failed-bootstrap.sh $test-contracts.py $test-source-introduction.ps1 $upgrade-host-control.sh $validate-repository.py $verify-host.sh $verify-pinned-source.py $verify-site.rb"
+)
+TRANSPORT_SHELL = " ".join(TRANSPORT_PATHS)
 
 HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/host-operation-lock.py": "120b12e7f963b59423c55e64610ac83ea2c51edd8def3dd944db8197dff0b364",
@@ -113,19 +120,19 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/verify-host-security.sh": "0ee38b1d22f236a7234133a08d7ee79e30b7f5b757bb6881315ae10293e0bfce",
     "scripts/media-certificate-operation.sh": "d58d56bfbc9cc82e7144081b1e14b38c2ea043d54bfa0473059fcc7accbd29e1",
     "scripts/finalize-member-rollout.sh": "a4ffdbe2759a44c749ec85244a15a92cbf3791c6efa61bc44c598ac87fb4b573",
-    "scripts/host-backup.sh": "b49803dac6e6c30c5f8042cb23961184d958ed7be74109736c62dc93e14bbeb3",
+    "scripts/host-backup.sh": "d9b8e543b1a066df7ac96d7043d6832fab35af4dde1f8bf92fbb0fe7b3806543",
     "scripts/host-break-glass-admin.sh": "6f0dbfce7194307e608f3d82874f90934c081c0dc53503588fab3dc62cb5907b",
-    "scripts/host-deploy.sh": "afc8c77f7c2e964511b83e4625cd1720dfc11f8f25a9118214863dcac3850377",
+    "scripts/host-deploy.sh": "3dc62905966c02262cb8a2dc65946e1a0dbe0d42bdb2daf4b633040bf3265d71",
     "scripts/host-finalize-authentication.sh": "cc58b669efd485b1bbe892a26cb1b8d3018876585ece59c47903b21638f160da",
-    "scripts/host-restore-validate.sh": "c31a22a2fb1021d04c7a003cea633d24fee2c84c29517eac6fd31d1c470e108a",
+    "scripts/host-restore-validate.sh": "136685b79abde05d4f0d057ce7e2839bc3015d7064c05de3563f3ef7aeee3f63",
     "scripts/host-stop-pending-activation.sh": "165d40c8370f8b933397ca35274ac9934aa8748d7b6e96bb3039747e242572cb",
-    "scripts/host-verify-wrapper.sh": "100e380dc49b3a88b232513f4dcde258d85b7ec1ae931a547d24d1eaae1e78a9",
+    "scripts/host-verify-wrapper.sh": "f4c64391e9a9c7cadca5a654b1e8d3e495b005f28a96ed136e9d715a717820d1",
     "scripts/prepare-media-certificate.sh": "e1a3d69f6aa4a2a7d92bd6663270a7c00694cc5a735f4a21dec2e62c9b9777e2",
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
     "scripts/install-media-certificate-renewal.sh": "3809145fb4d8591e79cfefec92ebad7b36d8f772a280650221cb589d07d9994b",
-    "scripts/quarantine-failed-bootstrap.sh": "ff1e9104f31708c430ff3ec0568e746e6cf92a1d07f4505f8574d1df5c5fee95",
-    "scripts/upgrade-host-control.sh": "3cc886900dd735f1b54b58d1ac6dff14077e58ce846cd782e7a498172ed1ae14",
+    "scripts/quarantine-failed-bootstrap.sh": "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2",
+    "scripts/upgrade-host-control.sh": "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649",
 }
 HOST_DEPLOY_ACCEPTANCE_SEALS = (
     "repository_validator_sha256",
@@ -426,16 +433,16 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "5c13215371f0440b390f631b8144c77830d54fa5eb560c1571045347bff70f5b"
+            "3e4e30e689ee9855ce3b7d43bebc888c41b0776a6e76701f112bdb705fa89b7b"
         ),
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
             "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
         ),
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "2b5f859bd11b5baacd31e08d3fd7499e88671e6f9989b4872c7867322871a9ff"
+            "1e8c7004c1768df665bbd804f7b0ff4f42147ae7ec1bc5d9b9932691ba09805c"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
-            "5df44cfd21d07b18552e0d608ad885631f7703b2b6a2a97a1d0766e6a8e8fa09"
+            "245a2af4aab3c16b9f7e628ade2c5f2aa311b1b33152b4dd44d793646ee4978d"
         ),
     }
     observed_contract_seals: dict[str, str] = {}
@@ -570,7 +577,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
         "ROOT": "6c0caf441a1aad2240e7aaccbb2a73915fc5ce62a90eb857836d905c68760c7d",
         "MANAGED_WEB_SSL_SERVER_OUTLET": "611b3941a610ea9d23805d773cbba7dbf7ce57c06b2355f10d65a8720196c8e0",
         "EXPECTED_SERVER_TLS_SHA256": "885cfdce0ad10ad670c604584bf51bc0e05027d1e6ab92cf45b35a23209914ce",
-        "ALLOWED_FILES": "e7367ee329fa1492f2951dc2df311f3a5927ed4013320792b6b72080edba692e",
+        "ALLOWED_FILES": "c3fa267c540e72125db18f3b8be7109368f991c94ad438be59ecd528fa0bfd40",
     }
     observed_executable_assignments = set()
     forbidden_assignment_nodes = (
@@ -636,9 +643,9 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
     )
     if (
         hashlib.sha256(verifier_source.encode("utf-8")).hexdigest()
-        != "b3ffc4342b2953c7df83e4219923323fc7b9b2783e75fedbbb8dcdb25066c028"
+        != "b955ccda630222800d334cfdf0f6e5e6a751ff4549230650f30bf3ca0dce6bfd"
         or hashlib.sha256(contract_verifier_source.encode("utf-8")).hexdigest()
-        != "43d5902ddb176b28013ab7043fd8751b1d23ef1aaa33569432da5a146d42f6db"
+        != "5ee641f88167d8c26235a1fc2dc6ff1202df41691b64ccd5d1800cd275e308b5"
         or hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
         != "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
     ):
@@ -1293,7 +1300,7 @@ def test_acme_install_byte_stability() -> None:
             order_end,
         )
     ):
-        raise RuntimeError("Production certificate stage, installed validator, material validator, or ordering boundary differs.")
+        raise RuntimeError("Check.")
     stage_tool_source = letsencrypt[
         letsencrypt.index(stage_tool_begin) + len(stage_tool_begin) : letsencrypt.index(stage_tool_end)
     ]
@@ -2209,8 +2216,6 @@ printf leaked-success
     if any(source.count(fragment) != 1 for fragment in vendor_webroot_fragments):
         raise RuntimeError("Pinned ACME webroot directory, token write, or token-mode seam differs.")
 
-    # The production image is Linux. The actual install behavior is exercised on
-    # Linux CI; Windows still binds the exact rendered command and pinned bytes.
     if os.name == "nt":
         return
 
@@ -4431,7 +4436,7 @@ def test_sensitive_response_header_contract() -> None:
     owner_probe_line = (
         "          sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; "
         "raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; "
-        "raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; "
+        "raise unless GitUtils.git_version == \"badad7b0456a628e578bc48b9f8c1259422b5d58\"; "
         "ActiveRecord::Base.connection.execute(\"SELECT 1\"); "
         "raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"
     )
@@ -7249,7 +7254,7 @@ def test_certificate_preparation_recovery_contract() -> None:
     )
     positions = [prepared_recovery.index(value) for value in prepared_order]
     if positions != sorted(positions):
-        raise RuntimeError("Prepared-phase certificate recovery can adopt a lineage before ACME reconciliation or exact validation.")
+        raise RuntimeError("Check.")
     issuance = prepare[prepare.index("media_run_certbot_dns_transaction") :]
     if issuance.index("validate_lineage") > issuance.index("write_preparation_journal issued"):
         raise RuntimeError("Initial certificate issuance can commit an unvalidated lineage.")
@@ -7504,7 +7509,7 @@ def test_certificate_control_evidence_adoption_contract() -> None:
         'timeout --signal=TERM --kill-after=10s 180s bash "${host_security_verifier}"',
     )
     if any(value not in installer for value in required):
-        raise RuntimeError("Certificate install lost its journaled predecessor, exact-byte readback, or terminal control reseal boundary.")
+        raise RuntimeError("Check.")
     if "--locks media,primary" in installer:
         raise RuntimeError("Certificate install lock ordering can deadlock the governed host-control upgrade.")
 
@@ -7540,7 +7545,7 @@ def test_certificate_control_evidence_adoption_contract() -> None:
     )
     install_positions = [install.index(value) for value in install_order]
     if install_positions != sorted(install_positions):
-        raise RuntimeError("Certificate install can clear or report success before exact readback, reseal, and terminal verification.")
+        raise RuntimeError("Check.")
     if 'if path.exists() or path.is_symlink():' not in evidence or 'set(document) - {"recordedAt"}' not in evidence:
         raise RuntimeError("Immutable host-control evidence lost exact idempotent retry adoption.")
     for source in (evidence, verifier):
@@ -7916,11 +7921,6 @@ def test_storage_response_boundary() -> None:
         if canary not in normal_upload_fixture:
             raise RuntimeError("Normal-upload inventory hostile fixture coverage differs.")
 
-    # These hostile Ruby fixtures execute only in the exact pinned, isolated
-    # disposable-bootstrap image asserted above. The offline Python contract
-    # intentionally has no host Ruby or floating container dependency.
-
-
 def test_ssh_dispatch_contract() -> None:
     source = (ROOT / "scripts/ssh-deploy-dispatch.py").read_text(encoding="utf-8")
     backup_workflow = (ROOT / ".github/workflows/backup-forums.yml").read_text(encoding="utf-8")
@@ -8248,7 +8248,7 @@ def expect_validation_failure(action, label: str) -> None:
 
 def test_repository_governance() -> None:
     allowed = sorted(VALIDATOR.ALLOWED_FILES)
-    if len(allowed) != 164:
+    if len(allowed) != 165:
         raise RuntimeError("The exact Stage 4 repository inventory count changed.")
     if VALIDATOR.validate_inventory_paths(allowed) != allowed:
         raise RuntimeError("The exact Stage 4 repository inventory did not round trip.")
@@ -8770,8 +8770,6 @@ def test_reviewed_source_pull_request_wrapper() -> None:
     }:
         raise RuntimeError("Reviewed-source write payload differs.")
 
-    # A failure after the commit-object write leaves no ref. A new dispatch may
-    # create a replacement orphan commit before completing the ref and PR.
     after_commit_only = execute(
         [
             *common([]),
@@ -9111,10 +9109,6 @@ def test_authentication_state_machine() -> None:
             raise RuntimeError("Activation-deploy recovery lifecycle rejected a required exact transition state.")
 
     protected_reader = AUTHENTICATION._read_protected
-    # The repository fixture runs without host root on both Windows and the
-    # Ubuntu CI runner. Static contracts cover root:0600 enforcement; this
-    # isolated tree exercises the deep evidence graph without weakening the
-    # production reader.
     AUTHENTICATION._read_protected = lambda path, _label: path.read_bytes()
     with tempfile.TemporaryDirectory(prefix="mochirii-activation-failure-state-") as directory:
         state_root = Path(directory)
@@ -9220,7 +9214,7 @@ def test_authentication_state_machine() -> None:
             "releaseArchiveBytes": 1024,
             "releaseArchiveContentManifestSha256": "8" * 64,
             "discourseDockerRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
-            "discourseRevision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+            "discourseRevision": "badad7b0456a628e578bc48b9f8c1259422b5d58",
             "dockerManagerRevision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
             "baseImageDigest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
             "productionConfigurationSha256": configuration,
@@ -9308,7 +9302,7 @@ def test_authentication_state_machine() -> None:
                 "releaseArchiveBytes": 1024,
                 "releaseArchiveContentManifestSha256": "8" * 64,
                 "discourseDockerRevision": "ed9f680b0df1de28f062de1769d89d22b2644d1b",
-                "discourseRevision": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+                "discourseRevision": "badad7b0456a628e578bc48b9f8c1259422b5d58",
                 "dockerManagerRevision": "c008c3ca7fcc44775215843992e88190adb7b3bf",
                 "baseImageDigest": "sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48",
                 "productionConfigurationSha256": release_configuration,
@@ -10881,7 +10875,7 @@ def test_host_containment_contract() -> None:
         or "safe.directory" in backup
     ):
         raise RuntimeError("Backup runtime Git proof is not bound to the repository owner.")
-    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = cbf996f65aae3da1843224aa624bcd9a225931ac'"
+    hosted_core_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse && git rev-parse HEAD)\" = badad7b0456a628e578bc48b9f8c1259422b5d58'"
     hosted_manager_readback = "timeout --signal=TERM --kill-after=5s 30s docker exec -u discourse app bash -lc 'test \"$(cd /var/www/discourse/plugins/docker_manager && git rev-parse HEAD)\" = c008c3ca7fcc44775215843992e88190adb7b3bf'"
     hosted_source_block = '''timeout --signal=TERM --kill-after=10s 60s docker exec -u discourse app bash -lc '
   set -e
@@ -11550,7 +11544,7 @@ def test_backup_restore_normal_upload_contract() -> None:
         'pointer_bytes != (str(clean_path) + "\\n").encode("utf-8")',
     )
     if any(value not in finalizer for value in finalizer_required):
-        raise RuntimeError("Member rollout no longer requires the exact disposable terminal, restored upload, inventory, and final clean publication chain.")
+        raise RuntimeError("Check.")
     if any(value in finalizer for value in ('glob("*-restore.json")', "rglob(", "latest_restore", "latest-restore")):
         raise RuntimeError("Member rollout scans for a restore record instead of requiring the exact current-restore terminal.")
 
@@ -11746,7 +11740,7 @@ def test_backup_restore_normal_upload_contract() -> None:
         "action_contain_temporary_runtime", "action_authorize_original_stop", "action_complete_original_state",
     )
     if any(value not in backup_transaction for value in helper_required):
-        raise RuntimeError("Durable backup transaction lost operation identity, predecessor, adoption, retirement, terminal-phase, or parent-fsync enforcement.")
+        raise RuntimeError("Check.")
 
     host_backup_operation = (
         '[[ $# -eq 2 ]] || fail "Usage: host-backup.sh EXPECTED_COMMIT BACKUP_OPERATION_SHA256"',
@@ -11812,7 +11806,7 @@ def test_backup_restore_normal_upload_contract() -> None:
         'restore_evidence="${evidence_root}/${commit}-${configuration}-${restore_identity[0]}-restore.json"',
     )
     if any(value not in deterministic_identity for value in deterministic_required):
-        raise RuntimeError("Restore evidence identity is no longer derived deterministically from durable journal and clean-backup state.")
+        raise RuntimeError("Check.")
     adoption_required = (
         'if path.exists() or path.is_symlink():',
         'path.read_bytes() != temporary.read_bytes()',
@@ -11874,7 +11868,7 @@ def test_atomic_operator_evidence_publication_contract() -> None:
             if "storage-cleanup-required.json" not in prefix:
                 raise RuntimeError("Deployment evidence gained an unreviewed direct-final publication.")
     if deploy.count("os.link(candidate, path, follow_symlinks=False)") < 4:
-        raise RuntimeError("Storage, release, pending-authentication, or activation-failure evidence escaped atomic no-replace publication.")
+        raise RuntimeError("Check.")
     if stop.count("os.link(candidate, path, follow_symlinks=False)") < 2:
         raise RuntimeError("One operator containment transition still exposes a partial final-name record.")
 
@@ -11898,10 +11892,10 @@ def test_atomic_operator_evidence_publication_contract() -> None:
         or 'expected_complete = {' not in complete_validation
         or 'complete.get("websiteRepositoryCommit") != website.get("websiteRepositoryCommit")' not in complete_validation
     ):
-        raise RuntimeError("Authentication record-created/pointer-pending resume still depends on fresh or conflicting Website evidence.")
+        raise RuntimeError("Check.")
     complete_publish = authentication[authentication.index('python3 -B - "${authentication_record}"') : authentication.index('[[ "$(stat -c', authentication.index('python3 -B - "${authentication_record}"'))]
     if "if path.exists() or path.is_symlink():" not in complete_publish or "os.link(candidate, path, follow_symlinks=False)" not in complete_publish:
-        raise RuntimeError("Authentication complete evidence is not exact-existing idempotent after record-before-pointer interruption.")
+        raise RuntimeError("Check.")
     break_glass = (ROOT / "scripts/host-break-glass-admin.sh").read_text(encoding="utf-8")
     verify_wrapper = (ROOT / "scripts/host-verify-wrapper.sh").read_text(encoding="utf-8")
     bounded_reads = {
@@ -12390,7 +12384,7 @@ def test_historical_disaster_recovery_entrypoint_contract() -> None:
         'Terminal historical adoption journal was not retired.',
     )
     if any(value not in restore for value in restore_required):
-        raise RuntimeError("Historical C0 restore lost collision gates, provenance equality, phase ownership, or terminal retirement.")
+        raise RuntimeError("Check.")
     collision = restore.index('Historical terminal reconciliation refuses an active backup transaction.')
     terminal_complete = restore.index('"${historical_helper}" complete', collision)
     if collision > terminal_complete:
@@ -12506,7 +12500,7 @@ def test_host_operation_lock_contract() -> None:
     if any(value not in helper for value in helper_contract):
         raise RuntimeError("Host-operation lock helper lost its private no-follow inode, ordering, or inherited-FD boundary.")
     if 'LOCK_ORDER = ("media", "primary")' in helper or 'CANONICAL_ROOT = pathlib.Path("/run/lock")' in helper:
-        raise RuntimeError("Host-operation lock helper can reverse order or anchor beneath the attacker-writable lock directory.")
+        raise RuntimeError("Check.")
 
     fixture_contract = (
         'Linked /run parent received a lock artifact.',
@@ -12598,7 +12592,7 @@ def test_host_operation_lock_contract() -> None:
         "scripts/finalize-member-rollout.sh": "ddc13528e6942b0717e09f790dfa6a161e1749c9a1057c6c06488ea9ae6e5a32",
         "scripts/host-backup.sh": "7c8c23ca4213480be187c678ebfc3ccf15aa055e9cc76871b11884df7875eb36",
         "scripts/host-break-glass-admin.sh": "546dc26353a6bc17dcb862c0161252b2e2068dc86cc68f0fa2af4c8f7df0de8a",
-        "scripts/host-deploy.sh": "314cb5665cdc9dbc4621487e843ddf5e90c0beb62cbba111c8917e8103a13d6c",
+        "scripts/host-deploy.sh": "b68cae76cbf1ef7fd2e8907d4b8a6ec196ad8798d4c8bb1160ad00a7f0712150",
         "scripts/host-finalize-authentication.sh": "721e2307e6f9e0c221781ab725aee29248670ba1398beaf0754fd057cc697c76",
         "scripts/host-restore-validate.sh": "4d3e5c2a11ae03bd2aef7f3805959fc4a1d9d0ebea5a894e0be96bf9e1a8603f",
         "scripts/host-stop-pending-activation.sh": "bdd313a57a694d15f5ca5b2accd5628724b52709ccbd3f959908c183f2b410ae",
@@ -12607,8 +12601,8 @@ def test_host_operation_lock_contract() -> None:
         "scripts/run-media-certificate-renewal.sh": "66b78f777483ebf3d679a5c73b241c1f476756af85af32320feda90a34baa2f1",
         "scripts/install-host-control.sh": "59ffa6abd659145f051c58e8130c89ec4349ac43b5dd5ede22fc4bb2ed714c28",
         "scripts/install-media-certificate-renewal.sh": "cd98f7f929522d94031c3d5e5ed8fdfd6cac7ffb907d6a006fb079db3acffe94",
-        "scripts/quarantine-failed-bootstrap.sh": "dc0fcd021a335a2056430ad12ee2ef5452d00c2abbc982bc933ba32da602acc0",
-        "scripts/upgrade-host-control.sh": "e1696b40ec32ee99e72a49144d53eb789f80344c9cb1fb3c21c2b9e0a41c5dfc",
+        "scripts/quarantine-failed-bootstrap.sh": "ff994510e57177c68be93b7c4b11100e6f3f7a59ddf6c71dabf89984c97bb9f8",
+        "scripts/upgrade-host-control.sh": "df51f1c583f4777eecffd0b78fddb6927c2d788a29149e620bfe9ae389f8e396",
     }
     for lock_set, paths in consumers.items():
         for relative in paths:
@@ -13161,7 +13155,7 @@ bounded() {
                 check=False,
             )
             if (completed.returncode == 0) != should_pass or completed.stdout or completed.stderr:
-                raise RuntimeError("Executable transactional effective SSH readback accepted a hostile tuple or rejected the exact tuple.")
+                raise RuntimeError("Check.")
 
         with tempfile.TemporaryDirectory(prefix="mochirii-successor-binding-") as directory:
             source_root = Path(directory) / "source"
@@ -13218,6 +13212,7 @@ reviewed_acme_stage_failed_bootstrap_commit=637a7c315574840156ac46615beb44170740
 reviewed_acme_stage_recovery_commit=9683e62abd3d0f41c41fc2a126a49eb33216c265
 reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
 reviewed_acme_transport_recovery_commit=5272554d33e9fcfc8f634ea14bc8e1f295b4278b
+reviewed_acme_transport_postfailure_parent_commit=da21f45b6b7b0ed5514b7242113b3c5cf95e86f6
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -13234,6 +13229,7 @@ esac
 requested_parent="$reviewed"
 [[ ${{BINDER_LINEAGE:-legacy}} != reload_privacy ]] || requested_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
 [[ ${{BINDER_LINEAGE:-legacy}} != material ]] || requested_parent="$reviewed_acme_material_review_authority_commit"
+[[ ${{BINDER_LINEAGE:-legacy}} != transport ]] || requested_parent="$reviewed_acme_transport_postfailure_parent_commit"
 source_root={source_root.as_posix()}
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 validated_source_repository_boundary_identity() {{
@@ -13289,6 +13285,8 @@ source_repository_git() {{
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{BINDER_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_material_review_authority_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != review-authority-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_material_review_authority_commit}}") [[ ${{BINDER_MUTATION:-none}} != review-authority-parents ]] && printf '%s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_transport_postfailure_parent_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != transport-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_transport_postfailure_parent_commit}}") [[ ${{BINDER_MUTATION:-none}} != transport-parents ]] && printf '%s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{BINDER_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$pending" || printf '%s %s %s\n' "$reviewed" "$pending" unrelated ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_failed_bootstrap_commit}} ${{reviewed_acme_material_recovery_commit}}")
@@ -13375,7 +13373,7 @@ source_repository_git() {{
       [[ ${{BINDER_MUTATION:-none}} == transport-repair-paths ]] || printf '%s\n' scripts/verify-runtime-assets.sh
       [[ ${{BINDER_MUTATION:-none}} != transport-repair-status ]] || return 83
       ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_recovery_commit}} ${{requested}}")
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_recovery_commit}} ${{reviewed_acme_transport_postfailure_parent_commit}}")
       printf '%s\n' \
         .github/workflows/disposable-bootstrap.yml \
         .github/workflows/validate-repository.yml \
@@ -13404,6 +13402,11 @@ source_repository_git() {{
       [[ ${{BINDER_MUTATION:-none}} == transport-current-paths ]] || printf '%s\n' scripts/validate-repository.py
       printf '%s\n' scripts/verify-host-security.sh
       [[ ${{BINDER_MUTATION:-none}} != transport-current-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_postfailure_parent_commit}} ${{requested}}")
+      printf '%s\n' {TRANSPORT_SHELL}
+      [[ ${{BINDER_MUTATION:-none}} != transport-postfailure-paths ]] || printf '%s\n' unexpected
+      [[ ${{BINDER_MUTATION:-none}} != transport-postfailure-status ]] || return 83
       ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{pending}} ${{requested}}")
       case "${{BINDER_LINEAGE:-legacy}}" in
@@ -13496,46 +13499,59 @@ source_repository_git() {{
             scripts/validate-repository.py
           [[ ${{BINDER_MUTATION:-none}} == paths ]] || printf '%s\n' scripts/verify-host.sh
           ;;
-        transport)
-          printf '%s\n' \
-            .github/workflows/disposable-bootstrap.yml \
-            .github/workflows/validate-repository.yml \
-            config/acme-sh-3.0.6.LICENSE.md \
-            config/acme-sh-3.0.6.gz.b64 \
-            config/acme-sh-3.1.4.LICENSE.md \
-            config/acme-sh-3.1.4.gz.b64 \
-            config/immutable-letsencrypt.fragment.yml \
-            docs/operations/DEPLOYMENT.md \
-            docs/operations/PROVIDER-DNS-TLS.md \
-            docs/operations/RECOVERY.md \
-            docs/operations/SOURCE-PROVENANCE.md \
-            docs/operations/THIRD-PARTY-NOTICES.md \
-            docs/operations/third-party-components.v1.json \
-            scripts/check-repository.ps1 \
-            scripts/check-source-introduction.ps1 \
-            scripts/finalize-member-rollout.sh \
-            scripts/host-backup.sh \
-            scripts/host-break-glass-admin.sh \
-            scripts/host-deploy.sh \
-            scripts/host-finalize-authentication.sh \
-            scripts/host-operation-lock.py \
-            scripts/host-restore-validate.sh \
-            scripts/host-stop-pending-activation.sh \
-            scripts/host-verify-wrapper.sh \
-            scripts/install-host-control.sh \
-            scripts/install-media-certificate-renewal.sh \
-            scripts/prepare-media-certificate.sh \
-            scripts/quarantine-failed-bootstrap.sh \
-            scripts/run-media-certificate-renewal.sh \
-            scripts/test-contracts.py \
-            scripts/test-host-operation-lock.py \
-            scripts/test-source-introduction.ps1 \
-            scripts/upgrade-host-control.sh \
-            scripts/validate-repository.py \
-            scripts/verify-host-security.sh \
-            scripts/verify-runtime-assets.sh
-          [[ ${{BINDER_MUTATION:-none}} != paths ]] || printf '%s\n' unexpected
-          ;;
+    transport)
+      printf '%s\n' \
+        .github/pull_request_template.md \
+        .github/workflows/disposable-bootstrap.yml \
+        .github/workflows/validate-repository.yml \
+        README.md \
+        config/acme-sh-3.0.6.LICENSE.md \
+        config/acme-sh-3.0.6.gz.b64 \
+        config/acme-sh-3.1.4.LICENSE.md \
+        config/acme-sh-3.1.4.gz.b64 \
+        config/app.yml.example \
+        config/immutable-letsencrypt.fragment.yml \
+        docs/adr/0005-promote-discourse-v2026-8-0.md \
+        docs/operations/CURRENT-STATE.md \
+        docs/operations/DEPLOYMENT.md \
+        docs/operations/PROVIDER-DNS-TLS.md \
+        docs/operations/RECOVERY.md \
+        docs/operations/RUNTIME-READINESS.md \
+        docs/operations/SOURCE-PROVENANCE.md \
+        docs/operations/THIRD-PARTY-NOTICES.md \
+        docs/operations/forum-central-identity.consumer.v1.json \
+        docs/operations/release-evidence.v2.example.json \
+        docs/operations/runtime-config.v1.example.json \
+        docs/operations/third-party-components.v1.json \
+        scripts/authentication-state.py \
+        scripts/check-repository.ps1 \
+        scripts/check-source-introduction.ps1 \
+        scripts/finalize-member-rollout.sh \
+        scripts/host-backup.sh \
+        scripts/host-break-glass-admin.sh \
+        scripts/host-deploy.sh \
+        scripts/host-finalize-authentication.sh \
+        scripts/host-operation-lock.py \
+        scripts/host-restore-validate.sh \
+        scripts/host-stop-pending-activation.sh \
+        scripts/host-verify-wrapper.sh \
+        scripts/install-host-control.sh \
+        scripts/install-media-certificate-renewal.sh \
+        scripts/prepare-media-certificate.sh \
+        scripts/quarantine-failed-bootstrap.sh \
+        scripts/run-media-certificate-renewal.sh \
+        scripts/test-contracts.py \
+        scripts/test-host-operation-lock.py \
+        scripts/test-source-introduction.ps1 \
+        scripts/upgrade-host-control.sh \
+        scripts/validate-repository.py \
+        scripts/verify-host-security.sh \
+        scripts/verify-host.sh \
+        scripts/verify-pinned-source.py \
+        scripts/verify-runtime-assets.sh \
+        scripts/verify-site.rb
+      [[ ${{BINDER_MUTATION:-none}} != paths ]] || printf '%s\n' unexpected
+      ;;
         *)
           printf '%s\n' \
             .github/workflows/deploy-forums.yml \
@@ -13598,8 +13614,10 @@ bind_invoked_canonical_successor "$requested" "$pending"
             binder_cases.extend(
                 ("transport", mutation, False)
                 for mutation in (
+                    "transport-parent", "transport-parents",
                     "transport-repair-paths", "transport-repair-status",
                     "transport-current-paths", "transport-current-status",
+                    "transport-postfailure-paths", "transport-postfailure-status",
                 )
             )
             binder_cases.extend(("legacy", mutation, False) for mutation in ("grafts", "commondir"))
@@ -13740,6 +13758,7 @@ bash() { printf '%s\n' bash-verify; }
 rollback_transaction() { printf '%s\n' rollback; }
 verify_previous_host_controls() { printf '%s\n' verify-previous; }
 clear_transaction() { printf '%s\n' clear; }
+require_postfailure_predecessor() { :; }
 ''' + reconcile + r'''
 reconcile_pending "${REQUESTED_COMMIT:-new}"
 printf 'continue:%s\n' "${recovery_continue}"
@@ -13841,7 +13860,7 @@ printf 'continue:%s\n' "${recovery_continue}"
     )):
         raise RuntimeError("Initial host-control publication or hardened-retry boundary differs.")
     if installer.count('validate_operator_proof "${proof}" || fail "Existing operator SSH proof is unsafe."') != 2:
-        raise RuntimeError("Initial host-control publication does not validate the exact partial operator proof in both recovery paths.")
+        raise RuntimeError("Check.")
     hardened_gate = installer.index('for hardened_record in "${state_root}/current-host-access.json" "${state_root}/current-host-control.json"')
     partial_proof_gate = installer.index('proof="${state_root}/operator-ssh-proved"', hardened_gate)
     key_source_gate = installer.index('for source in "${authorized_keys_source}" "${operator_keys_source}"', partial_proof_gate)
@@ -13955,11 +13974,14 @@ def test_host_control_predecessor_archive_binding() -> None:
             'previous_source="${transaction}/previous-source/${previous_commit}"',
         )
         if any(value not in source for value in required):
-            raise RuntimeError("Host-control predecessor archive binding is incomplete.")
-        if source.count("metadata.st_nlink != 1") != 2:
-            raise RuntimeError("Host-control predecessor link-count coverage differs.")
+            raise RuntimeError("Bind.")
+        if source.count("metadata.st_nlink != 1") != 3:
+            raise RuntimeError("Bind.")
         if '/opt/mochirii/forums/releases/${previous_commit}' in source:
-            raise RuntimeError("Host-control upgrade still assumes an application release for its predecessor.")
+            raise RuntimeError("Bind.")
+        body = source.split("PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN", 1)[1].split("PREDECESSOR_ARCHIVE_BINDING_PYTHON_END", 1)[0]
+        if any(value not in body for value in ('dir_fd=parent_descriptor', '"backup",\n        backup_root,', 'dir_fd=backup_descriptor', 'follow_symlinks=False')):
+            raise RuntimeError("Bind.")
         candidate_validation = source.index(
             'bounded 300s /usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py"'
         )
@@ -13989,7 +14011,7 @@ def test_host_control_predecessor_archive_binding() -> None:
             < journal
             < first_publication
         ):
-            raise RuntimeError("Host-control predecessor reconstruction ordering differs.")
+            raise RuntimeError("Bind.")
         reconcile = source.index("reconcile_pending() {")
         predecessor_verify = source.index(
             'bind_previous_source "${transaction}/backup/current-host-control.json"', reconcile
@@ -13999,7 +14021,7 @@ def test_host_control_predecessor_archive_binding() -> None:
             predecessor_verify,
         )
         if not reconcile < predecessor_verify < target_classification:
-            raise RuntimeError("Interrupted host-control recovery trusts targets before predecessor binding.")
+            raise RuntimeError("Bind.")
 
     assert_contract(upgrade)
     mutations = (
@@ -14016,7 +14038,7 @@ def test_host_control_predecessor_archive_binding() -> None:
         upgrade.replace(
             'bind_previous_source "${transaction}/backup/current-host-control.json"',
             'bind_previous_source "${control_pointer}"',
-            1,
+            2,
         ),
         upgrade.replace(
             'previous_source="${transaction}/previous-source/${previous_commit}"',
@@ -14039,12 +14061,12 @@ def test_host_control_predecessor_archive_binding() -> None:
             assert_contract(mutant)
         except RuntimeError:
             continue
-        raise RuntimeError("Host-control predecessor archive mutation escaped the contract test.")
+        raise RuntimeError("Bind.")
 
     if os.name == "posix":
         bash = shutil.which("bash")
         if bash is None:
-            raise RuntimeError("Bash is required for the predecessor binding status fixture.")
+            raise RuntimeError("Bind.")
         capture_blocks = (
             (
                 upgrade[upgrade.index('  local predecessor_output=""'):upgrade.index(
@@ -14081,7 +14103,7 @@ def test_host_control_predecessor_archive_binding() -> None:
                 check=False,
             )
             if completed.returncode != 73 or completed.stdout or completed.stderr != expected_error:
-                raise RuntimeError("Predecessor binding producer failure did not reach its fixed category.")
+                raise RuntimeError("Bind.")
 
     bounded_block = upgrade.split("# PREDECESSOR_ARCHIVE_BINDING_PYTHON_BEGIN", 1)[1].split(
         "# PREDECESSOR_ARCHIVE_BINDING_PYTHON_END", 1
@@ -14187,6 +14209,13 @@ def test_host_control_predecessor_archive_binding() -> None:
         pointer.chmod(0o600)
         expected_uid = os.getuid() if hasattr(os, "getuid") else 0
         expected_gid = os.getgid() if hasattr(os, "getgid") else 0
+        startup_root = fixture / "startup-hook"; startup_root.mkdir()
+        startup_sentinel = fixture / "startup-hook-loaded"
+        (startup_root / "sitecustomize.py").write_text(f"open({str(startup_sentinel)!r},'w').close()\n", encoding="utf-8", newline="\n")
+        child_environment = os.environ | {"PYTHONPATH": str(startup_root)}
+        startup_control = subprocess.run([sys.executable, "-B", "-c", "pass"], env=child_environment, capture_output=True, text=True, timeout=10)
+        if startup_control.returncode or startup_control.stdout or startup_control.stderr or not startup_sentinel.is_file(): raise RuntimeError("Bind.")
+        startup_sentinel.unlink()
 
         def make_candidate(work_root: Path) -> Path:
             candidate = work_root / "source"
@@ -14198,40 +14227,30 @@ def test_host_control_predecessor_archive_binding() -> None:
             (scripts / helper.name).chmod(0o600)
             return candidate
 
-        def run_binding(
-            pointer_path: Path, work_root: Path, candidate: Path, action: str
-        ) -> subprocess.CompletedProcess[str]:
+        swap_wrapper = "import pathlib,sys\ns=sys.stdin.buffer.read();p=pathlib.Path(sys.argv.pop(1));t=pathlib.Path(sys.argv.pop(1));d=False\ndef h(e,a):\n global d\n if not d and e=='open' and a[0]=='backup': p.rename(p.with_name('backup-retained'));p.symlink_to(t,target_is_directory=True);d=True\nsys.addaudithook(h)\nexec(compile(s,'<reader>','exec'))\n"
+
+        def run_binding(pointer_path: Path, work_root: Path, candidate: Path, action: str, swap: tuple[Path, Path] | None = None) -> subprocess.CompletedProcess[str]:
+            command = [sys.executable, "-I", "-S", "-B"]
+            command += ["-"] if swap is None else ["-c", swap_wrapper, str(swap[0]), str(swap[1])]
+            command += list(map(str, (pointer_path, work_root, candidate, action, state_root, upgrades_root, archive_root, expected_uid, expected_gid)))
             return subprocess.run(
-                [
-                    sys.executable,
-                    "-B",
-                    "-",
-                    str(pointer_path),
-                    str(work_root),
-                    str(candidate),
-                    action,
-                    str(state_root),
-                    str(upgrades_root),
-                    str(archive_root),
-                    str(expected_uid),
-                    str(expected_gid),
-                ],
-                input=python_body,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=30,
+                command, input=python_body, text=True, capture_output=True,
+                check=False, timeout=30, env=child_environment,
             )
+
+        observed = run_binding(pointer, state_root, state_root, "identity")
+        if observed.returncode or observed.stderr or observed.stdout.splitlines() != [commit, "3" * 64] or startup_sentinel.exists():
+            raise RuntimeError("Bind.")
 
         staging = state_root / f".control-upgrade-staging-{'8' * 40}.ABCDEFGH"
         staging.mkdir(mode=0o700)
         candidate = make_candidate(staging)
         prepared = run_binding(pointer, staging, candidate, "prepare")
         if prepared.returncode != 0 or prepared.stderr:
-            raise RuntimeError("Valid sealed predecessor archive could not be prepared.")
+            raise RuntimeError("Bind.")
         prepared_rows = prepared.stdout.splitlines()
         if prepared_rows[:2] != [commit, "3" * 64] or Path(prepared_rows[2]) != staging / "previous-source" / commit:
-            raise RuntimeError("Prepared predecessor archive output differs.")
+            raise RuntimeError("Bind.")
 
         if os.name != "nt":
             wrong_mode_staging = state_root / f".control-upgrade-staging-{'b' * 40}.QRSTUVWX"
@@ -14239,7 +14258,7 @@ def test_host_control_predecessor_archive_binding() -> None:
             wrong_mode_candidate = make_candidate(wrong_mode_staging)
             (wrong_mode_candidate / "scripts" / helper.name).chmod(0o644)
             if run_binding(pointer, wrong_mode_staging, wrong_mode_candidate, "prepare").returncode == 0:
-                raise RuntimeError("Nonrestrictive candidate archive authority mode passed binding.")
+                raise RuntimeError("Bind.")
 
         transaction = upgrades_root / f"{'8' * 40}-{'9' * 64}"
         os.replace(staging, transaction)
@@ -14249,29 +14268,58 @@ def test_host_control_predecessor_archive_binding() -> None:
         backup_pointer = backup / "current-host-control.json"
         shutil.copyfile(pointer, backup_pointer)
         backup_pointer.chmod(0o600)
+        backup_identity = run_binding(backup_pointer, transaction, candidate, "identity")
+        if backup_identity.returncode or backup_identity.stderr or backup_identity.stdout.splitlines() != [commit, "3" * 64]:
+            raise RuntimeError("Bind.")
         verified = run_binding(backup_pointer, transaction, candidate, "verify")
         if verified.returncode != 0 or verified.stderr:
-            raise RuntimeError("Moved predecessor transaction could not be verified.")
+            raise RuntimeError("Bind.")
         if Path(verified.stdout.splitlines()[2]) != transaction / "previous-source" / commit:
-            raise RuntimeError("Moved predecessor source did not remain transaction-contained.")
+            raise RuntimeError("Bind.")
+
+        if os.name != "nt":
+            outside = fixture / "outside-backup"
+            outside.mkdir(mode=0o700)
+            outside_pointer = outside / backup_pointer.name
+            shutil.copyfile(pointer, outside_pointer)
+            outside_pointer.chmod(0o600)
+            hostile = upgrades_root / f"{'a' * 40}-{'b' * 64}"
+            hostile.mkdir(mode=0o700)
+            (hostile / "backup").symlink_to(outside, target_is_directory=True)
+            for hostile_action in ("identity", "verify"):
+                rejected = run_binding(hostile / "backup" / backup_pointer.name, hostile, hostile / "source", hostile_action)
+                if rejected.returncode == 0 or rejected.stdout or rejected.stderr != "Host-control backup root is unsafe\n":
+                    raise RuntimeError("Bind.")
+            if not (hostile / "backup").is_symlink() or outside_pointer.read_bytes() != pointer.read_bytes():
+                raise RuntimeError("Bind.")
+            original_bytes = backup_pointer.read_bytes()
+            for hostile_action in ("identity", "verify"):
+                rejected = run_binding(backup_pointer, transaction, candidate, hostile_action, (backup, outside))
+                retained_root = transaction / "backup-retained"
+                retained = retained_root / backup_pointer.name
+                if rejected.returncode == 0 or rejected.stdout or rejected.stderr != "Host-control backup root is unsafe\n":
+                    raise RuntimeError("Bind.")
+                if not backup.is_symlink() or retained.read_bytes() != original_bytes or outside_pointer.read_bytes() != original_bytes:
+                    raise RuntimeError("Bind.")
+                backup.unlink(); retained_root.rename(backup)
 
         retained_archive_bytes = archive.read_bytes()
         archive.unlink()
         if run_binding(backup_pointer, transaction, candidate, "verify").returncode != 0:
-            raise RuntimeError("Transaction recovery still depends on the external predecessor archive.")
+            raise RuntimeError("Bind.")
         archive.write_bytes(retained_archive_bytes)
         archive.chmod(0o600)
 
         sealed_archive = transaction / "previous-release.tar"
         sealed_archive.write_bytes(sealed_archive.read_bytes() + b"x")
         if run_binding(backup_pointer, transaction, candidate, "verify").returncode == 0:
-            raise RuntimeError("Changed sealed predecessor archive passed recovery verification.")
+            raise RuntimeError("Bind.")
         shutil.copyfile(archive, sealed_archive)
         sealed_archive.chmod(0o600)
         extracted_file = transaction / "previous-source" / commit / "AGENTS.md"
         extracted_file.write_text("changed\n", encoding="utf-8", newline="\n")
         if run_binding(backup_pointer, transaction, candidate, "verify").returncode == 0:
-            raise RuntimeError("Changed predecessor source passed recovery verification.")
+            raise RuntimeError("Bind.")
 
         hostile_staging = state_root / f".control-upgrade-staging-{'a' * 40}.IJKLMNOP"
         hostile_staging.mkdir(mode=0o700)
@@ -14282,15 +14330,15 @@ def test_host_control_predecessor_archive_binding() -> None:
         )
         pointer.write_text(duplicate_pointer, encoding="utf-8", newline="\n")
         pointer.chmod(0o600)
-        if run_binding(pointer, hostile_staging, hostile_candidate, "prepare").returncode == 0:
-            raise RuntimeError("Duplicate-key predecessor pointer passed archive binding.")
+        if run_binding(pointer, state_root, state_root, "identity").returncode == 0 or run_binding(pointer, hostile_staging, hostile_candidate, "prepare").returncode == 0:
+            raise RuntimeError("Bind.")
         pointer.write_text(original_pointer, encoding="utf-8", newline="\n")
         pointer.chmod(0o600)
         archive_hardlink = fixture / "archive-hardlink.tar"
         os.link(archive, archive_hardlink)
         try:
             if run_binding(pointer, hostile_staging, hostile_candidate, "prepare").returncode == 0:
-                raise RuntimeError("Multiply linked predecessor archive passed binding.")
+                raise RuntimeError("Bind.")
         finally:
             archive_hardlink.unlink()
         hostile_document = dict(pointer_document)
@@ -14302,7 +14350,7 @@ def test_host_control_predecessor_archive_binding() -> None:
         )
         pointer.chmod(0o600)
         if run_binding(pointer, hostile_staging, hostile_candidate, "prepare").returncode == 0:
-            raise RuntimeError("Off-boundary predecessor archive path passed binding.")
+            raise RuntimeError("Bind.")
 
 
 def test_runtime_rails_execution_contract() -> None:
@@ -14324,7 +14372,7 @@ def test_runtime_rails_execution_contract() -> None:
     template = (ROOT / "config/app.yml.example").read_text(encoding="utf-8")
     owner_scoped_build_runner = """su discourse -c 'bundle exec rails runner
           \"$MOCHIRII_RELEASE_ASSET_ROOT/configure-site.rb\"'"""
-    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"cbf996f65aae3da1843224aa624bcd9a225931ac\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
+    owner_probe = """sudo docker exec app /usr/local/bin/rails runner 'require \"etc\"; raise unless Process.euid == Etc.getpwnam(\"discourse\").uid; raise unless GitUtils.git_version == \"badad7b0456a628e578bc48b9f8c1259422b5d58\"; ActiveRecord::Base.connection.execute(\"SELECT 1\"); raise if Upload.exists?(sha1: \"0000000000000000000000000000000000000000\")'"""
 
     def assert_contract(candidate_sources: dict[str, str], candidate_template: str) -> None:
         for relative, expected in expected_wrappers.items():
@@ -14336,15 +14384,15 @@ def test_runtime_rails_execution_contract() -> None:
             ):
                 raise RuntimeError(f"Runtime Rails owner-wrapper inventory differs: {relative}")
         if sum(expected_wrappers.values()) != 54:
-            raise RuntimeError("Runtime Rails owner-wrapper total differs.")
+            raise RuntimeError("Bind.")
         if (
             candidate_template.count("bundle exec rails runner") != 1
             or candidate_template.count("rails runner") != 1
             or candidate_template.count(owner_scoped_build_runner) != 1
         ):
-            raise RuntimeError("Build-time Rails runner owner scope differs.")
+            raise RuntimeError("Bind.")
         if candidate_sources[".github/workflows/disposable-bootstrap.yml"].count(owner_probe) != 1:
-            raise RuntimeError("Disposable Rails UID/Git/database proof differs.")
+            raise RuntimeError("Bind.")
 
     assert_contract(sources, template)
 
@@ -14370,7 +14418,7 @@ def test_runtime_rails_execution_contract() -> None:
             assert_contract(candidate_sources, candidate_template)
         except RuntimeError:
             continue
-        raise RuntimeError("Runtime Rails owner-wrapper hostile mutation was accepted.")
+        raise RuntimeError("Bind.")
 
 
 def test_disposable_restore_command_diagnostics() -> None:
@@ -14405,12 +14453,12 @@ def test_disposable_restore_command_diagnostics() -> None:
     )
     for hostile_workflow in hostile_workflows:
         if hostile_workflow == workflow:
-            raise RuntimeError("Disposable restore diagnostic hostile mutation anchor is absent.")
+            raise RuntimeError("Bind.")
         try:
             VALIDATOR.validate_disposable_restore_command_diagnostics(hostile_workflow)
         except RuntimeError:
             continue
-        raise RuntimeError("Disposable restore diagnostic hostile mutation was accepted.")
+        raise RuntimeError("Bind.")
 
 
 def test_disposable_nginx_fixture_final_command_contract() -> None:
@@ -14448,12 +14496,12 @@ def test_disposable_nginx_fixture_final_command_contract() -> None:
     )
     for hostile_fixture in hostile_fixtures:
         if hostile_fixture == fixture:
-            raise RuntimeError("Disposable Nginx fixture hostile mutation anchor is absent.")
+            raise RuntimeError("Bind.")
         try:
             VALIDATOR.validate_disposable_nginx_fixture_final_command_contract(hostile_fixture)
         except RuntimeError:
             continue
-        raise RuntimeError("Disposable Nginx fixture hostile mutation was accepted.")
+        raise RuntimeError("Bind.")
 
 
 def test_effective_allow_users_parser_contract() -> None:
@@ -14531,9 +14579,9 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     manifest = json.loads(TRUSTED_MANIFEST_SOURCE)
     if (
         hashlib.sha256(source.encode("utf-8")).hexdigest()
-        != "ff1e9104f31708c430ff3ec0568e746e6cf92a1d07f4505f8574d1df5c5fee95"
+        != "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2"
         or hashlib.sha256(upgrader.encode("utf-8")).hexdigest()
-        != "3cc886900dd735f1b54b58d1ac6dff14077e58ce846cd782e7a498172ed1ae14"
+        != "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649"
     ):
         raise RuntimeError("Failed-bootstrap production control source seal differs.")
 
@@ -15753,63 +15801,82 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             )
         bind = exact_shell_function(upgrade_source, "bind_invoked_canonical_successor")
         exception = exact_shell_function(upgrade_source, "validate_failed_bootstrap_upgrade_exception")
+        predecessor_requirement = exact_shell_function(upgrade_source, "require_postfailure_predecessor")
+        predecessor_preflight = exact_shell_function(upgrade_source, "preflight_postfailure_predecessor")
         reconcile = exact_shell_function(upgrade_source, "reconcile_pending")
         signal = exact_shell_function(upgrade_source, "handle_signal")
         selector = exact_shell_function(upgrade_source, "select_reviewed_failed_bootstrap_recovery_commit")
         path_validator = exact_shell_function(upgrade_source, "validate_reviewed_failed_bootstrap_successor_paths")
         main_start = upgrade_source.index('[[ ${EUID} -eq 0 ]] || fail "Host-control upgrade must run as root."')
         main = upgrade_source[main_start:]
-        exact_section_sha256 = {
-            "repository-directory": "13aee9b27bb13cd991f17d44c4576ffef38e13f7f8b6491d091a0cd810512191",
-            "repository-regular": "2a9101adb223557e8ed4d636e2f757a58444dfe08225f9adfdacbea71ce654f3",
-            "repository-config": "ff7c0c6530903ddfdb8484784a3c9c436676e3999a76bc78e6b29632ed1e6d5c",
-            "repository-boundary": "61d0acf50318675978ed8331b122ebb9731c1abbad98a8bfafc62f4e496dc006",
-            "repository-git": "e35273fb1fd470d780ebbadf720c9b231bd0bf608817430735f2d1d2f1e5ef73",
-            "repository-operation": "551e061d9234fc2edd8c9c368056acc56e888484e432e4842f6f7d38ceea4bac",
-            "repository-clean": "acbcc2f87c61ff09bbb0a1271e3ea1d91519ef66778739b04e6930c4a66156ac",
-            "repository-bound-file": "32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f",
-            "canonical-remote": "2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa",
-            "quarantine-lineage": "214cefc045416410a1cc116a0d4a54d17f626c839bbdefa18f8c8154e7f6fe69",
-            "quarantine-state": "384733dad7fbc9bd502059dd1e6d71aaabcc99e3dd74ff4c426a85aefa6d0080",
-            "quarantine-identity": "a400d1c326e60627c30647bdea253193797d5bef71ff1697612c4df4c812e952",
-            "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
-            "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
-            "upgrade-selector": "0e40b1ff2fb132ed69e3eead53e5ae3b3ffeac9dc9727bc689f5ffbb62c92268",
-            "upgrade-path-validator": "2bb27fa9fafa52082afb8a3183e844d3c0aaa9d3deaea568ce283f9a5f50cb20",
-            "upgrade-binder": "ac956388b10512e7e90dd6b943e25585d80981af7842b08991c2208554bc841e",
-            "upgrade-preflight": "9da1fb4f1b95523e4f5b45d2df7421b8537e05a02284308b6e218ebfd2b6d7b9",
-            "upgrade-exception": "1510782bf3acfcb04b9fbc473d88075e03c0ebc340785b61266bc6b96add9aae",
-            "upgrade-reconcile": "b03a553e5cf91c29525773a82d56b3b3262384d542d2783809dc25966aaed1d2",
-            "upgrade-signal": "e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f",
-            "upgrade-main": "68322af0fc3c0f70c6c1cf4a815bb3bf2196cc92ff3d0d05d05083aa6e9dd09e",
-        }
-        exact_sections = {
-            "repository-directory": quarantine_directory,
-            "repository-regular": quarantine_regular,
-            "repository-config": quarantine_config,
-            "repository-boundary": quarantine_boundary,
-            "repository-git": quarantine_git,
-            "repository-operation": quarantine_operation,
-            "repository-clean": quarantine_clean,
-            "repository-bound-file": quarantine_bound_file,
-            "canonical-remote": quarantine_remote,
-            "quarantine-lineage": lineage,
-            "quarantine-state": state,
-            "quarantine-identity": identity,
-            "quarantine-preflight": preflight,
-            "quarantine-recovery": recovery,
-            "upgrade-selector": selector,
-            "upgrade-path-validator": path_validator,
-            "upgrade-binder": bind,
-            "upgrade-preflight": upgrade_preflight,
-            "upgrade-exception": exception,
-            "upgrade-reconcile": reconcile,
-            "upgrade-signal": signal,
-            "upgrade-main": main,
-        }
-        for label, block in exact_sections.items():
-            if hashlib.sha256(block.encode("utf-8")).hexdigest() != exact_section_sha256[label]:
-                raise RuntimeError(f"{label} exact live source section differs.")
+        exact_section_hashes = """13aee9b27bb13cd991f17d44c4576ffef38e13f7f8b6491d091a0cd810512191
+2a9101adb223557e8ed4d636e2f757a58444dfe08225f9adfdacbea71ce654f3
+ff7c0c6530903ddfdb8484784a3c9c436676e3999a76bc78e6b29632ed1e6d5c
+61d0acf50318675978ed8331b122ebb9731c1abbad98a8bfafc62f4e496dc006
+e35273fb1fd470d780ebbadf720c9b231bd0bf608817430735f2d1d2f1e5ef73
+551e061d9234fc2edd8c9c368056acc56e888484e432e4842f6f7d38ceea4bac
+acbcc2f87c61ff09bbb0a1271e3ea1d91519ef66778739b04e6930c4a66156ac
+32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f
+2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa
+90d30f29d1e2136dfa24596ae2adcdfc4d2825a12e82f72eb6986df644580333
+384733dad7fbc9bd502059dd1e6d71aaabcc99e3dd74ff4c426a85aefa6d0080
+a400d1c326e60627c30647bdea253193797d5bef71ff1697612c4df4c812e952
+77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d
+0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156
+0e40b1ff2fb132ed69e3eead53e5ae3b3ffeac9dc9727bc689f5ffbb62c92268
+82a960c090f3520a7f08d6a8bd47e38b518d50ba2edab0095c4328aef7dbf1ed
+5cd5c1c9608bf6f12f57278caaeec05bdd04a98a4254a86632a826b70e41d419
+9da1fb4f1b95523e4f5b45d2df7421b8537e05a02284308b6e218ebfd2b6d7b9
+f772ab41e59c625de9c3d73cfe4d0638dd966396a198a32c3d235acef310df76
+83fab62655d7a4eb81261d65415018d9fed720f5cf92d276675c93e728ac2493
+58ccef78be8852cc36f12d3a09ee9839cab4a2eed68158616357fa8e660e94e9
+2ec3ce5f86d8f99b61e470caac2a40fe21adaf265d47bdb9c0cbdc26fc028422
+e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f
+3f75a3ae9ec2677aafd8ee30a4e6c49eae4bf867a343ca06266fde2b23e8bf1c""".splitlines()
+        exact_sections = (quarantine_directory, quarantine_regular, quarantine_config, quarantine_boundary, quarantine_git, quarantine_operation, quarantine_clean, quarantine_bound_file, quarantine_remote, lineage, state, identity, preflight, recovery, selector, path_validator, bind, upgrade_preflight, exception, predecessor_requirement, predecessor_preflight, reconcile, signal, main)
+        for index, (digest, block) in enumerate(zip(exact_section_hashes, exact_sections, strict=True)):
+            if hashlib.sha256(block.encode("utf-8")).hexdigest() != digest:
+                raise RuntimeError(f"Exact live source section {index} differs.")
+        preflight_call = main.index("preflight_postfailure_predecessor")
+        first_mutation = main.index("install -d -m 0755")
+        if preflight_call > first_mutation:
+            raise RuntimeError("Post-failure predecessor preflight follows mutation.")
+        bash = str(Path(shutil.which("git")).resolve().parents[1] / "bin/bash.exe") if os.name == "nt" else shutil.which("bash")
+        gate = f'''set -eu
+reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
+postfailure_control_recovery=$1
+pending_journal=$TMP/pending
+control_pointer=$TMP/pointer
+state_root=$TMP
+upgrades_root=$TMP
+read_journal() {{ printf '%s\n' "$REQUESTED" manifest "$TMP/transaction" false false false digest service; }}
+bind_invoked_canonical_successor() {{ return 1; }}
+bind_previous_source() {{ [[ $4 != identity ]] && printf '%s\n' "$PREDECESSOR" digest "$TMP/source" || printf '%s\n' "$PREDECESSOR" digest; }}
+targets_are_new() {{ return 0; }}
+ensure_ssh_service_activation() {{ printf mutation >"$TMP/mutation"; }}
+post_install_readback() {{ return 0; }}
+seal_control_state() {{ return 0; }}
+bash() {{ return 0; }}
+clear_transaction() {{ return 0; }}
+fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
+{predecessor_requirement}
+{predecessor_preflight}
+{reconcile}
+[[ $2 == true ]] && : >"$pending_journal" || rm -f "$pending_journal"
+[[ $3 == false ]] || preflight_postfailure_predecessor
+[[ $2 == true ]] && reconcile_pending "$REQUESTED" || printf '%s\n' pass
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            exact = "ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"
+            cases = (("true", False, True, exact, True), ("true", False, True, "a" * 40, False), ("false", False, True, "a" * 40, True), ("true", True, True, exact, True), ("true", True, True, "a" * 40, False), ("true", True, False, "a" * 40, False), ("false", True, True, "a" * 40, True))
+            for flag, pending, preflight_enabled, predecessor, accepted in cases:
+                root = Path(temp)
+                (root / "mutation").unlink(missing_ok=True)
+                result = subprocess.run([bash, "-s", "--", flag, str(pending).lower(), str(preflight_enabled).lower()], input=gate, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10, check=False, env={**os.environ, "TMP": temp, "REQUESTED": "b" * 40, "PREDECESSOR": predecessor})
+                error = "" if accepted else "Post-failure host-control recovery requires the exact reviewed predecessor controls.\n"
+                output = "Interrupted Mochirii Forums host-control upgrade was committed forward and verified.\n" if pending and accepted else "pass\n" if accepted else ""
+                if (result.returncode == 0) != accepted or result.stdout != output or result.stderr != error or (root / "mutation").exists() != (pending and accepted):
+                    raise RuntimeError("Post-failure predecessor gate differs.")
         for block, root_name, label in (
             (lineage, "source_root", "Failed-bootstrap source lineage"),
             (bind, "invocation_source_root", "Host-control successor binder"),
@@ -15945,7 +16012,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         )
         require_exact_line(
             exception,
-            '  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
+            '  bind_invoked_canonical_successor "${requested_commit}" "${state[0]}" || return 1',
             "Host-control active-mutation successor binder call",
         )
         require_exact_line(
@@ -16259,6 +16326,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
         'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
         'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
+        'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
         'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -16350,235 +16418,23 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     )
     if any(value not in source for value in required_source):
         raise RuntimeError("Failed-bootstrap quarantine lost a reviewed reversible transaction boundary.")
-    legacy_expected_paths = (
-        ".github/workflows/deploy-forums.yml",
-        "config/host-control-manifest.v1.json",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-    )
-    active_swap_expected_paths = (
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-        "scripts/verify-host.sh",
-    )
-    acme_expected_paths = (
-        "config/immutable-letsencrypt.fragment.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-    )
-    quarantine_output_expected_paths = (
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-    )
-    acme_reload_privacy_expected_paths = (
-        "config/immutable-letsencrypt.fragment.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/disposable-launcher-guard.py",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-disposable-launcher-guard.py",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-        "scripts/verify-host.sh",
-    )
-    acme_webroot_expected_paths = (
-        "config/immutable-letsencrypt.fragment.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-    )
-    acme_material_repair_expected_paths = (
-        "config/immutable-letsencrypt.fragment.yml",
-        "scripts/test-contracts.py",
-        "scripts/validate-repository.py",
-    )
-    acme_material_review_authority_expected_paths = (
-        ".gitattributes",
-        ".github/CODEOWNERS",
-        ".github/workflows/open-reviewed-source-pr.yml",
-        "CONTRIBUTING.md",
-        "docs/adr/0001-clean-initialization-and-canonical-ownership.md",
-        "scripts/test-contracts.py",
-        "scripts/validate-repository.py",
-    )
-    acme_material_current_expected_paths = (
-        ".github/workflows/validate-repository.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/host-deploy.sh",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-        "scripts/verify-host-security.sh",
-    )
-    acme_material_expected_paths = (
-        ".gitattributes",
-        ".github/CODEOWNERS",
-        ".github/workflows/open-reviewed-source-pr.yml",
-        ".github/workflows/validate-repository.yml",
-        "CONTRIBUTING.md",
-        "config/immutable-letsencrypt.fragment.yml",
-        "docs/adr/0001-clean-initialization-and-canonical-ownership.md",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/host-deploy.sh",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-    )
-    acme_stage_repair_expected_paths = (
-        ".github/workflows/validate-repository.yml",
-        "config/immutable-letsencrypt.fragment.yml",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/host-deploy.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/validate-repository.py",
-        "scripts/verify-host.sh",
-    )
-    acme_stage_current_expected_paths = (
-        ".github/workflows/validate-repository.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/host-deploy.sh",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-    )
-    acme_stage_expected_paths = (
-        ".github/workflows/validate-repository.yml",
-        "config/immutable-letsencrypt.fragment.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/host-deploy.sh",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-        "scripts/verify-host.sh",
-    )
-    acme_transport_repair_expected_paths = (
-        ".github/workflows/disposable-bootstrap.yml",
-        ".github/workflows/validate-repository.yml",
-        "config/acme-sh-3.0.6.LICENSE.md",
-        "config/acme-sh-3.0.6.gz.b64",
-        "config/acme-sh-3.1.4.LICENSE.md",
-        "config/acme-sh-3.1.4.gz.b64",
-        "config/immutable-letsencrypt.fragment.yml",
-        "docs/operations/PROVIDER-DNS-TLS.md",
-        "docs/operations/SOURCE-PROVENANCE.md",
-        "docs/operations/THIRD-PARTY-NOTICES.md",
-        "docs/operations/third-party-components.v1.json",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/host-deploy.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/validate-repository.py",
-        "scripts/verify-runtime-assets.sh",
-    )
-    acme_transport_current_expected_paths = (
-        ".github/workflows/disposable-bootstrap.yml",
-        ".github/workflows/validate-repository.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/RECOVERY.md",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/finalize-member-rollout.sh",
-        "scripts/host-backup.sh",
-        "scripts/host-break-glass-admin.sh",
-        "scripts/host-deploy.sh",
-        "scripts/host-finalize-authentication.sh",
-        "scripts/host-operation-lock.py",
-        "scripts/host-restore-validate.sh",
-        "scripts/host-stop-pending-activation.sh",
-        "scripts/host-verify-wrapper.sh",
-        "scripts/install-host-control.sh",
-        "scripts/install-media-certificate-renewal.sh",
-        "scripts/prepare-media-certificate.sh",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/run-media-certificate-renewal.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-host-operation-lock.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-        "scripts/verify-host-security.sh",
-    )
-    acme_transport_expected_paths = (
-        ".github/workflows/disposable-bootstrap.yml",
-        ".github/workflows/validate-repository.yml",
-        "config/acme-sh-3.0.6.LICENSE.md",
-        "config/acme-sh-3.0.6.gz.b64",
-        "config/acme-sh-3.1.4.LICENSE.md",
-        "config/acme-sh-3.1.4.gz.b64",
-        "config/immutable-letsencrypt.fragment.yml",
-        "docs/operations/DEPLOYMENT.md",
-        "docs/operations/PROVIDER-DNS-TLS.md",
-        "docs/operations/RECOVERY.md",
-        "docs/operations/SOURCE-PROVENANCE.md",
-        "docs/operations/THIRD-PARTY-NOTICES.md",
-        "docs/operations/third-party-components.v1.json",
-        "scripts/check-repository.ps1",
-        "scripts/check-source-introduction.ps1",
-        "scripts/finalize-member-rollout.sh",
-        "scripts/host-backup.sh",
-        "scripts/host-break-glass-admin.sh",
-        "scripts/host-deploy.sh",
-        "scripts/host-finalize-authentication.sh",
-        "scripts/host-operation-lock.py",
-        "scripts/host-restore-validate.sh",
-        "scripts/host-stop-pending-activation.sh",
-        "scripts/host-verify-wrapper.sh",
-        "scripts/install-host-control.sh",
-        "scripts/install-media-certificate-renewal.sh",
-        "scripts/prepare-media-certificate.sh",
-        "scripts/quarantine-failed-bootstrap.sh",
-        "scripts/run-media-certificate-renewal.sh",
-        "scripts/test-contracts.py",
-        "scripts/test-host-operation-lock.py",
-        "scripts/test-source-introduction.ps1",
-        "scripts/upgrade-host-control.sh",
-        "scripts/validate-repository.py",
-        "scripts/verify-host-security.sh",
-        "scripts/verify-runtime-assets.sh",
-    )
+    acme_expected_paths = _paths("%immutable-letsencrypt.fragment.yml ^DEPLOYMENT.md ^RECOVERY.md $quarantine-failed-bootstrap.sh $test-contracts.py $upgrade-host-control.sh $validate-repository.py")
+    quarantine_output_expected_paths = acme_expected_paths[1:]
+    legacy_expected_paths = sorted({*quarantine_output_expected_paths, *_paths("@workflows/deploy-forums.yml %host-control-manifest.v1.json")})
+    active_swap_expected_paths = sorted({*quarantine_output_expected_paths, *_paths("$verify-host.sh")})
+    acme_reload_privacy_expected_paths = sorted({*acme_expected_paths, "scripts/disposable-launcher-guard.py", "scripts/test-disposable-launcher-guard.py", "scripts/verify-host.sh"})
+    acme_webroot_expected_paths = acme_expected_paths
+    acme_material_repair_expected_paths = [acme_expected_paths[index] for index in (0, 4, 6)]
+    acme_material_review_authority_expected_paths = _paths(".gitattributes @CODEOWNERS @workflows/open-reviewed-source-pr.yml CONTRIBUTING.md docs/adr/0001-clean-initialization-and-canonical-ownership.md $test-contracts.py $validate-repository.py")
+    acme_material_current_expected_paths = _paths("@workflows/validate-repository.yml ^DEPLOYMENT.md ^RECOVERY.md $check-repository.ps1 $check-source-introduction.ps1 $host-deploy.sh $quarantine-failed-bootstrap.sh $test-contracts.py $test-source-introduction.ps1 $upgrade-host-control.sh $validate-repository.py $verify-host-security.sh")
+    acme_material_expected_paths = sorted({*acme_material_repair_expected_paths, *acme_material_review_authority_expected_paths, *acme_material_current_expected_paths[:-1]})
+    acme_stage_repair_expected_paths = _paths("@workflows/validate-repository.yml %immutable-letsencrypt.fragment.yml $check-repository.ps1 $check-source-introduction.ps1 $host-deploy.sh $test-contracts.py $test-source-introduction.ps1 $validate-repository.py $verify-host.sh")
+    acme_stage_current_expected_paths = acme_material_current_expected_paths[:-1]
+    acme_stage_expected_paths = sorted({*acme_stage_repair_expected_paths, *acme_stage_current_expected_paths})
+    acme_transport_repair_expected_paths = sorted({*acme_stage_repair_expected_paths[:-1], *_paths("@workflows/disposable-bootstrap.yml %acme-sh-3.0.6.LICENSE.md %acme-sh-3.0.6.gz.b64 %acme-sh-3.1.4.LICENSE.md %acme-sh-3.1.4.gz.b64 ^PROVIDER-DNS-TLS.md ^SOURCE-PROVENANCE.md ^THIRD-PARTY-NOTICES.md ^third-party-components.v1.json $verify-runtime-assets.sh")})
+    acme_transport_current_expected_paths = sorted({*acme_material_current_expected_paths, *_paths("@workflows/disposable-bootstrap.yml $finalize-member-rollout.sh $host-backup.sh $host-break-glass-admin.sh $host-finalize-authentication.sh $host-operation-lock.py $host-restore-validate.sh $host-stop-pending-activation.sh $host-verify-wrapper.sh $install-host-control.sh $install-media-certificate-renewal.sh $prepare-media-certificate.sh $run-media-certificate-renewal.sh $test-host-operation-lock.py")})
+    acme_transport_postfailure_current_expected_paths = TRANSPORT_PATHS
+    acme_transport_expected_paths = sorted({*acme_transport_repair_expected_paths, *acme_transport_current_expected_paths, *acme_transport_postfailure_current_expected_paths})
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
         ("active_swap_expected_paths", active_swap_expected_paths),
@@ -16598,6 +16454,10 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         ("acme_stage_expected_paths", acme_stage_expected_paths),
         ("acme_transport_repair_expected_paths", acme_transport_repair_expected_paths),
         ("acme_transport_current_expected_paths", acme_transport_current_expected_paths),
+        (
+            "acme_transport_postfailure_current_expected_paths",
+            acme_transport_postfailure_current_expected_paths,
+        ),
         ("acme_transport_expected_paths", acme_transport_expected_paths),
     ):
         marker = f"local -ar {name}=("
@@ -16656,6 +16516,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'readonly reviewed_acme_stage_recovery_commit="9683e62abd3d0f41c41fc2a126a49eb33216c265"',
         'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
         'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
+        'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
         'local config="$1" descriptor="$2"',
         "[[ ${keys_text} == *$'\\n' ]] || return 1",
         '[[ ${repository} == /root/Mochirii-Forums ]] || return 1',
@@ -16674,6 +16535,11 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         'scripts/quarantine-failed-bootstrap.sh" --upgrade-preflight',
         'bind_invoked_canonical_successor "${requested_commit}" "${state[0]}"',
         "deployment_recovery_upgrade=true",
+        "postfailure_control_recovery=true",
+        "require_postfailure_predecessor() {",
+        "preflight_postfailure_predecessor() {",
+        'require_postfailure_predecessor "${previous_commit}"',
+        "preflight_postfailure_predecessor",
         'terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh"',
     ):
         if value not in upgrader:
@@ -16859,11 +16725,11 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             if initialized.returncode != 0:
                 raise RuntimeError("Clean-state Git fixture initialization failed.")
             tracked = clean_root / "tracked.txt"
-            tracked.write_text("clean\n", encoding="ascii", newline="\n")
+            tracked.write_text("clean\n", encoding="ascii", newline="\n"); tracked.chmod(0o644)
             tracked_scripts = clean_root / "scripts"
-            tracked_scripts.mkdir()
+            tracked_scripts.mkdir(mode=0o755); tracked_scripts.chmod(0o755)
             tracked_helper = tracked_scripts / "helper.py"
-            tracked_helper.write_text("value = 1\n", encoding="ascii", newline="\n")
+            tracked_helper.write_text("value = 1\n", encoding="ascii", newline="\n"); tracked_helper.chmod(0o644)
             staged = run_fixture_git(
                 "-C", str(clean_root), "add", "tracked.txt", "scripts/helper.py"
             )
@@ -17375,22 +17241,25 @@ fi
                 "#!/usr/bin/env bash\n"
                 "set -eu\n"
                 "[[ $# -eq 2 && $1 == --upgrade-preflight && $2 == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ]]\n"
-                "printf '%s\\n' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+                "printf '%s\\n' ed2d1f0bedf4e7865c5ac3737fdae2308630e25a\n",
                 encoding="utf-8",
                 newline="\n",
             )
             harness = f'''set -u
 requested=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
+postfailure_control_recovery=false
 read_bound_failed_bootstrap_preflight() {{
   [[ $# -eq 1 && $1 == "$requested" ]] || return 1
   [[ -f {quarantine.as_posix()} && ! -L {quarantine.as_posix()} && ! -x {quarantine.as_posix()} ]] || return 1
   /bin/bash --noprofile --norc {quarantine.as_posix()} --upgrade-preflight "$1"
 }}
 bind_invoked_canonical_successor() {{
-  [[ $1 == "$requested" && $2 == aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ]]
+  [[ $1 == "$requested" && $2 == "$reviewed_acme_transport_failed_bootstrap_commit" ]]
 }}
 {function_source}
 validate_failed_bootstrap_upgrade_exception "$requested"
+[[ ${{postfailure_control_recovery}} == true ]]
 '''
             for mode, should_pass in ((0o644, True), (0o755, False)):
                 quarantine.chmod(mode)
@@ -17608,6 +17477,7 @@ reviewed_acme_stage_failed_bootstrap_commit=637a7c315574840156ac46615beb44170740
 reviewed_acme_stage_recovery_commit=9683e62abd3d0f41c41fc2a126a49eb33216c265
 reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
 reviewed_acme_transport_recovery_commit=5272554d33e9fcfc8f634ea14bc8e1f295b4278b
+reviewed_acme_transport_postfailure_parent_commit=da21f45b6b7b0ed5514b7242113b3c5cf95e86f6
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -17624,6 +17494,7 @@ esac
 current_parent="$reviewed"
 [[ ${{LINEAGE_KIND:-legacy}} != reload_privacy ]] || current_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
 [[ ${{LINEAGE_KIND:-legacy}} != material ]] || current_parent="$reviewed_acme_material_review_authority_commit"
+[[ ${{LINEAGE_KIND:-legacy}} != transport ]] || current_parent="$reviewed_acme_transport_postfailure_parent_commit"
 bounded() {{ [[ $1 == 5s ]] || return 80; shift; "$@"; }}
 validated_source_repository_boundary_identity() {{
   [[ $# -eq 12 ]] || return 78
@@ -17667,6 +17538,8 @@ git() {{
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_material_review_authority_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != review-authority-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_material_review_authority_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != review-authority-parents ]] && printf '%s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" unrelated ;;
+    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_transport_postfailure_parent_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != transport-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
+    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_transport_postfailure_parent_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != transport-parents ]] && printf '%s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{LINEAGE_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$failed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$failed" || printf '%s %s %s\n' "$reviewed" "$failed" unrelated ;;
     "-C ${{source_root}} -c core.fsmonitor=false -c core.untrackedCache=false status --porcelain=v1 --untracked-files=all --ignored=matching")
@@ -17769,7 +17642,7 @@ git() {{
       [[ ${{LINEAGE_MUTATION:-none}} == transport-repair-paths ]] || printf '%s\n' scripts/verify-runtime-assets.sh
       [[ ${{LINEAGE_MUTATION:-none}} != transport-repair-status ]] || return 83
       ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_recovery_commit}} ${{current}}")
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_recovery_commit}} ${{reviewed_acme_transport_postfailure_parent_commit}}")
       printf '%s\n' \
         .github/workflows/disposable-bootstrap.yml \
         .github/workflows/validate-repository.yml \
@@ -17798,6 +17671,11 @@ git() {{
       [[ ${{LINEAGE_MUTATION:-none}} == transport-current-paths ]] || printf '%s\n' scripts/validate-repository.py
       printf '%s\n' scripts/verify-host-security.sh
       [[ ${{LINEAGE_MUTATION:-none}} != transport-current-status ]] || return 83
+      ;;
+    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_postfailure_parent_commit}} ${{current}}")
+      printf '%s\n' {TRANSPORT_SHELL}
+      [[ ${{LINEAGE_MUTATION:-none}} != transport-postfailure-paths ]] || printf '%s\n' unexpected
+      [[ ${{LINEAGE_MUTATION:-none}} != transport-postfailure-status ]] || return 83
       ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{failed}} ${{current}}")
       case "${{LINEAGE_KIND:-legacy}}" in
@@ -17943,8 +17821,10 @@ validate_source_lineage "$current" "$failed"
             lineage_cases.extend(
                 ("transport", mutation, False)
                 for mutation in (
+                    "transport-parent", "transport-parents",
                     "transport-repair-paths", "transport-repair-status",
                     "transport-current-paths", "transport-current-status",
+                    "transport-postfailure-paths", "transport-postfailure-status",
                 )
             )
             lineage_cases.extend(
@@ -18243,9 +18123,6 @@ validate_source_lineage "$current" "$failed"
     if any(transaction.count(anchor) != 1 for anchor in crash_anchors):
         raise RuntimeError("Failed-bootstrap crash-window anchor inventory differs.")
 
-    # The production transaction is root-only. Windows and an unprivileged
-    # Linux source check still execute every static consumer binding above;
-    # the pinned root/Linux check drives every journal phase below.
     if os.name != "posix" or os.geteuid() != 0:
         return
 

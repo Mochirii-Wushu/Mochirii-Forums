@@ -12,8 +12,8 @@ immutable upstream inputs:
 
 - `discourse_docker`:
   `ed9f680b0df1de28f062de1769d89d22b2644d1b`;
-- Discourse core `v2026.7.1`:
-  `cbf996f65aae3da1843224aa624bcd9a225931ac`;
+- Discourse core `v2026.8.0`:
+  `badad7b0456a628e578bc48b9f8c1259422b5d58`;
 - Docker Manager, included by the official standalone template:
   `c008c3ca7fcc44775215843992e88190adb7b3bf`; and
 - Linux AMD64 base image:
@@ -833,9 +833,11 @@ The later bootstrap at exact release
 `ed2d1f0bedf4e7865c5ac3737fdae2308630e25a` has a ninth,
 non-interchangeable recovery chain for the proved ACME transport boundary.
 That failed release is the sole parent of reviewed clean-transport repair
-commit `5272554d33e9fcfc8f634ea14bc8e1f295b4278b`; the recovery source must
-be one exact sole-parent child of that repair and the current canonical
-`main`. The two exact path segments are independently bound. The transport
+commit `5272554d33e9fcfc8f634ea14bc8e1f295b4278b`; that repair is the sole
+parent of the reviewed post-failure boundary
+`da21f45b6b7b0ed5514b7242113b3c5cf95e86f6`; and the recovery source must
+be one exact sole-parent child of that boundary and the current canonical
+`main`. The three exact path segments are independently bound. The transport
 repair changes only `.github/workflows/disposable-bootstrap.yml`,
 `.github/workflows/validate-repository.yml`, both retired `acme-sh` 3.0.6
 license/archive paths, both replacement 3.1.4 license/archive paths,
@@ -864,14 +866,16 @@ license/archive paths, both replacement 3.1.4 license/archive paths,
   `scripts/test-host-operation-lock.py`,
   `scripts/test-source-introduction.ps1`, `scripts/upgrade-host-control.sh`,
   `scripts/validate-repository.py`, and `scripts/verify-host-security.sh`. The
-  cumulative diff from the failed release is exactly the resulting thirty-six
-unique paths. Selection remains by exact
+  reviewed post-failure recovery child is independently restricted to the
+  exact thirty-one Git-order paths, and the cumulative diff from the failed
+  release is exactly forty-nine paths. Selection remains by exact
 failed commit, so this exception cannot substitute for another lineage, admit
 another descendant or merge commit, or authorize another path set. The
   reviewed repair replaces the historical client with the pinned official
 3.1.4 source and invokes its transport in a clean environment with curl's
 configuration-file suppression as the first option. It neither authorizes an
-identical-byte retry nor claims another retained-runtime cause. The same
+identical-byte retry of either the failed outer operation or the older
+`da21f45b6b7b0ed5514b7242113b3c5cf95e86f6` control bytes, nor claims another retained-runtime cause. Before any target publication, the changed recovery child additionally requires the installed control pointer, evidence, retained source, and targets to bind exactly to failed predecessor `ed2d1f0bedf4e7865c5ac3737fdae2308630e25a`. The same
 retained journal and runtime, stopped/absent publication, root-owned state,
 unrelated-journal exclusion, and evidence-preserving quarantine rules apply.
 

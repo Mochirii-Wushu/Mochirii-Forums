@@ -10,8 +10,8 @@ secrets, or create provider resources.
 
 ## Selected release
 
-- Discourse application: `v2026.7.1`, commit
-  `cbf996f65aae3da1843224aa624bcd9a225931ac`.
+- Discourse application: `v2026.8.0`, commit
+  `badad7b0456a628e578bc48b9f8c1259422b5d58`.
 - Discourse Docker: commit
   `ed9f680b0df1de28f062de1769d89d22b2644d1b`.
 - Docker Manager, included by the official standalone template: commit

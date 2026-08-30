@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "contractId": "forum-central-identity",
   "contractVersion": "1.0.0",
-  "recordedAt": "2026-08-14",
+  "recordedAt": "2026-08-30",
   "status": "consumer-prepared-cross-repository-activation-false",
   "protocol": {
     "name": "DiscourseConnect",
@@ -73,12 +73,12 @@
   },
   "pinnedConsumerEvidence": {
     "repository": "https://github.com/discourse/discourse.git",
-    "commit": "cbf996f65aae3da1843224aa624bcd9a225931ac",
+    "commit": "badad7b0456a628e578bc48b9f8c1259422b5d58",
     "evidenceFiles": [
       {
         "path": "lib/discourse_connect_base.rb",
-        "bytes": 3848,
-        "sha256": "7aeafcf920bfa5646ee0864c1ecbe3ad24615a89505122ea88037142ad95e638"
+        "bytes": 3933,
+        "sha256": "042b62c26ba4800976e75d540a429d66625fe66c3f7bee69188193ae9648d66b"
       },
       {
         "path": "app/models/discourse_connect.rb",
@@ -87,13 +87,13 @@
       },
       {
         "path": "app/controllers/session_controller.rb",
-        "bytes": 39512,
-        "sha256": "022627791f2a237c4bfb789d9523b077f995c8a649d91a01a7006898ecc256e2"
+        "bytes": 40149,
+        "sha256": "7d54021d1ce7e21a6ab8b9ba8202aca37386b2676af5168c7177da3e23338c85"
       },
       {
         "path": "config/site_settings.yml",
-        "bytes": 117684,
-        "sha256": "b50499a89a4ac5bb368670617ca75513bb458750aeaced2e0c48291e5da9653c"
+        "bytes": 118952,
+        "sha256": "95942dda8e4efe2ded0591b3c1e0845d4a018832800ccf2f55a2beed996f9e13"
       }
     ],
     "onlineSemanticGate": "scripts/verify-pinned-source.py --online"

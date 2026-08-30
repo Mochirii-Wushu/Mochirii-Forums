@@ -211,7 +211,7 @@ jobs:
             fi
             sleep 2
           done
-          sudo docker exec app /usr/local/bin/rails runner 'require "etc"; raise unless Process.euid == Etc.getpwnam("discourse").uid; raise unless GitUtils.git_version == "cbf996f65aae3da1843224aa624bcd9a225931ac"; ActiveRecord::Base.connection.execute("SELECT 1"); raise if Upload.exists?(sha1: "0000000000000000000000000000000000000000")'
+          sudo docker exec app /usr/local/bin/rails runner 'require "etc"; raise unless Process.euid == Etc.getpwnam("discourse").uid; raise unless GitUtils.git_version == "badad7b0456a628e578bc48b9f8c1259422b5d58"; ActiveRecord::Base.connection.execute("SELECT 1"); raise if Upload.exists?(sha1: "0000000000000000000000000000000000000000")'
           sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/verify-site.rb"'
           sudo docker exec app bash -lc '/usr/local/bin/rails runner "$MOCHIRII_RELEASE_ASSET_ROOT/render-branding-email.rb"'
           transcript="$(mktemp "${RUNNER_TEMP}/mochirii-nginx.XXXXXXXX")"

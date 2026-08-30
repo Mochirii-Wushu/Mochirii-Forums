@@ -60,12 +60,12 @@ PINNED_EMAIL_EXTRACT_PARTS_BLOCK = b'''  def self.extract_parts(raw)
 '''
 PINNED_MAIL_SEMANTIC_EVIDENCE = {
     "app/mailers/user_notifications.rb": (
-        28133,
-        "eb6a22bb03b0731e81f9f560609bd344be3076fb49c1cffe21c6590f495063d4",
+        28162,
+        "3602630baacc40c9f12668509f2687f1acc27cc3ce2c2a48da70aef71d855413",
     ),
     "app/models/topic.rb": (
-        78502,
-        "fd6468dd779edc6767dd8fb380e36c735b0698f6f4a2951a5e8a3b186ea6f056",
+        79508,
+        "2a03991616609352e91c12acfc25bc0ac4f6bb8dfb7be6fac15d1b4cad467593",
     ),
     "app/mailers/admin_confirmation_mailer.rb": (
         438,
@@ -84,20 +84,20 @@ PINNED_MAIL_SEMANTIC_EVIDENCE = {
         "bb537c8d6dcce21ef12184de53ec32bab64b807e34c6a872f3243686be0c8f7a",
     ),
     "lib/discourse.rb": (
-        39279,
-        "351e1170f79acb9b321746df618339de5412c95b1ce4c13db2c17e96bf1d0678",
+        40115,
+        "38c3087e26679edab92abd14be633e699bf9e66310b51fab5676b51836683ee2",
     ),
     "config/locales/server.en.yml": (
-        420250,
-        "0ff18443abac07e496e27142f21b33e8935242ca3d55fd33531c1ace43a92f50",
+        425283,
+        "d0da1bb59b0a7bcb9aa3dc9fc18435f81f5653af808bb326814ae5f4e9c9b0bf",
     ),
     "app/helpers/user_notifications_helper.rb": (
         3229,
         "8916b4cf739dd589a2d6f8131332b9b59b2de20b9981b210c1bea0b189803aa5",
     ),
     "config/routes.rb": (
-        81601,
-        "f5b5a641132de5342d78e0e3579783c0dcd0391ec5997e2034dd6a99d8c3078b",
+        82005,
+        "45f02f92b7542ecace6996eb3bdc4ba123138378f97ff3f796ed80907bfdedba",
     ),
 }
 PINNED_TOPIC_SEED_EVIDENCE = {
@@ -118,8 +118,8 @@ PINNED_TOPIC_SEED_EVIDENCE = {
         "b4cf0a70dde716e8785239498d84a4612fc26f3e9607053abfd64c1edb7a1b52",
     ),
     "lib/post_revisor.rb": (
-        29992,
-        "f92dfd0ff095b0a72b181e0b5a8d649e331a22cf1a669de98718feecc1a9a2a2",
+        30381,
+        "685de07e47f54b4fa3ce102602984d1a7101a743d76a909d0808a44f21447d43",
     ),
     "lib/text_cleaner.rb": (
         3043,
@@ -646,8 +646,8 @@ PINNED_DIGEST_LOGO_METHOD_BLOCK = b'''  def logo_url
 '''
 PINNED_GRAVATAR_EVIDENCE = {
     "app/models/user.rb": (
-        73523,
-        "79c453b7bf56a69f7919572020ffa5fdf9b32de37255439d0a22c2b73f3ff7ca",
+        73778,
+        "f4616cd846d65e1dc7fe4ef77d0ec13f2f9f52e78b5c2da2ca65e4defe632ce3",
     ),
     "app/models/user_avatar.rb": (
         7189,

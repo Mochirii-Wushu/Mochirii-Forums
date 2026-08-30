@@ -50,7 +50,7 @@ compiled_theme = theme&.javascript_cache&.content.to_s
 checks["upload_notice_connector_compiled"] =
   compiled_theme.include?('"discourse/templates/connectors/composer-fields-below/mochirii-upload-notice":') &&
     compiled_theme.include?("Direct upload URLs may be accessed without a forum session")
-checks["core_revision"] = Discourse.git_version == "cbf996f65aae3da1843224aa624bcd9a225931ac"
+checks["core_revision"] = Discourse.git_version == "badad7b0456a628e578bc48b9f8c1259422b5d58"
 checks["repository_revision"] = ENV["MOCHIRII_REPOSITORY_COMMIT"]&.match?(/\A[0-9a-f]{40}\z/) == true
 checks["release_asset_root"] =
   ENV["MOCHIRII_RELEASE_ASSET_ROOT"] == "/opt/mochirii-release"
