@@ -433,16 +433,16 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
         ),
         "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "21d4b8923ca9a93da86ab05df3ab40c0d0891c572554f0d710ba2569ea5738f7"
+            "3e4e30e689ee9855ce3b7d43bebc888c41b0776a6e76701f112bdb705fa89b7b"
         ),
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
             "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
         ),
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "98d68b030f0e11f378a33b86a4fd998f728d4ba60863f31c87863ff0f15c8403"
+            "1e8c7004c1768df665bbd804f7b0ff4f42147ae7ec1bc5d9b9932691ba09805c"
         ),
         "FAILED_BOOTSTRAP_TEST_SHA256": (
-            "98f0a5b1faede67bf4a11e886da3cc6503f087b292c21befa12ddaeb76a8c653"
+            "245a2af4aab3c16b9f7e628ade2c5f2aa311b1b33152b4dd44d793646ee4978d"
         ),
     }
     observed_contract_seals: dict[str, str] = {}
@@ -16725,11 +16725,11 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
             if initialized.returncode != 0:
                 raise RuntimeError("Clean-state Git fixture initialization failed.")
             tracked = clean_root / "tracked.txt"
-            tracked.write_text("clean\n", encoding="ascii", newline="\n")
+            tracked.write_text("clean\n", encoding="ascii", newline="\n"); tracked.chmod(0o644)
             tracked_scripts = clean_root / "scripts"
-            tracked_scripts.mkdir()
+            tracked_scripts.mkdir(mode=0o755); tracked_scripts.chmod(0o755)
             tracked_helper = tracked_scripts / "helper.py"
-            tracked_helper.write_text("value = 1\n", encoding="ascii", newline="\n")
+            tracked_helper.write_text("value = 1\n", encoding="ascii", newline="\n"); tracked_helper.chmod(0o644)
             staged = run_fixture_git(
                 "-C", str(clean_root), "add", "tracked.txt", "scripts/helper.py"
             )
