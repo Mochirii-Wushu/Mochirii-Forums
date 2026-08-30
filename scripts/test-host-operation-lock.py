@@ -23,6 +23,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 HELPER_PATH = ROOT / "scripts/host-operation-lock.py"
 TEST_PATH = pathlib.Path(__file__).resolve()
 BASE_IMAGE = "discourse/base@sha256:3b1846055ca723d13ef7dc3466da61627f32e8b212283561a6c617d759fcec48"
+PYTHON_CHILD = ("/usr/bin/python3", "-I", "-S", "-B")
 
 
 def load_helper():
@@ -113,7 +114,7 @@ def assert_pid_absent(pid: int) -> None:
 
 def subprocess_result(*arguments: str, environment: dict[str, str] | None = None):
     return subprocess.run(
-        [sys.executable, "-B", str(TEST_PATH), *arguments],
+        [*PYTHON_CHILD, str(TEST_PATH), *arguments],
         check=False,
         capture_output=True,
         text=True,
@@ -573,11 +574,56 @@ def reserved_descriptor_collision_boundary() -> None:
             os.close(HELPER.LOCK_FDS["media"])
             os.close(source)
 
+    for requested, occupied in (("primary", "media"), ("media", "primary")):
+        with tempfile.TemporaryDirectory(
+            prefix=f"mochirii-lock-fd-cross-{requested}-"
+        ) as temporary:
+            root = pathlib.Path(temporary)
+            boot_root(root)
+            marker = root / f"caller-{occupied}-fd"
+            source = os.open(marker, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+            target = HELPER.LOCK_FDS[occupied]
+            try:
+                os.dup2(source, target, inheritable=False)
+                before = os.fstat(target)
+                before_inheritable = os.get_inheritable(target)
+                expect_boundary_error(
+                    lambda: HELPER.run_locked(
+                        (requested,),
+                        ("/usr/bin/true",),
+                        root=root,
+                        environment={},
+                    ),
+                    f"occupied nonrequested {occupied} descriptor",
+                )
+                after = os.fstat(target)
+                if (
+                    (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+                    or os.get_inheritable(target) != before_inheritable
+                ):
+                    raise RuntimeError(
+                        "Cross-lane FD collision clobbered its caller-owned descriptor."
+                    )
+                for lock_descriptor in HELPER.LOCK_FDS.values():
+                    if lock_descriptor == target:
+                        continue
+                    try:
+                        os.fstat(lock_descriptor)
+                    except OSError:
+                        continue
+                    raise RuntimeError(
+                        "Rejected cross-lane acquisition retained another reserved FD."
+                    )
+                assert_no_lock_artifacts(root)
+            finally:
+                os.close(target)
+                os.close(source)
+
 
 def assert_held_tamper_boundaries() -> None:
     missing_environment = clean_environment()
     result = subprocess.run(
-        [sys.executable, "-B", str(HELPER_PATH), "assert-held", "--locks", "primary"],
+        [*PYTHON_CHILD, str(HELPER_PATH), "assert-held", "--locks", "primary"],
         check=False,
         capture_output=True,
         text=True,
@@ -590,7 +636,7 @@ def assert_held_tamper_boundaries() -> None:
     malformed_environment = clean_environment()
     malformed_environment[HELPER.CONTEXT_ENV] = "v1;primary=201"
     result = subprocess.run(
-        [sys.executable, "-B", str(HELPER_PATH), "assert-held", "--locks", "primary"],
+        [*PYTHON_CHILD, str(HELPER_PATH), "assert-held", "--locks", "primary"],
         check=False,
         capture_output=True,
         text=True,
@@ -601,7 +647,7 @@ def assert_held_tamper_boundaries() -> None:
         raise RuntimeError("Malformed inherited context did not return exit 1.")
 
     result = subprocess.run(
-        [sys.executable, "-B", str(HELPER_PATH), "verify-nodes", "--locks", "primary", "--root", "/tmp"],
+        [*PYTHON_CHILD, str(HELPER_PATH), "verify-nodes", "--locks", "primary", "--root", "/tmp"],
         check=False,
         capture_output=True,
         text=True,
@@ -646,8 +692,7 @@ def sigkill_inheritance_boundary() -> None:
         closed = root / "descendant-closed"
         process = subprocess.Popen(
             [
-                sys.executable,
-                "-B",
+                *PYTHON_CHILD,
                 str(TEST_PATH),
                 "--run-holder",
                 str(root),
@@ -687,6 +732,182 @@ def sigkill_inheritance_boundary() -> None:
                 assert_pid_absent(descendant)
 
 
+def child_environment_boundary() -> None:
+    with tempfile.TemporaryDirectory(prefix="mochirii-lock-environment-") as temporary:
+        root = pathlib.Path(temporary)
+        boot_root(root)
+        hostile = clean_environment()
+        hostile.update(
+            {
+                "SUDO_USER": "mochirii-forums-operator",
+                "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 2",
+                "BASH_ENV": "/hostile/bash-env",
+                "ENV": "/hostile/env",
+                "PYTHONPATH": "/hostile/python",
+                "PYTHONHOME": "/hostile/python-home",
+                "GIT_CONFIG_GLOBAL": "/hostile/git-config",
+                "PATH": "/hostile/path",
+            }
+        )
+        result = subprocess_result(
+            "--run-environment",
+            str(root),
+            "primary",
+            environment=hostile,
+        )
+        if result.returncode != 0 or result.stderr:
+            raise RuntimeError("Locked child environment probe failed.")
+        observed = dict(
+            row.split("=", 1)
+            for row in result.stdout.splitlines()
+            if "=" in row
+        )
+        expected = {
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LC_ALL": "C",
+            "HOME": "/nonexistent",
+            "SUDO_USER": hostile["SUDO_USER"],
+            "SSH_CONNECTION": hostile["SSH_CONNECTION"],
+            "MOCHIRII_FORUMS_HOST_LOCK_FDS": "v1;primary=200",
+        }
+        if observed != expected:
+            raise RuntimeError("Locked child environment is not the exact sanitized allowlist.")
+
+        rejection_root = root / "rejected"
+        rejection_root.mkdir()
+        boot_root(rejection_root)
+        malformed = dict(hostile)
+        malformed["SSH_CONNECTION"] = "sentinel\nnewline"
+        expect_boundary_error(
+            lambda: HELPER.run_locked(
+                ("primary",),
+                ("/usr/bin/true",),
+                root=rejection_root,
+                environment=malformed,
+            ),
+            "malformed preserved environment",
+        )
+        invalid_connection = dict(hostile)
+        invalid_connection["SSH_CONNECTION"] = "not-an-address 1 192.0.2.2 2"
+        expect_boundary_error(
+            lambda: HELPER.run_locked(
+                ("primary",),
+                ("/usr/bin/true",),
+                root=rejection_root,
+                environment=invalid_connection,
+            ),
+            "invalid SSH connection evidence",
+        )
+        invalid_operator = dict(hostile)
+        invalid_operator["SUDO_USER"] = "unapproved-operator"
+        expect_boundary_error(
+            lambda: HELPER.run_locked(
+                ("primary",),
+                ("/usr/bin/true",),
+                root=rejection_root,
+                environment=invalid_operator,
+            ),
+            "invalid sudo principal",
+        )
+        boundary = rejection_root / "run/lock" / HELPER.LOCK_DIRECTORY
+        if boundary.exists() or boundary.is_symlink():
+            raise RuntimeError("Rejected child environment created a lock artifact.")
+
+
+def production_cli_environment_boundary() -> None:
+    with tempfile.TemporaryDirectory(prefix="mochirii-lock-cli-environment-") as temporary:
+        root = pathlib.Path(temporary)
+        bash_marker = root / "bash-startup-ran"
+        python_marker = root / "python-startup-ran"
+        bash_startup = root / "bash-startup.sh"
+        bash_startup.write_text(
+            f"printf poisoned > {str(bash_marker)!r}\n",
+            encoding="ascii",
+            newline="\n",
+        )
+        hostile_python = root / "python"
+        hostile_python.mkdir()
+        (hostile_python / "sitecustomize.py").write_text(
+            "from pathlib import Path\n"
+            f"Path({str(python_marker)!r}).write_text('poisoned', encoding='ascii')\n",
+            encoding="ascii",
+            newline="\n",
+        )
+        hostile = clean_environment()
+        hostile.update(
+            {
+                "SUDO_USER": "mochirii-forums-operator",
+                "SSH_CONNECTION": "192.0.2.1 1 192.0.2.2 2",
+                "BASH_ENV": str(bash_startup),
+                "ENV": str(bash_startup),
+                "PYTHONPATH": str(hostile_python),
+                "PYTHONHOME": str(hostile_python),
+                "GIT_CONFIG_GLOBAL": str(root / "git-config"),
+                "PATH": str(root),
+            }
+        )
+        def run_locked(*command: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    "/usr/bin/python3",
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(HELPER_PATH),
+                    "run",
+                    "--locks",
+                    "primary",
+                    "--",
+                    *command,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=hostile,
+                timeout=20,
+            )
+
+        result = run_locked("/usr/bin/env")
+        if result.returncode != 0 or result.stderr:
+            raise RuntimeError("Production host-lock CLI environment probe failed.")
+        observed = dict(
+            row.split("=", 1)
+            for row in result.stdout.splitlines()
+            if "=" in row
+        )
+        expected = {
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LC_ALL": "C",
+            "HOME": "/nonexistent",
+            "SUDO_USER": hostile["SUDO_USER"],
+            "SSH_CONNECTION": hostile["SSH_CONNECTION"],
+            "MOCHIRII_FORUMS_HOST_LOCK_FDS": "v1;primary=200",
+        }
+        if observed != expected:
+            raise RuntimeError("Production host-lock CLI preserved an ambient environment value.")
+        bash_probe = root / "assert-environment.sh"
+        bash_probe.write_text(
+            "#!/bin/bash\n"
+            "set -euo pipefail\n"
+            "[[ ${PATH} == /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin ]]\n"
+            "[[ ${LC_ALL} == C && ${HOME} == /nonexistent ]]\n"
+            "[[ ${SUDO_USER} == mochirii-forums-operator ]]\n"
+            "[[ ${SSH_CONNECTION} == '192.0.2.1 1 192.0.2.2 2' ]]\n"
+            "[[ ${MOCHIRII_FORUMS_HOST_LOCK_FDS} == 'v1;primary=200' ]]\n"
+            "[[ -z ${BASH_ENV+x} && -z ${ENV+x} && -z ${PYTHONPATH+x} ]]\n"
+            "[[ -z ${PYTHONHOME+x} && -z ${GIT_CONFIG_GLOBAL+x} ]]\n"
+            "printf '%s\\n' isolated\n",
+            encoding="ascii",
+            newline="\n",
+        )
+        bash_probe.chmod(0o700)
+        bash_result = run_locked("/bin/bash", "--noprofile", "--norc", str(bash_probe))
+        if bash_result.returncode != 0 or bash_result.stdout != "isolated\n" or bash_result.stderr:
+            raise RuntimeError("Production host-lock CLI Bash startup isolation differs.")
+        if bash_marker.exists() or python_marker.exists():
+            raise RuntimeError("Production host-lock CLI executed an ambient startup hook.")
+
+
 def run_linux() -> None:
     if os.name != "posix" or os.geteuid() != 0:
         raise SystemExit("Host-operation lock fixture requires isolated Linux root.")
@@ -699,9 +920,11 @@ def run_linux() -> None:
     reserved_descriptor_collision_boundary()
     assert_held_tamper_boundaries()
     sigkill_inheritance_boundary()
+    child_environment_boundary()
+    production_cli_environment_boundary()
     if any((ROOT / "scripts").glob("__pycache__/host-operation-lock*.pyc")):
         raise RuntimeError("Host-operation lock fixture created bytecode cache files.")
-    print("Host-operation lock hostile fixture passed.")
+    print("Host operation lock hostile fixture passed.")
 
 
 def run_in_container() -> None:
@@ -715,6 +938,8 @@ def run_in_container() -> None:
         "--read-only",
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,nodev,size=16m",
+        "--tmpfs",
+        "/run/lock:rw,nosuid,nodev,size=1m,mode=1777,uid=0,gid=0",
         "--cap-drop",
         "ALL",
         "--security-opt",
@@ -728,8 +953,10 @@ def run_in_container() -> None:
         "-v",
         f"{ROOT}:/repo:ro",
         "--entrypoint",
-        "python3",
+        "/usr/bin/python3",
         BASE_IMAGE,
+        "-I",
+        "-S",
         "-B",
         "/repo/scripts/test-host-operation-lock.py",
         "--inside-linux",
@@ -766,8 +993,7 @@ def child_run_once(root: pathlib.Path, lock_set: str) -> None:
     HELPER.run_locked(
         requested,
         (
-            sys.executable,
-            "-B",
+            *PYTHON_CHILD,
             str(TEST_PATH),
             "--assert-and-exit",
             str(root),
@@ -782,14 +1008,22 @@ def child_run_holder(root: pathlib.Path, ready: pathlib.Path, closed: pathlib.Pa
     HELPER.run_locked(
         ("primary",),
         (
-            sys.executable,
-            "-B",
+            *PYTHON_CHILD,
             str(TEST_PATH),
             "--holder",
             str(root),
             str(ready),
             str(closed),
         ),
+        root=root,
+        environment=clean_environment(),
+    )
+
+
+def child_run_environment(root: pathlib.Path, lock_set: str) -> None:
+    HELPER.run_locked(
+        HELPER.parse_lock_set(lock_set),
+        ("/usr/bin/env",),
         root=root,
         environment=clean_environment(),
     )
@@ -830,6 +1064,9 @@ def main() -> int:
     if arguments and arguments[0] == "--run-holder":
         child_run_holder(pathlib.Path(arguments[1]), pathlib.Path(arguments[2]), pathlib.Path(arguments[3]))
         raise RuntimeError("Locked inheritance runner unexpectedly returned.")
+    if arguments and arguments[0] == "--run-environment":
+        child_run_environment(pathlib.Path(arguments[1]), arguments[2])
+        raise RuntimeError("Locked environment runner unexpectedly returned.")
     if arguments and arguments[0] == "--holder":
         child_holder(pathlib.Path(arguments[1]), pathlib.Path(arguments[2]), pathlib.Path(arguments[3]))
         raise RuntimeError("Inheritance holder unexpectedly returned.")
