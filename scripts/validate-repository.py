@@ -909,6 +909,47 @@ PYTHON_ACCEPTANCE_ROOT_PATTERNS = {
         r'(?m)^readonly repository_python_acceptance_root_sha256="([0-9a-f]{64})"$'
     ),
 }
+PYTHON_ACCEPTANCE_OUTER_SOURCE_SHA256 = {
+    ".github/workflows/validate-repository.yml": "619b094370ea7b5acd87cf8a722ec0ed811c3e26ccf93166b1a69eb7c52af9ed",
+    "scripts/check-repository.ps1": "bfffa653c455b8c2f90953f0ff3c66ea451e6c51ae3d03db9e0a7265981e6ace",
+    "scripts/check-source-introduction.ps1": "78c6bb008c7c55c6bc241f6cc7b7234d6e3944169e059c3459fdae3f1a1d33ec",
+    "scripts/test-source-introduction.ps1": "d1059ff13466488f9d6fc19c0a3deddb3203f53590bbdc2fdd9d017b5822c64e",
+}
+PYTHON_ACCEPTANCE_OUTER_SOURCE_ROOT_SHA256 = "63c86e561961c6940747e330322983addfe4f82057cf72506943e8e6d420f6e7"
+
+
+def normalized_python_acceptance_outer_source(relative: str, source: str) -> str:
+    if not isinstance(relative, str) or not isinstance(source, str):
+        fail("Trusted Python outer-consumer inventory differs.")
+    if relative == ".github/workflows/validate-repository.yml":
+        patterns = (
+            r"(?m)^(      MOCHIRII_FORUMS_PYTHON_ACCEPTANCE_ROOT_SHA256: )[0-9a-f]{64}($)",
+            r'(?m)^(          \[\[ "\$validator_sha256" == )[0-9a-f]{64}( \]\]$)',
+            r'(?m)^(          \[\[ "\$contract_sha256" == )[0-9a-f]{64}( \]\]$)',
+        )
+    elif relative in (
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/test-source-introduction.ps1",
+    ):
+        patterns = (
+            r"(?m)^(\$expectedValidatorSha256 = ')[0-9a-f]{64}('$)",
+            r"(?m)^(\$expectedContractSha256 = ')[0-9a-f]{64}('$)",
+            r"(?m)^(\$expectedPythonAcceptanceRootSha256 = ')[0-9a-f]{64}('$)",
+        )
+    else:
+        fail("Trusted Python outer-consumer inventory differs.")
+    normalized = source
+    for pattern in patterns:
+        normalized, replacements = re.subn(
+            pattern,
+            r"\g<1>" + ("0" * 64) + r"\g<2>",
+            normalized,
+            count=1,
+        )
+        if replacements != 1:
+            fail("Trusted Python outer-consumer dynamic seal differs.")
+    return normalized
 
 
 def python_acceptance_root_sha256(validator_source: str, contract_source: str) -> str:
@@ -1068,6 +1109,24 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
         for value in requirements:
             if source.count(value) != 1:
                 fail("Trusted Python caller inventory or isolated startup flags differ.")
+    outer_material = b"mochirii-forums-python-outer-consumers-v1\0"
+    for relative, expected in PYTHON_ACCEPTANCE_OUTER_SOURCE_SHA256.items():
+        source = text_files.get(relative)
+        if not isinstance(source, str):
+            fail("Trusted Python outer-consumer source differs.")
+        observed = hashlib.sha256(
+            normalized_python_acceptance_outer_source(relative, source).encode("utf-8")
+        ).hexdigest()
+        if observed != expected:
+            fail("Trusted Python outer-consumer source differs.")
+        outer_material += (
+            relative.encode("ascii") + b"\0" + observed.encode("ascii") + b"\n"
+        )
+    if (
+        hashlib.sha256(outer_material).hexdigest()
+        != PYTHON_ACCEPTANCE_OUTER_SOURCE_ROOT_SHA256
+    ):
+        fail("Trusted Python outer-consumer root differs.")
     isolated_counts = {
         "scripts/quarantine-failed-bootstrap.sh": 6,
         "scripts/upgrade-host-control.sh": 16,
@@ -1112,11 +1171,11 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "e54b1931383d843efaffd6e1fe37a816af47633c9fea9cb2574882ae9e72d8e5"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "3e4e30e689ee9855ce3b7d43bebc888c41b0776a6e76701f112bdb705fa89b7b"
+CONTRACT_TEST_SOURCE_SHA256 = "954c6a74759d2a03d9191e690802e51166345d4b5b0294b596daa7fe137f18c6"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "a6a0a2567b911b82a25a670f7ad86eef7c157128bfba2221636f174911da7e35"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "1e8c7004c1768df665bbd804f7b0ff4f42147ae7ec1bc5d9b9932691ba09805c"
-FAILED_BOOTSTRAP_TEST_SHA256 = "245a2af4aab3c16b9f7e628ade2c5f2aa311b1b33152b4dd44d793646ee4978d"
+CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "0f9012de5e9ddc510ddda805096c8800ad6f8481a094086412c25a4ae1fbf429"
+FAILED_BOOTSTRAP_TEST_SHA256 = "58789429a11e6790b8debfa81741f1874ca479c063be202de9d9f8fe0a37353b"
 
 HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/host-operation-lock.py": "120b12e7f963b59423c55e64610ac83ea2c51edd8def3dd944db8197dff0b364",
@@ -1135,8 +1194,8 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
     "scripts/install-media-certificate-renewal.sh": "3809145fb4d8591e79cfefec92ebad7b36d8f772a280650221cb589d07d9994b",
-    "scripts/quarantine-failed-bootstrap.sh": "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2",
-    "scripts/upgrade-host-control.sh": "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649",
+    "scripts/quarantine-failed-bootstrap.sh": "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f",
+    "scripts/upgrade-host-control.sh": "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4",
 }
 HOST_DEPLOY_ACCEPTANCE_SEALS = (
     "repository_validator_sha256",
@@ -1184,13 +1243,18 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
     normalizers = [
         node
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_normalize_import_path"
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {
+            "_normalize_import_path",
+            "normalized_python_acceptance_outer_source",
+            "validate_python_acceptance_launchers",
+        }
     ]
     if (
         len(mains) != 1
         or len(bootstraps) != 1
         or len(startup_guards) != 1
-        or len(normalizers) != 1
+        or len(normalizers) != 3
         or len(tree.body) < 3
     ):
         fail("Repository validator CLI main is absent or duplicated.")
@@ -1207,7 +1271,7 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
         or main.decorator_list
         or bootstrap.decorator_list
         or startup_guard.decorator_list
-        or normalizer.decorator_list
+        or any(node.decorator_list for node in normalizers)
         or len(top_level_guards) != 1
         or not isinstance(prefix[0], ast.Expr)
         or not isinstance(prefix[0].value, ast.Constant)
@@ -1230,8 +1294,9 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
     startup_guard_source = "".join(
         source_lines[startup_guard.lineno - 1 : startup_guard.end_lineno]
     )
-    normalizer_source = "".join(
-        source_lines[normalizer.lineno - 1 : normalizer.end_lineno]
+    normalizer_source = "\0".join(
+        "".join(source_lines[node.lineno - 1 : node.end_lineno])
+        for node in normalizers
     )
     if (
         hashlib.sha256(bootstrap_source.encode("utf-8")).hexdigest()
@@ -1239,7 +1304,7 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
         or hashlib.sha256(startup_guard_source.encode("utf-8")).hexdigest()
         != "b75c9b3d91b7e93659b3962e16c5e7c160bf35d823b19380d651ee8ee4ce5263"
         or hashlib.sha256(normalizer_source.encode("utf-8")).hexdigest()
-        != "449e60a2d1e8492583e18e5d7a366b7f5a36d6a040e0994e7b6565e533b339f0"
+        != "02b05df55b860a968156f935f4d3c3984c1a8a6c53ca44337173ab450624fb15"
     ):
         fail("Repository validator import-path bootstrap differs.")
     imports_source = "".join(
@@ -1267,6 +1332,7 @@ def validate_validator_cli_acceptance_chain(source: str) -> None:
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256",
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256",
         "FAILED_BOOTSTRAP_TEST_SHA256",
+        "PYTHON_ACCEPTANCE_OUTER_SOURCE_ROOT_SHA256",
     }
     observed_protected_seals: set[str] = set()
     for node in prefix:
@@ -1525,7 +1591,7 @@ def validate_contract_test_acceptance_chain(source: str) -> None:
     )
     if (
         hashlib.sha256(module_startup_source.encode("utf-8")).hexdigest()
-        != "bac2f329fc465b29c221578dd996767fd08fc9175946fcb1e32d417837cc6df7"
+        != "949da7a46399039c0a1dc172fed95417625b9c95de774aab85733ae2c2a588ec"
     ):
         fail("Hostile fixture module-startup source seal differs.")
     if any(
@@ -7790,9 +7856,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     }
     if (
         hashlib.sha256(failed_bootstrap_quarantine.encode("utf-8")).hexdigest()
-        != "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2"
+        != "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f"
         or hashlib.sha256(control_upgrade.encode("utf-8")).hexdigest()
-        != "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649"
+        != "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4"
     ):
         fail("Failed-bootstrap production control source seal differs.")
     if operator_sudoers.splitlines() != [
@@ -7952,8 +8018,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "scripts/run-media-certificate-renewal.sh": "66b78f777483ebf3d679a5c73b241c1f476756af85af32320feda90a34baa2f1",
         "scripts/install-host-control.sh": "59ffa6abd659145f051c58e8130c89ec4349ac43b5dd5ede22fc4bb2ed714c28",
         "scripts/install-media-certificate-renewal.sh": "cd98f7f929522d94031c3d5e5ed8fdfd6cac7ffb907d6a006fb079db3acffe94",
-        "scripts/quarantine-failed-bootstrap.sh": "ff994510e57177c68be93b7c4b11100e6f3f7a59ddf6c71dabf89984c97bb9f8",
-        "scripts/upgrade-host-control.sh": "df51f1c583f4777eecffd0b78fddb6927c2d788a29149e620bfe9ae389f8e396",
+        "scripts/quarantine-failed-bootstrap.sh": "52d13046bb1f637fe644dcec1188e4a7b833c26a033e060b5938b017b348a0ac",
+        "scripts/upgrade-host-control.sh": "bfe0f97c8f10eaf71fbc305c999efc58fd502cb13bdbcbe9f7d9db1cb7fb109f",
     }
     post_lock_operation_anchors = {
         "scripts/prepare-media-certificate.sh": '[[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate preparation refuses an active deployment mutation."',
@@ -8570,6 +8636,14 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'source_repository_git() {',
             'validate_source_repository_operation_state() {',
             'validate_source_repository_clean_state() {',
+            'case "${path}:${mode}" in',
+            'scripts/verify-host-security.sh:100644|config/host-control-manifest.v1.json:100644)',
+            'scripts/verify-host-security.sh:*|config/host-control-manifest.v1.json:*)',
+            'expected_file_mode=600',
+            '*:100644)',
+            'expected_file_mode=644',
+            '*:100755)',
+            'expected_file_mode=755',
             'GIT_ATTR_NOSYSTEM=1',
             'GIT_OPTIONAL_LOCKS=0',
             '-c core.untrackedCache=false',
@@ -8717,6 +8791,14 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'source_repository_git() {',
             'validate_source_repository_operation_state() {',
             'validate_source_repository_clean_state() {',
+            'case "${path}:${mode}" in',
+            'scripts/verify-host-security.sh:100644|config/host-control-manifest.v1.json:100644)',
+            'scripts/verify-host-security.sh:*|config/host-control-manifest.v1.json:*)',
+            'expected_file_mode=600',
+            '*:100644)',
+            'expected_file_mode=644',
+            '*:100755)',
+            'expected_file_mode=755',
             'validate_bound_source_repository_file() {',
             'GIT_ATTR_NOSYSTEM=1',
             'GIT_OPTIONAL_LOCKS=0',
@@ -9216,7 +9298,7 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "repository-boundary": "61d0acf50318675978ed8331b122ebb9731c1abbad98a8bfafc62f4e496dc006",
         "repository-git": "e35273fb1fd470d780ebbadf720c9b231bd0bf608817430735f2d1d2f1e5ef73",
         "repository-operation": "551e061d9234fc2edd8c9c368056acc56e888484e432e4842f6f7d38ceea4bac",
-        "repository-clean": "acbcc2f87c61ff09bbb0a1271e3ea1d91519ef66778739b04e6930c4a66156ac",
+        "repository-clean": "e34f64928aa6e5679ca75752464f730c468619d3b09c85f1a53df06c1dcd9d58",
         "repository-bound-file": "32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f",
         "canonical-remote": "2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa",
         "quarantine-lineage": "90d30f29d1e2136dfa24596ae2adcdfc4d2825a12e82f72eb6986df644580333",

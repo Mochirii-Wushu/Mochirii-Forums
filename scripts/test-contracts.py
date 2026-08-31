@@ -131,8 +131,8 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
     "scripts/install-media-certificate-renewal.sh": "3809145fb4d8591e79cfefec92ebad7b36d8f772a280650221cb589d07d9994b",
-    "scripts/quarantine-failed-bootstrap.sh": "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2",
-    "scripts/upgrade-host-control.sh": "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649",
+    "scripts/quarantine-failed-bootstrap.sh": "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f",
+    "scripts/upgrade-host-control.sh": "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4",
 }
 HOST_DEPLOY_ACCEPTANCE_SEALS = (
     "repository_validator_sha256",
@@ -402,7 +402,12 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
     candidate_normalizers = [
         node
         for node in candidate_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_normalize_import_path"
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {
+            "_normalize_import_path",
+            "normalized_python_acceptance_outer_source",
+            "validate_python_acceptance_launchers",
+        }
     ]
     candidate_contract_verifiers = [
         node
@@ -415,7 +420,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
         or len(candidate_verifiers) != 1
         or len(candidate_bootstraps) != 1
         or len(candidate_startup_guards) != 1
-        or len(candidate_normalizers) != 1
+        or len(candidate_normalizers) != 3
         or len(candidate_contract_verifiers) != 1
         or len(candidate_tree.body) < 3
     ):
@@ -427,23 +432,17 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256",
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256",
         "FAILED_BOOTSTRAP_TEST_SHA256",
+        "PYTHON_ACCEPTANCE_OUTER_SOURCE_ROOT_SHA256",
     }
     expected_contract_seals = {
-        "VALIDATOR_CLI_SOURCE_SHA256": (
-            "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-        ),
-        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": (
-            "3e4e30e689ee9855ce3b7d43bebc888c41b0776a6e76701f112bdb705fa89b7b"
-        ),
-        "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": (
-            "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-        ),
+        "VALIDATOR_CLI_SOURCE_SHA256": "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b",
+        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": "a6a0a2567b911b82a25a670f7ad86eef7c157128bfba2221636f174911da7e35",
+        "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9",
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "1e8c7004c1768df665bbd804f7b0ff4f42147ae7ec1bc5d9b9932691ba09805c"
+            "0f9012de5e9ddc510ddda805096c8800ad6f8481a094086412c25a4ae1fbf429"
         ),
-        "FAILED_BOOTSTRAP_TEST_SHA256": (
-            "245a2af4aab3c16b9f7e628ade2c5f2aa311b1b33152b4dd44d793646ee4978d"
-        ),
+        "FAILED_BOOTSTRAP_TEST_SHA256": "58789429a11e6790b8debfa81741f1874ca479c063be202de9d9f8fe0a37353b",
+        "PYTHON_ACCEPTANCE_OUTER_SOURCE_ROOT_SHA256": "63c86e561961c6940747e330322983addfe4f82057cf72506943e8e6d420f6e7",
     }
     observed_contract_seals: dict[str, str] = {}
     for node in candidate_tree.body:
@@ -482,13 +481,13 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             or not isinstance(node.value.value, str)
             or re.fullmatch(r"[0-9a-f]{64}", node.value.value) is None
         ):
-            raise RuntimeError("Repository validator independent contract seal differs.")
+            raise RuntimeError("Validator seal differs.")
         expected = expected_contract_seals.get(target.id)
         if expected is not None and node.value.value != expected:
-            raise RuntimeError("Repository validator independent contract seal differs.")
+            raise RuntimeError("Validator seal differs.")
         observed_contract_seals[target.id] = node.value.value
     if set(observed_contract_seals) != protected_seal_names:
-        raise RuntimeError("Repository validator independent contract seal inventory differs.")
+        raise RuntimeError("Validator seal inventory differs.")
     candidate_main = candidate_mains[0]
     candidate_verifier = candidate_verifiers[0]
     candidate_bootstrap = candidate_bootstraps[0]
@@ -509,21 +508,22 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
             candidate_startup_guard.lineno - 1 : candidate_startup_guard.end_lineno
         ]
     )
-    normalizer_source = "".join(
-        candidate_lines[candidate_normalizer.lineno - 1 : candidate_normalizer.end_lineno]
+    normalizer_source = "\0".join(
+        "".join(candidate_lines[node.lineno - 1 : node.end_lineno])
+        for node in candidate_normalizers
     )
     if (
         candidate_tree.body[-2] is not candidate_main
         or candidate_main.decorator_list
         or candidate_bootstrap.decorator_list
         or candidate_startup_guard.decorator_list
-        or candidate_normalizer.decorator_list
+        or any(node.decorator_list for node in candidate_normalizers)
         or hashlib.sha256(bootstrap_source.encode("utf-8")).hexdigest()
         != "1fc799aeac795776b404ee7fd7179ca07aaacdcdc7f6e90b1b3da4cc997d2ccc"
         or hashlib.sha256(startup_guard_source.encode("utf-8")).hexdigest()
         != "b75c9b3d91b7e93659b3962e16c5e7c160bf35d823b19380d651ee8ee4ce5263"
         or hashlib.sha256(normalizer_source.encode("utf-8")).hexdigest()
-        != "449e60a2d1e8492583e18e5d7a366b7f5a36d6a040e0994e7b6565e533b339f0"
+        != "02b05df55b860a968156f935f4d3c3984c1a8a6c53ca44337173ab450624fb15"
         or len(candidate_top_level_guards) != 1
         or not isinstance(candidate_prefix[0], ast.Expr)
         or not isinstance(candidate_prefix[0].value, ast.Constant)
@@ -643,9 +643,9 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
     )
     if (
         hashlib.sha256(verifier_source.encode("utf-8")).hexdigest()
-        != "b955ccda630222800d334cfdf0f6e5e6a751ff4549230650f30bf3ca0dce6bfd"
+        != "701005906a6e1531a68b796325f975f6770c57b652516d760b4674118aa69ba6"
         or hashlib.sha256(contract_verifier_source.encode("utf-8")).hexdigest()
-        != "5ee641f88167d8c26235a1fc2dc6ff1202df41691b64ccd5d1800cd275e308b5"
+        != "56c44595fce1fe8e4c42917d6f2c316a8153115aa247dced92f3c90fca9f4d41"
         or hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
         != "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
     ):
@@ -12601,8 +12601,8 @@ def test_host_operation_lock_contract() -> None:
         "scripts/run-media-certificate-renewal.sh": "66b78f777483ebf3d679a5c73b241c1f476756af85af32320feda90a34baa2f1",
         "scripts/install-host-control.sh": "59ffa6abd659145f051c58e8130c89ec4349ac43b5dd5ede22fc4bb2ed714c28",
         "scripts/install-media-certificate-renewal.sh": "cd98f7f929522d94031c3d5e5ed8fdfd6cac7ffb907d6a006fb079db3acffe94",
-        "scripts/quarantine-failed-bootstrap.sh": "ff994510e57177c68be93b7c4b11100e6f3f7a59ddf6c71dabf89984c97bb9f8",
-        "scripts/upgrade-host-control.sh": "df51f1c583f4777eecffd0b78fddb6927c2d788a29149e620bfe9ae389f8e396",
+        "scripts/quarantine-failed-bootstrap.sh": "52d13046bb1f637fe644dcec1188e4a7b833c26a033e060b5938b017b348a0ac",
+        "scripts/upgrade-host-control.sh": "bfe0f97c8f10eaf71fbc305c999efc58fd502cb13bdbcbe9f7d9db1cb7fb109f",
     }
     for lock_set, paths in consumers.items():
         for relative in paths:
@@ -14579,11 +14579,38 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     manifest = json.loads(TRUSTED_MANIFEST_SOURCE)
     if (
         hashlib.sha256(source.encode("utf-8")).hexdigest()
-        != "46cc8bad9c979d40f469e580e468fea84281e2ea0ef5891ea61c28b251789af2"
+        != "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f"
         or hashlib.sha256(upgrader.encode("utf-8")).hexdigest()
-        != "6a33ba885fc2ca752e0550bf8b597a8cfe57a258de53074a43d272d9b4733649"
+        != "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4"
     ):
         raise RuntimeError("Failed-bootstrap production control source seal differs.")
+
+    def fail_rebase() -> NoReturn:
+        raise RuntimeError("Rebase anchor differs.")
+
+    def fail_fixture() -> NoReturn:
+        raise RuntimeError("Fixture differs.")
+
+    def acceptance_controls_sha256(candidate_source: str) -> str:
+        candidate_tree = ast.parse(candidate_source)
+        candidate_lines = candidate_source.splitlines(keepends=True)
+        names = (
+            "_normalize_import_path",
+            "normalized_python_acceptance_outer_source",
+            "validate_python_acceptance_launchers",
+        )
+        controls = [
+            node
+            for node in candidate_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in names
+        ]
+        if [node.name for node in controls] != list(names):
+            fail_fixture()
+        material = "\0".join(
+            "".join(candidate_lines[node.lineno - 1 : node.end_lineno])
+            for node in controls
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
     def rebase_validator_cli_digest(candidate_source: str) -> str:
         candidate_tree = ast.parse(candidate_source)
@@ -14605,7 +14632,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             count=1,
         )
         if replacements != 1:
-            raise RuntimeError("Repository validator self-digest rebase anchor differs.")
+            fail_rebase()
         return rebased
 
     def rebase_contract_test_digest(
@@ -14619,7 +14646,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             count=1,
         )
         if replacements != 1:
-            raise RuntimeError("Hostile fixture digest rebase anchor differs.")
+            fail_rebase()
         return rebased
 
     def rebase_contract_test_function_inventory_digest(
@@ -14633,7 +14660,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             count=1,
         )
         if replacements != 1:
-            raise RuntimeError("Hostile fixture function inventory rebase anchor differs.")
+            fail_rebase()
         return rebased
 
     def rebase_failed_bootstrap_test_digest(
@@ -14649,7 +14676,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             count=1,
         )
         if replacements != 1:
-            raise RuntimeError("Failed-bootstrap fixture digest rebase anchor differs.")
+            fail_rebase()
         return rebased
 
     def rebase_independent_verifier_digest(
@@ -14665,7 +14692,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             count=1,
         )
         if replacements != 1:
-            raise RuntimeError("Independent verifier digest rebase anchor differs.")
+            fail_rebase()
         return rebased
 
     def rebase_independent_structure_digest(
@@ -14679,14 +14706,14 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             count=1,
         )
         if replacements != 1:
-            raise RuntimeError("Independent structural verifier digest rebase anchor differs.")
+            fail_rebase()
         return rebased
 
     def rebase_independent_verifier_expected_seal(
         candidate_contract_source: str, name: str, digest: str
     ) -> str:
         pattern = (
-            rf'("{re.escape(name)}": \(\n\s*")[0-9a-f]{{64}}("\n\s*\),)'
+            rf'("{re.escape(name)}": (?:\(\n\s*)?")[0-9a-f]{{64}}("(?:\n\s*\),)?)'
         )
         rebased, replacements = re.subn(
             pattern,
@@ -14695,7 +14722,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             count=1,
         )
         if replacements != 1:
-            raise RuntimeError("Independent verifier expected-seal rebase anchor differs.")
+            fail_rebase()
         return rebased
 
     VALIDATOR.validate_contract_test_acceptance_chain(contract_source)
@@ -14887,7 +14914,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         strict=True,
     ):
         if mutant == contract_source:
-            raise RuntimeError(f"Failed-bootstrap {label} mutant anchor differs.")
+            fail_fixture()
         resealed_validator_source = rebase_contract_test_digest(validator_source, mutant)
         _validate_validator_cli_structure_independently(resealed_validator_source)
         resealed_validator = module_from_source(
@@ -14938,7 +14965,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         1,
     )
     if annotated_override_validator == validator_source:
-        raise RuntimeError("Repository validator annotated override anchor differs.")
+        fail_fixture()
     expect_validation_failure(
         lambda: _validate_validator_cli_structure_independently(
             annotated_override_validator
@@ -14976,7 +15003,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         except RuntimeError:
             pass
         else:
-            raise RuntimeError("Early-success repository validator passed its actual acceptance wrapper.")
+            fail_fixture()
 
     validator_success_decoy = validator_source.replace(
         "def main() -> int:\n"
@@ -14990,7 +15017,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         1,
     )
     if validator_success_decoy == validator_source:
-        raise RuntimeError("Repository validator exact-success decoy anchor differs.")
+        fail_fixture()
     with tempfile.TemporaryDirectory(
         prefix="mochirii-failed-bootstrap-validator-exact-success-decoy-"
     ) as directory:
@@ -15014,7 +15041,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     except RuntimeError:
         pass
     else:
-        raise RuntimeError("Repository validator independent CLI accepted an exact-success decoy.")
+        fail_fixture()
 
     validator_guard_decoy = validator_source.replace(
         "def main() -> int:\n",
@@ -15060,7 +15087,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         ("top-level executable assignment", validator_assignment_decoy),
     ):
         if decoy == validator_source:
-            raise RuntimeError(f"Repository validator {label} decoy anchor differs.")
+            fail_fixture()
         with tempfile.TemporaryDirectory(
             prefix="mochirii-failed-bootstrap-validator-independent-decoy-"
         ) as directory:
@@ -15074,7 +15101,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         except RuntimeError:
             pass
         else:
-            raise RuntimeError(f"Repository validator independent CLI accepted {label}.")
+            fail_fixture()
 
     validator_sanitizer_decoy = validator_source.replace(
         "from pathlib import Path\n",
@@ -15090,7 +15117,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         1,
     )
     if validator_sanitizer_decoy == validator_source:
-        raise RuntimeError("Repository validator source-sanitizer decoy anchor differs.")
+        fail_fixture()
     with tempfile.TemporaryDirectory(
         prefix="mochirii-failed-bootstrap-validator-source-sanitizer-"
     ) as directory:
@@ -15106,7 +15133,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     except RuntimeError:
         pass
     else:
-        raise RuntimeError("Repository validator independent CLI accepted a source sanitizer.")
+        fail_fixture()
 
     validator_contract_acceptance_decoy = validator_source.replace(
         "def validate_contract_test_acceptance_chain(source: str) -> None:\n",
@@ -15114,7 +15141,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         1,
     )
     if validator_contract_acceptance_decoy == validator_source:
-        raise RuntimeError("Repository validator contract-acceptance decoy anchor differs.")
+        fail_fixture()
     contract_acceptance_decoy_module = module_from_source(
         "scripts/validate-repository.py",
         "validate_repository_contract_acceptance_decoy",
@@ -15145,7 +15172,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 normalizer(hostile_path)
             except RuntimeError:
                 continue
-            raise RuntimeError("Python import-path normalizer accepted lexical ambiguity.")
+            fail_fixture()
 
     with tempfile.TemporaryDirectory(
         prefix="mochirii-failed-bootstrap-python-startup-"
@@ -15190,7 +15217,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 or unsafe.stderr != startup_error
                 or not sentinel.is_file()
             ):
-                raise RuntimeError("Ordinary Python startup bypass was not rejected categorically.")
+                fail_fixture()
 
         sentinel.unlink(missing_ok=True)
         safe_validator_arguments = [
@@ -15217,7 +15244,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         )
         require_exact_validator_result(safe_validator)
         if sentinel.exists():
-            raise RuntimeError("Isolated validator startup executed sitecustomize.")
+            fail_fixture()
 
         with tempfile.TemporaryDirectory(
             prefix="mochirii-failed-bootstrap-validator-archive-"
@@ -15230,7 +15257,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 if stat.S_ISLNK(source_metadata.st_mode) or not stat.S_ISREG(
                     source_metadata.st_mode
                 ):
-                    raise RuntimeError("Archive validator fixture source differs.")
+                    fail_fixture()
                 destination = archive_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source_path, destination)
@@ -15242,7 +15269,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             if exact_validator_archive_root(archive_validator) != archive_root.resolve(
                 strict=True
             ):
-                raise RuntimeError("Archive validator root selection differs.")
+                fail_fixture()
             if os.name == "nt":
                 def create_junction(link: Path, target: Path) -> None:
                     junction_result = subprocess.run(
@@ -15266,7 +15293,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                         or junction_result.stderr
                         or not os.path.isjunction(link)
                     ):
-                        raise RuntimeError("Archive validator junction fixture differs.")
+                        fail_fixture()
 
                 git_target = Path(archive_directory) / "git-target"
                 git_target.mkdir()
@@ -15280,7 +15307,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 finally:
                     git_junction.rmdir()
                 if not git_target.is_dir():
-                    raise RuntimeError("Archive validator junction target was altered.")
+                    fail_fixture()
 
                 root_junction = Path(archive_directory) / "candidate-root-link"
                 create_junction(root_junction, archive_root)
@@ -15335,7 +15362,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 finally:
                     scripts_junction.rmdir()
                 if not archive_validator.is_file():
-                    raise RuntimeError("Archive validator junction target was altered.")
+                    fail_fixture()
 
         safe_contract_probe = subprocess.run(
             [
@@ -15361,7 +15388,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             or safe_contract_probe.stderr
             or sentinel.exists()
         ):
-            raise RuntimeError("Isolated hostile-fixture startup boundary differs.")
+            fail_fixture()
 
         for candidate in actual_entries:
             missing_no_site = subprocess.run(
@@ -15379,7 +15406,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 or missing_no_site.stdout
                 or missing_no_site.stderr != startup_error
             ):
-                raise RuntimeError("Python no-site startup requirement is not live.")
+                fail_fixture()
 
         preloaded = subprocess.run(
             [
@@ -15404,7 +15431,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             or preloaded.stdout
             or preloaded.stderr != startup_error
         ):
-            raise RuntimeError("Preloaded Python module bypass was not rejected categorically.")
+            fail_fixture()
 
     launcher_paths = (
         ".github/workflows/validate-repository.yml",
@@ -15423,6 +15450,55 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         for relative in launcher_paths
     }
     VALIDATOR.validate_python_acceptance_launchers(launcher_sources)
+    wrapper_relative = "scripts/check-source-introduction.ps1"
+    wrapper_anchor = "param([string]$RepositoryRoot = (Join-Path $PSScriptRoot '..'))\n\n"
+    normalizer_anchor = "    normalized = source\n    for pattern in patterns:\n"
+    malicious_launchers = dict(launcher_sources)
+    wrapper_source = malicious_launchers[wrapper_relative]
+    malicious_validator = validator_source.replace(
+        normalizer_anchor,
+        '    normalized = source\n    if relative == "scripts/check-source-introduction.ps1":\n'
+        '        normalized = normalized.replace("\\n\\nexit 0\\n", "\\n\\n", 1)\n'
+        "    for pattern in patterns:\n",
+        1,
+    )
+    if wrapper_source.count(wrapper_anchor) != 1 or validator_source.count(normalizer_anchor) != 1:
+        fail_fixture()
+    malicious_launchers[wrapper_relative] = wrapper_source.replace(
+        wrapper_anchor, wrapper_anchor + "exit 0\n", 1
+    )
+    honest_control = acceptance_controls_sha256(validator_source)
+    malicious_control = acceptance_controls_sha256(malicious_validator)
+    if malicious_validator.count(honest_control) != 1:
+        fail_fixture()
+    malicious_validator = malicious_validator.replace(
+        honest_control, malicious_control, 1
+    )
+    honest_validator_sha = hashlib.sha256(validator_source.encode("utf-8")).hexdigest()
+    malicious_validator_sha = hashlib.sha256(malicious_validator.encode("utf-8")).hexdigest()
+    honest_root = python_acceptance_root_sha256(validator_source, contract_source)
+    malicious_root = python_acceptance_root_sha256(malicious_validator, contract_source)
+    for relative in PYTHON_ACCEPTANCE_ROOT_PATTERNS:
+        candidate = malicious_launchers[relative]
+        if candidate.count(honest_validator_sha) != 1 or candidate.count(honest_root) != 1:
+            fail_fixture()
+        malicious_launchers[relative] = candidate.replace(
+            honest_validator_sha, malicious_validator_sha, 1
+        ).replace(honest_root, malicious_root, 1)
+    malicious_launchers["scripts/validate-repository.py"] = malicious_validator
+    malicious_module = module_from_source(
+        "scripts/validate-repository.py",
+        "validate_repository_outer_sanitizer_rebase",
+        malicious_validator.encode("utf-8"),
+    )
+    malicious_module.validate_validator_cli_acceptance_chain(malicious_validator)
+    malicious_module.validate_python_acceptance_launchers(malicious_launchers)
+    expect_validation_failure(
+        lambda: validate_validator_cli_independently(
+            malicious_validator, contract_source, malicious_launchers
+        ),
+        "independent outer-control seal",
+    )
     structural_anchor = (
         "def _validate_validator_cli_structure_independently(candidate_source: str) -> None:\n"
         "    try:\n"
@@ -15433,7 +15509,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         1,
     )
     if fully_rebased_contract == contract_source:
-        raise RuntimeError("Independent structural verifier no-op mutation anchor differs.")
+        fail_fixture()
     structural_digest = contract_test_independent_structure_sha256(
         fully_rebased_contract
     )
@@ -15497,67 +15573,54 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         ),
         "independent verifier complete validator and hostile-suite rebase",
     )
-    launcher_mutations = {
-        ".github/workflows/validate-repository.yml": (
-            "/usr/bin/python3 -I -S -B scripts/test-contracts.py",
-            "/usr/bin/python3 -I -B scripts/test-contracts.py",
-        ),
-        "scripts/check-repository.ps1": (
-            "@('-I', '-S', '-B', 'scripts/validate-repository.py')",
-            "@('-I', '-B', 'scripts/validate-repository.py')",
-        ),
-        "scripts/check-source-introduction.ps1": (
-            "python -I -S -B",
-            "python -I -B",
-        ),
-        "scripts/host-deploy.sh": (
-            '/usr/bin/python3 -I -S -B "${candidate}/scripts/test-contracts.py"',
-            '/usr/bin/python3 -I -B "${candidate}/scripts/test-contracts.py"',
-        ),
-        "scripts/quarantine-failed-bootstrap.sh": (
-            '/usr/bin/python3 -I -S -B - "${pending_journal}" "${deployment_journal}"',
-            '/usr/bin/python3 -I -B - "${pending_journal}" "${deployment_journal}"',
-        ),
-        "scripts/test-contracts.py": (
-            '    arguments = [\n'
-            '        sys.executable,\n'
-            '        "-I",\n'
-            '        "-S",\n'
-            '        "-B",\n'
-            '        "-c",\n'
-            '        EXACT_VALIDATOR_WRAPPER,\n'
-            '        str(path),\n'
-            '    ]',
-            '    arguments = [\n'
-            '        sys.executable,\n'
-            '        "-I",\n'
-            '        "-B",\n'
-            '        "-c",\n'
-            '        EXACT_VALIDATOR_WRAPPER,\n'
-            '        str(path),\n'
-            '    ]',
-        ),
-        "scripts/test-source-introduction.ps1": (
-            "python -I -S -B",
-            "python -I -B",
-        ),
-        "scripts/upgrade-host-control.sh": (
-            '/usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py"',
-            '/usr/bin/python3 -I -B "${candidate}/scripts/validate-repository.py"',
-        ),
-        "scripts/verify-host-security.sh": (
-            '/usr/bin/python3 -I -S -B - "${pending_upgrade}"',
-            '/usr/bin/python3 -I -B - "${pending_upgrade}"',
-        ),
-    }
-    for relative, (before, after) in launcher_mutations.items():
+    launcher_mutations = (
+        (".github/workflows/validate-repository.yml", "/usr/bin/python3 -I -S -B scripts/test-contracts.py"),
+        ("scripts/check-repository.ps1", "@('-I', '-S', '-B', 'scripts/validate-repository.py')"),
+        ("scripts/check-source-introduction.ps1", "python -I -S -B"),
+        ("scripts/host-deploy.sh", '/usr/bin/python3 -I -S -B "${candidate}/scripts/test-contracts.py"'),
+        ("scripts/quarantine-failed-bootstrap.sh", '/usr/bin/python3 -I -S -B - "${pending_journal}" "${deployment_journal}"'),
+        ("scripts/test-contracts.py", '        "-S",\n        "-B",\n        "-c",\n        EXACT_VALIDATOR_WRAPPER,'),
+        ("scripts/test-source-introduction.ps1", "python -I -S -B"),
+        ("scripts/upgrade-host-control.sh", '/usr/bin/python3 -I -S -B "${candidate}/scripts/validate-repository.py"'),
+        ("scripts/verify-host-security.sh", '/usr/bin/python3 -I -S -B - "${pending_upgrade}"'),
+    )
+    for relative, before in launcher_mutations:
+        after = before
+        for no_site in (" -S", "'-S', ", '        "-S",\n'):
+            after = after.replace(no_site, "", 1)
         mutant = dict(launcher_sources)
         mutant[relative] = mutant[relative].replace(before, after, 1)
-        if mutant[relative] == launcher_sources[relative]:
-            raise RuntimeError("Trusted Python caller mutation anchor differs.")
+        if after == before or mutant[relative] == launcher_sources[relative]:
+            fail_fixture()
         expect_validation_failure(
             lambda mutant=mutant: VALIDATOR.validate_python_acceptance_launchers(mutant),
-            "trusted Python caller startup flags",
+            "caller startup flags",
+        )
+    for relative in (
+        "scripts/check-repository.ps1",
+        "scripts/check-source-introduction.ps1",
+        "scripts/test-source-introduction.ps1",
+    ):
+        mutant = dict(launcher_sources)
+        mutant[relative] = "exit 0\n" + mutant[relative]
+        expect_validation_failure(
+            lambda mutant=mutant: VALIDATOR.validate_python_acceptance_launchers(mutant),
+            "PowerShell early exit",
+        )
+    for before, after in (
+        ("  repository-contract:\n", "  repository-contract:\n    if: ${{ false }}\n"),
+        (
+            "      - name: Run required root Linux quarantine transaction contract\n",
+            "      - name: Run required root Linux quarantine transaction contract\n        if: ${{ false }}\n",
+        ),
+    ):
+        mutant = dict(launcher_sources)
+        mutant[".github/workflows/validate-repository.yml"] = mutant[
+            ".github/workflows/validate-repository.yml"
+        ].replace(before, after, 1)
+        expect_validation_failure(
+            lambda mutant=mutant: VALIDATOR.validate_python_acceptance_launchers(mutant),
+            "GitHub skip",
         )
     for relative in ("scripts/validate-repository.py", "scripts/test-contracts.py"):
         mutant = dict(launcher_sources)
@@ -15576,7 +15639,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             )
         )
         if len(definitions) != 1 or definitions[0].group(0) != marker:
-            raise RuntimeError(f"Shell function {name} is absent, duplicated, or noncanonical.")
+            fail_fixture()
         start = definitions[0].start()
         cursor = start
         heredoc: tuple[str, bool] | None = None
@@ -15586,7 +15649,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         while cursor < len(script_source):
             line_end = script_source.find("\n", cursor)
             if line_end < 0:
-                raise RuntimeError(f"Shell function {name} is unterminated.")
+                fail_fixture()
             line_end += 1
             line = script_source[cursor:line_end]
             body = line[:-1]
@@ -15613,16 +15676,16 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         begin = "# BEGIN_FAILED_BOOTSTRAP_BOUND_VERIFIER_TRANSACTION"
         end = "# END_FAILED_BOOTSTRAP_BOUND_VERIFIER_TRANSACTION"
         if source_text.count(begin) != 1 or source_text.count(end) != 1:
-            raise RuntimeError("Failed-bootstrap bound verifier transaction markers differ.")
+            fail_fixture()
         start = source_text.index(begin) + len(begin)
         if source_text[start : start + 1] != "\n":
-            raise RuntimeError("Failed-bootstrap bound verifier transaction start differs.")
+            fail_fixture()
         finish = source_text.index(end, start)
         if source_text[finish - 1 : finish] != "\n":
-            raise RuntimeError("Failed-bootstrap bound verifier transaction end differs.")
+            fail_fixture()
         section = source_text[start + 1 : finish]
         if not section.startswith("shopt -u varredir_close\n"):
-            raise RuntimeError("Failed-bootstrap bound verifier transaction prefix differs.")
+            fail_fixture()
         return section
 
     def assert_failed_bootstrap_runtime_bindings(
@@ -15671,7 +15734,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
         recovery_end = quarantine_source.index("\nfi\n[[ ${#preflight[@]}", recovery_start) + 3
         recovery = quarantine_source[recovery_start:recovery_end]
         if not lineage.startswith("validate_source_lineage() {\n"):
-            raise RuntimeError("Failed-bootstrap lineage definition is not the live canonical function.")
+            fail_fixture()
         require_exact_line(
             state,
             '  validate_source_lineage "${current}" "${failed}" || return 1',
@@ -15731,7 +15794,7 @@ def test_failed_bootstrap_quarantine_contract() -> None:
             bound_transaction.count(transaction_begin) != 1
             or bound_transaction.count(transaction_end_marker) != 1
         ):
-            raise RuntimeError("Failed-bootstrap transaction markers differ.")
+            fail_fixture()
         verifier_offsets = (
             bound_transaction.index(verifier_descriptor),
             bound_transaction.index(pre_verifier_binding),
@@ -15757,9 +15820,9 @@ def test_failed_bootstrap_quarantine_contract() -> None:
                 success_output,
             )
         ):
-            raise RuntimeError("Failed-bootstrap bound verifier statement inventory differs.")
+            fail_fixture()
         if verifier_offsets != tuple(sorted(verifier_offsets)):
-            raise RuntimeError("Failed-bootstrap held verifier call order differs.")
+            fail_fixture()
 
         upgrade_directory = exact_shell_function(
             upgrade_source, "safe_source_repository_directory_identity"
@@ -15815,7 +15878,7 @@ ff7c0c6530903ddfdb8484784a3c9c436676e3999a76bc78e6b29632ed1e6d5c
 61d0acf50318675978ed8331b122ebb9731c1abbad98a8bfafc62f4e496dc006
 e35273fb1fd470d780ebbadf720c9b231bd0bf608817430735f2d1d2f1e5ef73
 551e061d9234fc2edd8c9c368056acc56e888484e432e4842f6f7d38ceea4bac
-acbcc2f87c61ff09bbb0a1271e3ea1d91519ef66778739b04e6930c4a66156ac
+e34f64928aa6e5679ca75752464f730c468619d3b09c85f1a53df06c1dcd9d58
 32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f
 2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa
 90d30f29d1e2136dfa24596ae2adcdfc4d2825a12e82f72eb6986df644580333
@@ -15840,7 +15903,7 @@ e0503e70a182944208c5645e339ef0b55a74246ab3e31367203b2f9b0bcdb81f
         preflight_call = main.index("preflight_postfailure_predecessor")
         first_mutation = main.index("install -d -m 0755")
         if preflight_call > first_mutation:
-            raise RuntimeError("Post-failure predecessor preflight follows mutation.")
+            fail_fixture()
         bash = str(Path(shutil.which("git")).resolve().parents[1] / "bin/bash.exe") if os.name == "nt" else shutil.which("bash")
         gate = f'''set -eu
 reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
@@ -15876,7 +15939,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
                 error = "" if accepted else "Post-failure host-control recovery requires the exact reviewed predecessor controls.\n"
                 output = "Interrupted Mochirii Forums host-control upgrade was committed forward and verified.\n" if pending and accepted else "pass\n" if accepted else ""
                 if (result.returncode == 0) != accepted or result.stdout != output or result.stderr != error or (root / "mutation").exists() != (pending and accepted):
-                    raise RuntimeError("Post-failure predecessor gate differs.")
+                    fail_fixture()
         for block, root_name, label in (
             (lineage, "source_root", "Failed-bootstrap source lineage"),
             (bind, "invocation_source_root", "Host-control successor binder"),
@@ -16040,11 +16103,11 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
             for block in (lineage, bind, path_validator)
             for unsafe in ('git -C "${source_root}"', 'git -C "${invocation_source_root}"')
         ):
-            raise RuntimeError("Source authority still reopens repository pathnames for Git reads.")
+            fail_fixture()
 
     def replace_once(text: str, old: str, new: str) -> str:
         if text.count(old) != 1:
-            raise RuntimeError("Hostile call-site fixture no longer identifies one exact source line.")
+            fail_fixture()
         return text.replace(old, new, 1)
 
     def require_binding_rejection(
@@ -16088,7 +16151,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         lines = lineage.splitlines(keepends=True)
         matches = [index for index, line in enumerate(lines) if line.rstrip("\n") == clean_line]
         if len(matches) != 2:
-            raise RuntimeError("Failed-bootstrap lineage clean-state calls differ.")
+            fail_fixture()
         lines[matches[occurrence]] = "  :\n"
         require_binding_rejection(
             source.replace(lineage, "".join(lines), 1),
@@ -16100,7 +16163,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         lines = lineage.splitlines(keepends=True)
         matches = [index for index, line in enumerate(lines) if line.rstrip("\n") == operation_line]
         if len(matches) != 2:
-            raise RuntimeError("Failed-bootstrap lineage operation-state calls differ.")
+            fail_fixture()
         lines[matches[occurrence]] = "  :\n"
         require_binding_rejection(
             source.replace(lineage, "".join(lines), 1),
@@ -16184,7 +16247,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
     for index, call in enumerate(upgrade_calls):
         expected_occurrences = 2 if index <= 13 else 1
         if upgrader.count(call) != expected_occurrences:
-            raise RuntimeError("Host-control call-site inventory differs.")
+            fail_fixture()
         search_offset = 0
         for occurrence in range(expected_occurrences):
             call_offset = upgrader.index(call, search_offset)
@@ -16203,7 +16266,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         index for index, line in enumerate(bind_lines) if line.rstrip("\n") == bind_clean_line
     ]
     if len(bind_clean_matches) != 2:
-        raise RuntimeError("Host-control binder clean-state calls differ.")
+        fail_fixture()
     for occurrence, line_index in enumerate(bind_clean_matches):
         mutated_lines = bind_lines.copy()
         mutated_lines[line_index] = "  :\n"
@@ -16270,7 +16333,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         or workflow.count('ssh "${ssh_options[@]}" --') != 2
         or re.search(r"(?m)^\s*ssh\s+-T\b", workflow)
     ):
-        raise RuntimeError("Deployment workflow lost its one reviewed keepalive transport tuple.")
+        fail_fixture()
     control_rows = manifest.get("coreTargets")
     quarantine_rows = [
         row
@@ -16285,7 +16348,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
             "target": "/usr/local/sbin/mochirii-forums-quarantine-failed-bootstrap",
         }
     ]:
-        raise RuntimeError("Failed-bootstrap quarantine is not one exact installed host control.")
+        fail_fixture()
     required_source = (
         "safe_source_repository_directory_identity() {",
         "safe_source_repository_regular_file_identity() {",
@@ -16417,7 +16480,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         "# END_FAILED_BOOTSTRAP_QUARANTINE_TRANSACTION",
     )
     if any(value not in source for value in required_source):
-        raise RuntimeError("Failed-bootstrap quarantine lost a reviewed reversible transaction boundary.")
+        fail_fixture()
     acme_expected_paths = _paths("%immutable-letsencrypt.fragment.yml ^DEPLOYMENT.md ^RECOVERY.md $quarantine-failed-bootstrap.sh $test-contracts.py $upgrade-host-control.sh $validate-repository.py")
     quarantine_output_expected_paths = acme_expected_paths[1:]
     legacy_expected_paths = sorted({*quarantine_output_expected_paths, *_paths("@workflows/deploy-forums.yml %host-control-manifest.v1.json")})
@@ -16464,7 +16527,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         block_start = source.index(marker)
         block = source[block_start : source.index("\n  )", block_start)]
         if [line.strip() for line in block.splitlines()[1:]] != list(expected_paths):
-            raise RuntimeError("Failed-bootstrap canonical successor path inventory differs.")
+            fail_fixture()
     if any(
         value in source
         for value in (
@@ -16474,9 +16537,9 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
             "quarantine.rmdir()",
         )
     ):
-        raise RuntimeError("Failed-bootstrap quarantine gained retained-evidence deletion authority.")
+        fail_fixture()
     if source.count("mutation.unlink()") != 1:
-        raise RuntimeError("Failed-bootstrap mutation authority retirement count differs.")
+        fail_fixture()
     for value in (
         "safe_source_repository_regular_file_identity() {",
         "validated_source_repository_config_identity() {",
@@ -16543,16 +16606,16 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         'terminal_recovery_output="$(bash "${candidate}/scripts/quarantine-failed-bootstrap.sh"',
     ):
         if value not in upgrader:
-            raise RuntimeError("Host-control upgrade lost the exact failed-bootstrap successor exception.")
+            fail_fixture()
     if '[[ -x ${invocation_source_root}/scripts/quarantine-failed-bootstrap.sh' in upgrader:
-        raise RuntimeError("Host-control upgrade still requires executable failed-bootstrap source.")
+        fail_fixture()
 
     shlex.quote("")
 
     if os.name == "posix":
         bash = shutil.which("bash")
         if bash is None:
-            raise RuntimeError("Bash is required for the failed-bootstrap source-mode fixture.")
+            fail_fixture()
         with tempfile.TemporaryDirectory(prefix="mochirii-held-verifier-") as directory:
             held_root = Path(directory)
             bash_marker = held_root / "bash-startup-ran"
@@ -16631,7 +16694,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
                 or python_marker.exists()
                 or accepted_marker.read_text(encoding="ascii") != "isolated\n"
             ):
-                raise RuntimeError("Held host-control verifier startup isolation differs.")
+                fail_fixture()
         config_function = exact_shell_function(
             source, "validated_source_repository_config_identity"
         )
@@ -16657,7 +16720,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
             '&& ${uid} == 0 && ${gid} == 0 ]] || return 1'
         )
         if clean_state_function.count(tracked_root_guard) != 1:
-            raise RuntimeError("Tracked repository-file root ownership guard differs.")
+            fail_fixture()
         clean_fixture_function = clean_state_function
         clean_directory_function = directory_function
         if os.geteuid() != 0:
@@ -16671,7 +16734,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
             )
             directory_owner_guard = "${uid} == 0 && ${gid} == 0"
             if clean_directory_function.count(directory_owner_guard) != 1:
-                raise RuntimeError("Tracked repository-directory root ownership guard differs.")
+                fail_fixture()
             clean_directory_function = clean_directory_function.replace(
                 directory_owner_guard,
                 f"${{uid}} == {os.geteuid()} && ${{gid}} == {os.getegid()}",
@@ -16687,15 +16750,15 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
             f'&& ( ${{mode}} == 600 || ${{mode}} == 644 ) && ${{links}} == 1 ]] || return 1'
         )
         if config_function.count(root_guard) != 1:
-            raise RuntimeError("Repository-config root ownership guard differs.")
+            fail_fixture()
         config_fixture_function = config_function.replace(root_guard, fixture_guard, 1)
         if regular_function.count(root_guard) != 1:
-            raise RuntimeError("Repository regular-file root ownership guard differs.")
+            fail_fixture()
         regular_fixture_function = regular_function.replace(root_guard, fixture_guard, 1)
 
         git_executable = shutil.which("git")
         if git_executable is None:
-            raise RuntimeError("Git is required for repository clean-state fixtures.")
+            fail_fixture()
         clean_git_environment = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "LC_ALL": "C",
@@ -16723,7 +16786,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
 
             initialized = run_fixture_git("init", "--initial-branch=main", str(clean_root))
             if initialized.returncode != 0:
-                raise RuntimeError("Clean-state Git fixture initialization failed.")
+                fail_fixture()
             tracked = clean_root / "tracked.txt"
             tracked.write_text("clean\n", encoding="ascii", newline="\n"); tracked.chmod(0o644)
             tracked_scripts = clean_root / "scripts"
@@ -16745,7 +16808,7 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
                 "fixture",
             )
             if staged.returncode != 0 or committed.returncode != 0:
-                raise RuntimeError("Clean-state Git fixture commit failed.")
+                fail_fixture()
             clean_harness = f'''set -u
 {source_git_function}
 {clean_directory_function}
@@ -16772,13 +16835,13 @@ validate_source_repository_clean_state "${{source_directory_fd}}" "${{git_direct
 
             accepted_clean = run_clean_state()
             if accepted_clean.returncode != 0 or accepted_clean.stdout or accepted_clean.stderr:
-                raise RuntimeError("Canonical clean repository state was rejected.")
+                fail_fixture()
             (clean_root / ".git" / "info" / "exclude").write_text(
                 "hidden.tmp\n", encoding="ascii", newline="\n"
             )
             (clean_root / "hidden.tmp").write_text("hidden\n", encoding="ascii", newline="\n")
             if run_clean_state().returncode == 0:
-                raise RuntimeError("Repository clean-state accepted an ignored untracked file.")
+                fail_fixture()
             (clean_root / "hidden.tmp").unlink()
             (clean_root / ".git" / "info" / "exclude").write_text(
                 "", encoding="ascii", newline="\n"
@@ -16789,14 +16852,14 @@ validate_source_repository_clean_state "${{source_directory_fd}}" "${{git_direct
                 ("--fsmonitor-valid", "--no-fsmonitor-valid"),
             ):
                 if run_fixture_git("-C", str(clean_root), "update-index", flag, "tracked.txt").returncode != 0:
-                    raise RuntimeError("Repository index-flag fixture setup failed.")
+                    fail_fixture()
                 tracked.write_text("hidden change\n", encoding="ascii", newline="\n")
                 if run_clean_state().returncode == 0:
-                    raise RuntimeError("Repository clean-state accepted a hidden tracked-file change.")
+                    fail_fixture()
                 if run_fixture_git("-C", str(clean_root), "update-index", clear, "tracked.txt").returncode != 0:
-                    raise RuntimeError("Repository index-flag fixture cleanup failed.")
+                    fail_fixture()
                 if run_fixture_git("-C", str(clean_root), "restore", "--", "tracked.txt").returncode != 0:
-                    raise RuntimeError("Repository index-flag fixture restore failed.")
+                    fail_fixture()
             if run_fixture_git("-C", str(clean_root), "update-index", "--untracked-cache").returncode != 0:
                 raise RuntimeError("Repository untracked-cache fixture setup failed.")
             run_fixture_git("-C", str(clean_root), "status", "--porcelain=v1")
@@ -18431,6 +18494,9 @@ validate_source_lineage "$current" "$failed"
     with tempfile.TemporaryDirectory(prefix="mochirii-live-source-binder-") as directory:
         binder_root = Path(directory) / "source"
 
+        def fail_binder() -> NoReturn:
+            raise RuntimeError("Live binder fixture failed.")
+
         def binder_git(*arguments: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 [git_executable, *arguments],
@@ -18444,26 +18510,33 @@ validate_source_lineage "$current" "$failed"
                 check=False,
             )
 
+        def source_git(*arguments: str) -> subprocess.CompletedProcess[str]:
+            return binder_git("-C", str(binder_root), *arguments)
+
         if binder_git("init", "--initial-branch=main", str(binder_root)).returncode != 0:
-            raise RuntimeError("Failed-bootstrap live binder Git fixture initialization failed.")
+            fail_binder()
         binder_scripts = binder_root / "scripts"
         binder_scripts.mkdir()
         binder_verifier = binder_scripts / "verify-host-security.sh"
         binder_verifier.write_text("#!/bin/bash\nexit 0\n", encoding="ascii", newline="\n")
+        binder_verifier.chmod(0o600)
+        binder_config = binder_root / "config"
+        binder_config.mkdir()
+        binder_manifest = binder_config / "host-control-manifest.v1.json"
+        binder_manifest.write_text("{}\n", encoding="ascii", newline="\n")
+        binder_manifest.chmod(0o600)
         binder_other = binder_root / "other.txt"
         binder_other.write_text("other\n", encoding="ascii", newline="\n")
+        binder_other.chmod(0o755)
         if (
-            binder_git(
-                "-C",
-                str(binder_root),
+            source_git(
                 "add",
                 "scripts/verify-host-security.sh",
+                "config/host-control-manifest.v1.json",
                 "other.txt",
             ).returncode
             != 0
-            or binder_git(
-                "-C",
-                str(binder_root),
+            or source_git(
                 "-c",
                 "user.name=Mochirii Fixture",
                 "-c",
@@ -18474,15 +18547,14 @@ validate_source_lineage "$current" "$failed"
             ).returncode
             != 0
         ):
-            raise RuntimeError("Failed-bootstrap live binder Git fixture commit failed.")
-        binder_commit_result = binder_git(
-            "-C", str(binder_root), "rev-parse", "HEAD"
-        )
+            fail_binder()
+        binder_commit_result = source_git("rev-parse", "HEAD")
         binder_commit = binder_commit_result.stdout.strip()
         if binder_commit_result.returncode != 0 or not re.fullmatch(
             r"[0-9a-f]{40}", binder_commit
         ):
-            raise RuntimeError("Failed-bootstrap live binder commit identity differs.")
+            fail_binder()
+        binder_base_commit = binder_commit
         (binder_root / ".git" / "config").write_text(
             exact_config, encoding="utf-8", newline="\n"
         )
@@ -18496,7 +18568,7 @@ validate_source_lineage "$current" "$failed"
                 candidate_prefix.count(anchor) != 1
                 for anchor in (source_root_declaration, source_root_guard)
             ):
-                raise RuntimeError("Failed-bootstrap live binder source-root anchors differ.")
+                fail_binder()
             fixture_root = shlex.quote(binder_root.as_posix())
             transformed_prefix = candidate_prefix.replace(
                 source_root_declaration,
@@ -18536,63 +18608,81 @@ validate_source_lineage "$current" "$failed"
                 check=False,
             )
 
+        def restore_live_binder_fixture() -> None:
+            nonlocal binder_commit
+            if source_git("reset", "--hard", binder_base_commit).returncode:
+                fail_binder()
+            for path, mode in (
+                (binder_verifier, 0o600),
+                (binder_manifest, 0o600),
+                (binder_other, 0o755),
+            ):
+                path.chmod(mode)
+            binder_commit = binder_base_commit
+
         def assert_live_binder_candidate(candidate_prefix: str) -> None:
-            accepted = run_live_binder(candidate_prefix, binder_verifier)
-            if accepted.returncode != 0 or accepted.stdout or accepted.stderr:
-                raise RuntimeError("Failed-bootstrap live binder rejected exact clean source.")
+            nonlocal binder_commit
+
+            def assert_rejected(result: subprocess.CompletedProcess[bytes]) -> None:
+                if result.returncode == 0 or result.stdout or result.stderr:
+                    fail_binder()
+
+            def assert_accepted() -> None:
+                accepted = run_live_binder(candidate_prefix, binder_verifier)
+                if accepted.returncode != 0 or accepted.stdout or accepted.stderr:
+                    fail_binder()
+
+            assert_accepted()
+            for protected_source in (binder_verifier, binder_manifest):
+                protected_source.chmod(0o644)
+                try:
+                    protected_mode = run_live_binder(candidate_prefix, binder_verifier)
+                finally:
+                    protected_source.chmod(0o600)
+                assert_rejected(protected_mode)
+                relative = protected_source.relative_to(binder_root).as_posix()
+                try:
+                    protected_source.chmod(0o755)
+                    if (
+                        source_git("update-index", "--chmod=+x", "--", relative).returncode
+                        or source_git(
+                            "-c", "user.name=Mochirii Fixture",
+                            "-c", "user.email=fixture@invalid.example",
+                            "commit", "-m", "executable mode fixture",
+                        ).returncode
+                    ):
+                        fail_binder()
+                    binder_commit = source_git("rev-parse", "HEAD").stdout.strip()
+                    executable_mode = run_live_binder(candidate_prefix, binder_verifier)
+                finally:
+                    restore_live_binder_fixture()
+                assert_rejected(executable_mode)
+            assert_accepted()
+            binder_other.chmod(0o600)
+            try:
+                ordinary_mode = run_live_binder(candidate_prefix, binder_verifier)
+            finally:
+                binder_other.chmod(0o755)
+            assert_rejected(ordinary_mode)
             mismatched = run_live_binder(candidate_prefix, binder_other)
-            if mismatched.returncode == 0 or mismatched.stdout or mismatched.stderr:
-                raise RuntimeError("Failed-bootstrap live binder accepted a mismatched held file.")
+            assert_rejected(mismatched)
             binder_untracked = binder_root / "untracked.txt"
             binder_untracked.write_text("dirty\n", encoding="ascii", newline="\n")
             try:
                 dirty = run_live_binder(candidate_prefix, binder_verifier)
             finally:
                 binder_untracked.unlink()
-            if dirty.returncode == 0 or dirty.stdout or dirty.stderr:
-                raise RuntimeError("Failed-bootstrap live binder accepted dirty source.")
-            operation_directories = {
-                "refs/bisect",
-                "refs/rewritten",
-                "worktrees",
-                "sequencer",
-                "rebase-apply",
-                "rebase-merge",
-            }
+            assert_rejected(dirty)
+            operation_directories = set("refs/bisect refs/rewritten worktrees sequencer rebase-apply rebase-merge".split())
             operation_paths = (
-                "index.lock",
-                "HEAD.lock",
-                "config.lock",
-                "packed-refs.lock",
-                "shallow.lock",
-                "index~pid.lock",
-                "refs/heads/main.lock",
-                "refs/remotes/upstream/main.lock",
-                "refs/tags/example.lock",
-                "logs/HEAD.lock",
-                "logs/refs/heads/main.lock",
-                "refs/remotes/origin/main.lock",
-                "objects/info/commit-graph.lock",
-                "objects/pack/multi-pack-index.lock",
-                "gc.pid",
-                "MERGE_HEAD",
-                "AUTO_MERGE",
-                "MERGE_AUTOSTASH",
-                "CHERRY_PICK_HEAD",
-                "REVERT_HEAD",
-                "REBASE_HEAD",
-                "BISECT_HEAD",
-                "BISECT_START",
-                "BISECT_LOG",
-                "BISECT_NAMES",
-                "BISECT_RUN",
-                "refs/bisect",
-                "refs/rewritten",
-                "worktrees",
-                "sequencer",
-                "rebase-apply",
-                "rebase-merge",
-            )
+                "index.lock HEAD.lock config.lock packed-refs.lock shallow.lock index~pid.lock "
+                "refs/heads/main.lock refs/remotes/upstream/main.lock refs/tags/example.lock "
+                "logs/HEAD.lock logs/refs/heads/main.lock refs/remotes/origin/main.lock "
+                "objects/info/commit-graph.lock objects/pack/multi-pack-index.lock gc.pid "
+                "MERGE_HEAD AUTO_MERGE MERGE_AUTOSTASH CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD "
+                "BISECT_HEAD BISECT_START BISECT_LOG BISECT_NAMES BISECT_RUN refs/bisect "
+                "refs/rewritten worktrees sequencer rebase-apply rebase-merge"
+            ).split()
             for relative in operation_paths:
                 operation_path = binder_root / ".git" / relative
                 operation_path.parent.mkdir(parents=True, exist_ok=True)
@@ -18607,34 +18697,21 @@ validate_source_lineage "$current" "$failed"
                         operation_path.rmdir()
                     else:
                         operation_path.unlink()
-                if (
-                    rejected_operation.returncode == 0
-                    or rejected_operation.stdout
-                    or rejected_operation.stderr
-                ):
-                    raise RuntimeError(
-                        "Failed-bootstrap live binder accepted an in-progress Git operation."
-                    )
+                assert_rejected(rejected_operation)
             operation_symlink = binder_root / ".git" / "index.lock"
             operation_symlink.symlink_to(binder_other)
             try:
                 rejected_symlink = run_live_binder(candidate_prefix, binder_verifier)
             finally:
                 operation_symlink.unlink()
-            if rejected_symlink.returncode == 0 or rejected_symlink.stdout or rejected_symlink.stderr:
-                raise RuntimeError("Failed-bootstrap live binder accepted a linked Git lock.")
+            assert_rejected(rejected_symlink)
             directory_lock = binder_root / ".git" / "objects" / "info" / "maintenance.lock"
             directory_lock.mkdir()
             try:
                 rejected_directory_lock = run_live_binder(candidate_prefix, binder_verifier)
             finally:
                 directory_lock.rmdir()
-            if (
-                rejected_directory_lock.returncode == 0
-                or rejected_directory_lock.stdout
-                or rejected_directory_lock.stderr
-            ):
-                raise RuntimeError("Failed-bootstrap live binder accepted a directory Git lock.")
+            assert_rejected(rejected_directory_lock)
             broken_lock = binder_root / ".git" / "refs" / "tags" / "broken.lock"
             broken_lock.parent.mkdir(parents=True, exist_ok=True)
             broken_lock.symlink_to(binder_root / "missing-lock-target")
@@ -18642,30 +18719,18 @@ validate_source_lineage "$current" "$failed"
                 rejected_broken_lock = run_live_binder(candidate_prefix, binder_verifier)
             finally:
                 broken_lock.unlink()
-            if (
-                rejected_broken_lock.returncode == 0
-                or rejected_broken_lock.stdout
-                or rejected_broken_lock.stderr
-            ):
-                raise RuntimeError("Failed-bootstrap live binder accepted a broken linked Git lock.")
+            assert_rejected(rejected_broken_lock)
             non_lock_symlink = binder_root / ".git" / "objects" / "alias"
             non_lock_symlink.symlink_to(binder_other)
             try:
                 rejected_non_lock_symlink = run_live_binder(candidate_prefix, binder_verifier)
             finally:
                 non_lock_symlink.unlink()
-            if (
-                rejected_non_lock_symlink.returncode == 0
-                or rejected_non_lock_symlink.stdout
-                or rejected_non_lock_symlink.stderr
-            ):
-                raise RuntimeError("Failed-bootstrap live binder accepted a non-lock Git symlink.")
-            binder_blob_result = binder_git(
-                "-C", str(binder_root), "rev-parse", "HEAD:other.txt"
-            )
+            assert_rejected(rejected_non_lock_symlink)
+            binder_blob_result = source_git("rev-parse", "HEAD:other.txt")
             binder_blob = binder_blob_result.stdout.strip()
             if binder_blob_result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", binder_blob):
-                raise RuntimeError("Failed-bootstrap resolve-undo fixture blob identity differs.")
+                fail_binder()
             resolve_undo_input = (
                 f"0 {'0' * 40}\tother.txt\n"
                 f"100644 {binder_blob} 1\tother.txt\n"
@@ -18683,25 +18748,19 @@ validate_source_lineage "$current" "$failed"
                 timeout=20,
                 check=False,
             )
-            resolve_undo_resolve = binder_git("-C", str(binder_root), "add", "other.txt")
-            resolve_undo_readback = binder_git(
-                "-C", str(binder_root), "ls-files", "--resolve-undo"
-            )
+            resolve_undo_resolve = source_git("add", "other.txt")
+            resolve_undo_readback = source_git("ls-files", "--resolve-undo")
             if (
                 resolve_undo_setup.returncode != 0
                 or resolve_undo_resolve.returncode != 0
                 or resolve_undo_readback.returncode != 0
                 or not resolve_undo_readback.stdout
             ):
-                raise RuntimeError("Failed-bootstrap resolve-undo fixture setup failed.")
+                fail_binder()
             rejected_resolve_undo = run_live_binder(candidate_prefix, binder_verifier)
-            if (
-                binder_git("-C", str(binder_root), "read-tree", "HEAD").returncode != 0
-                or rejected_resolve_undo.returncode == 0
-                or rejected_resolve_undo.stdout
-                or rejected_resolve_undo.stderr
-            ):
+            if source_git("read-tree", "HEAD").returncode != 0:
                 raise RuntimeError("Failed-bootstrap live binder accepted resolve-undo metadata.")
+            assert_rejected(rejected_resolve_undo)
 
         assert_live_binder_candidate(quarantine_definitions_prefix)
         for binder_mutant in (
@@ -18721,9 +18780,7 @@ validate_source_lineage "$current" "$failed"
             except RuntimeError:
                 pass
             else:
-                raise RuntimeError(
-                    "Failed-bootstrap regressed live binder or clean-state helper passed actual source checks."
-                )
+                fail_binder()
 
     def run_live_environment(
         candidate_prefix: str, fixture: dict[str, object]
