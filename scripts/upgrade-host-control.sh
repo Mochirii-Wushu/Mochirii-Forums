@@ -363,8 +363,23 @@ validate_source_repository_clean_state() {
     done
     tracked_path="/proc/self/fd/${source_directory_fd}/${path}"
     [[ -f ${tracked_path} && ! -L ${tracked_path} ]] || return 1
-    expected_file_mode=644
-    [[ ${mode} != 100755 ]] || expected_file_mode=755
+    case "${path}:${mode}" in
+      scripts/verify-host-security.sh:100644|config/host-control-manifest.v1.json:100644)
+        expected_file_mode=600
+        ;;
+      scripts/verify-host-security.sh:*|config/host-control-manifest.v1.json:*)
+        return 1
+        ;;
+      *:100644)
+        expected_file_mode=644
+        ;;
+      *:100755)
+        expected_file_mode=755
+        ;;
+      *)
+        return 1
+        ;;
+    esac
     metadata="$(/usr/bin/stat -Lc $'%d\t%i\t%u\t%g\t%a\t%h\t%s\t%y\t%z' -- "${tracked_path}" 2>/dev/null)" || return 1
     IFS=$'\t' read -r device inode uid gid file_mode links size modified changed <<<"${metadata}"
     [[ ${device} =~ ^[0-9]+$ && ${inode} =~ ^[0-9]+$ && ${uid} == 0 && ${gid} == 0 ]] || return 1
