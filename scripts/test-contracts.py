@@ -112,7 +112,40 @@ def _paths(value):
 TRANSPORT_PATHS = _paths(
     "@pull_request_template.md @workflows/disposable-bootstrap.yml @workflows/validate-repository.yml README.md %app.yml.example docs/adr/0005-promote-discourse-v2026-8-0.md ^CURRENT-STATE.md ^DEPLOYMENT.md ^RECOVERY.md ^RUNTIME-READINESS.md ^SOURCE-PROVENANCE.md ^THIRD-PARTY-NOTICES.md ^forum-central-identity.consumer.v1.json ^release-evidence.v2.example.json ^runtime-config.v1.example.json ^third-party-components.v1.json $authentication-state.py $check-repository.ps1 $check-source-introduction.ps1 $host-backup.sh $host-deploy.sh $host-restore-validate.sh $host-verify-wrapper.sh $quarantine-failed-bootstrap.sh $test-contracts.py $test-source-introduction.ps1 $upgrade-host-control.sh $validate-repository.py $verify-host.sh $verify-pinned-source.py $verify-site.rb"
 )
-TRANSPORT_SHELL = " ".join(TRANSPORT_PATHS)
+TRANSPORT_REPAIR_PATHS = _paths("@workflows/disposable-bootstrap.yml @workflows/validate-repository.yml %acme-sh-3.0.6.LICENSE.md %acme-sh-3.0.6.gz.b64 %acme-sh-3.1.4.LICENSE.md %acme-sh-3.1.4.gz.b64 %immutable-letsencrypt.fragment.yml ^PROVIDER-DNS-TLS.md ^SOURCE-PROVENANCE.md ^THIRD-PARTY-NOTICES.md ^third-party-components.v1.json $check-repository.ps1 $check-source-introduction.ps1 $host-deploy.sh $test-contracts.py $test-source-introduction.ps1 $validate-repository.py $verify-runtime-assets.sh")
+TRANSPORT_CURRENT_PATHS = _paths("@workflows/disposable-bootstrap.yml @workflows/validate-repository.yml ^DEPLOYMENT.md ^RECOVERY.md $check-repository.ps1 $check-source-introduction.ps1 $finalize-member-rollout.sh $host-backup.sh $host-break-glass-admin.sh $host-deploy.sh $host-finalize-authentication.sh $host-operation-lock.py $host-restore-validate.sh $host-stop-pending-activation.sh $host-verify-wrapper.sh $install-host-control.sh $install-media-certificate-renewal.sh $prepare-media-certificate.sh $quarantine-failed-bootstrap.sh $run-media-certificate-renewal.sh $test-contracts.py $test-host-operation-lock.py $test-source-introduction.ps1 $upgrade-host-control.sh $validate-repository.py $verify-host-security.sh")
+TRANSPORT_MAIN_PATHS = _paths("@workflows/validate-repository.yml $check-repository.ps1 $check-source-introduction.ps1 $host-deploy.sh $quarantine-failed-bootstrap.sh $test-contracts.py $test-source-introduction.ps1 $upgrade-host-control.sh $validate-repository.py")
+
+
+def _transport_git_cases(mutation: str, target: str) -> str:
+    parents = (
+        ("reviewed_acme_transport_current_main_commit", "reviewed_acme_transport_postfailure_successor_commit", "transport-main"),
+        ("reviewed_acme_transport_postfailure_successor_commit", "reviewed_acme_transport_postfailure_parent_commit", "transport-successor"),
+        ("reviewed_acme_transport_postfailure_parent_commit", "reviewed", "transport"),
+    )
+    ranges = (
+        ("reviewed_acme_transport_failed_bootstrap_commit", "reviewed_acme_transport_recovery_commit", TRANSPORT_REPAIR_PATHS, "transport-repair"),
+        ("reviewed_acme_transport_recovery_commit", "reviewed_acme_transport_postfailure_parent_commit", TRANSPORT_CURRENT_PATHS, "transport-current"),
+        ("reviewed_acme_transport_postfailure_parent_commit", "reviewed_acme_transport_postfailure_successor_commit", TRANSPORT_PATHS, "transport-postfailure-successor"),
+        ("reviewed_acme_transport_postfailure_successor_commit", "reviewed_acme_transport_current_main_commit", TRANSPORT_MAIN_PATHS, "transport-current-main"),
+        ("reviewed_acme_transport_current_main_commit", target, TRANSPORT_MAIN_PATHS, "transport-lineage-repair"),
+        ("reviewed_acme_transport_postfailure_successor_commit", target, TRANSPORT_MAIN_PATHS, "transport-postsuccessor"),
+        ("reviewed_acme_transport_postfailure_parent_commit", target, TRANSPORT_PATHS, "transport-postfailure"),
+    )
+    check = "${" + mutation + ":-none}"
+    lines = []
+    for child, parent, label in parents:
+        lines.append(f'    "-C ${{source_root}} rev-parse --verify ${{{child}}}^1") [[ {check} != {label}-parent ]] && printf \'%s\\n\' "${{{parent}}}" || printf \'%s\\n\' unrelated ;;')
+        lines.append(f'    "-C ${{source_root}} rev-list --parents -n 1 ${{{child}}}") [[ {check} != {label}-parents ]] && printf \'%s %s\\n\' "${{{child}}}" "${{{parent}}}" || printf \'%s %s %s\\n\' "${{{child}}}" "${{{parent}}}" unrelated ;;')
+    for left, right, paths, label in ranges:
+        lines.extend((
+            f'    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{{left}}} ${{{right}}}")',
+            f"      printf '%s\\n' {' '.join(paths)}",
+            f"      [[ {check} != {label}-paths ]] || printf '%s\\n' unexpected",
+            f"      [[ {check} != {label}-status ]] || return 83",
+            "      ;;",
+        ))
+    return "\n".join(lines)
 
 HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/host-operation-lock.py": "120b12e7f963b59423c55e64610ac83ea2c51edd8def3dd944db8197dff0b364",
@@ -131,8 +164,8 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
     "scripts/install-media-certificate-renewal.sh": "3809145fb4d8591e79cfefec92ebad7b36d8f772a280650221cb589d07d9994b",
-    "scripts/quarantine-failed-bootstrap.sh": "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f",
-    "scripts/upgrade-host-control.sh": "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4",
+    "scripts/quarantine-failed-bootstrap.sh": "f2ab456141ea9a2aaa90a08f99194d30190e687093c305a0944e5d72cc75bbfc",
+    "scripts/upgrade-host-control.sh": "dc5a85875e2946325361d1b035fe2516f64f0011c81d9688fcf39cdb8ffa9cd5",
 }
 HOST_DEPLOY_ACCEPTANCE_SEALS = (
     "repository_validator_sha256",
@@ -436,12 +469,12 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
     }
     expected_contract_seals = {
         "VALIDATOR_CLI_SOURCE_SHA256": "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b",
-        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": "a6a0a2567b911b82a25a670f7ad86eef7c157128bfba2221636f174911da7e35",
+        "CONTRACT_TEST_FUNCTION_INVENTORY_SHA256": "79d85d44803759e109a73d78b5e92468760024b61aca6be26d7ea1464bb1d2d3",
         "CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256": "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9",
         "CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256": (
-            "0f9012de5e9ddc510ddda805096c8800ad6f8481a094086412c25a4ae1fbf429"
+            "7b5df90a50e518c685e095371cf242bfb861c2aefed8330d76127e0cb6d41cae"
         ),
-        "FAILED_BOOTSTRAP_TEST_SHA256": "58789429a11e6790b8debfa81741f1874ca479c063be202de9d9f8fe0a37353b",
+        "FAILED_BOOTSTRAP_TEST_SHA256": "f1c9a4489e1cd8e4bb6d57e6e8bcc9d828c2e941fba4d10b80af3b8ca42c4050",
         "PYTHON_ACCEPTANCE_OUTER_SOURCE_ROOT_SHA256": "63c86e561961c6940747e330322983addfe4f82057cf72506943e8e6d420f6e7",
     }
     observed_contract_seals: dict[str, str] = {}
@@ -645,7 +678,7 @@ def _validate_validator_cli_structure_independently(candidate_source: str) -> No
         hashlib.sha256(verifier_source.encode("utf-8")).hexdigest()
         != "701005906a6e1531a68b796325f975f6770c57b652516d760b4674118aa69ba6"
         or hashlib.sha256(contract_verifier_source.encode("utf-8")).hexdigest()
-        != "56c44595fce1fe8e4c42917d6f2c316a8153115aa247dced92f3c90fca9f4d41"
+        != "d3afa2945470cdf7ec02413e4f783558a6777ed62e96d758ced091393cf53970"
         or hashlib.sha256(entrypoint_source.encode("utf-8")).hexdigest()
         != "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
     ):
@@ -12601,8 +12634,8 @@ def test_host_operation_lock_contract() -> None:
         "scripts/run-media-certificate-renewal.sh": "66b78f777483ebf3d679a5c73b241c1f476756af85af32320feda90a34baa2f1",
         "scripts/install-host-control.sh": "59ffa6abd659145f051c58e8130c89ec4349ac43b5dd5ede22fc4bb2ed714c28",
         "scripts/install-media-certificate-renewal.sh": "cd98f7f929522d94031c3d5e5ed8fdfd6cac7ffb907d6a006fb079db3acffe94",
-        "scripts/quarantine-failed-bootstrap.sh": "52d13046bb1f637fe644dcec1188e4a7b833c26a033e060b5938b017b348a0ac",
-        "scripts/upgrade-host-control.sh": "bfe0f97c8f10eaf71fbc305c999efc58fd502cb13bdbcbe9f7d9db1cb7fb109f",
+        "scripts/quarantine-failed-bootstrap.sh": "10d848ae8eab977b9956296b3223bb9f09503254000ff99b7040c1f9bb1b9418",
+        "scripts/upgrade-host-control.sh": "7af635432c2a53f35cb43d6779a21c9a1119e595bbd7e4eb23c12093ec330019",
     }
     for lock_set, paths in consumers.items():
         for relative in paths:
@@ -12845,6 +12878,9 @@ def test_host_operation_lock_contract() -> None:
 
 
 def test_host_security_control_plane_contract() -> None:
+    transport_cases = _transport_git_cases("BINDER_MUTATION", "requested")
+    if "$$" in transport_cases or "${source_root}" not in transport_cases or "${BINDER_MUTATION:-none}" not in transport_cases or "$.github/" in transport_cases:
+        raise RuntimeError("Transport lineage fixture expansion differs.")
     manifest = json.loads((ROOT / "config/host-control-manifest.v1.json").read_text(encoding="utf-8"))
     if set(manifest) != {"schemaVersion", "coreTargets", "hostPolicyTargets", "certificateTargets"} or manifest.get("schemaVersion") != 1:
         raise RuntimeError("Host-control manifest schema differs.")
@@ -13213,6 +13249,8 @@ reviewed_acme_stage_recovery_commit=9683e62abd3d0f41c41fc2a126a49eb33216c265
 reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
 reviewed_acme_transport_recovery_commit=5272554d33e9fcfc8f634ea14bc8e1f295b4278b
 reviewed_acme_transport_postfailure_parent_commit=da21f45b6b7b0ed5514b7242113b3c5cf95e86f6
+reviewed_acme_transport_postfailure_successor_commit=0050c53fea27387c85248bccd952dc4b1d483b9f
+reviewed_acme_transport_current_main_commit=2ef406103c06d0b4defa339d79a08cba035239e4
 case "${{BINDER_LINEAGE:-legacy}}" in
   legacy) pending="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) pending="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -13229,7 +13267,7 @@ esac
 requested_parent="$reviewed"
 [[ ${{BINDER_LINEAGE:-legacy}} != reload_privacy ]] || requested_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
 [[ ${{BINDER_LINEAGE:-legacy}} != material ]] || requested_parent="$reviewed_acme_material_review_authority_commit"
-[[ ${{BINDER_LINEAGE:-legacy}} != transport ]] || requested_parent="$reviewed_acme_transport_postfailure_parent_commit"
+[[ ${{BINDER_LINEAGE:-legacy}} != transport ]] || requested_parent="$reviewed_acme_transport_current_main_commit"
 source_root={source_root.as_posix()}
 bounded() {{ [[ $1 == 120s ]] || return 80; shift; "$@"; }}
 validated_source_repository_boundary_identity() {{
@@ -13285,8 +13323,7 @@ source_repository_git() {{
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{BINDER_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_material_review_authority_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != review-authority-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_material_review_authority_commit}}") [[ ${{BINDER_MUTATION:-none}} != review-authority-parents ]] && printf '%s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" unrelated ;;
-    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_transport_postfailure_parent_commit}}^1") [[ ${{BINDER_MUTATION:-none}} != transport-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_transport_postfailure_parent_commit}}") [[ ${{BINDER_MUTATION:-none}} != transport-parents ]] && printf '%s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" unrelated ;;
+{_transport_git_cases("BINDER_MUTATION", "requested")}
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{BINDER_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$pending" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{BINDER_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$pending" || printf '%s %s %s\n' "$reviewed" "$pending" unrelated ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_material_failed_bootstrap_commit}} ${{reviewed_acme_material_recovery_commit}}")
@@ -13350,63 +13387,6 @@ source_repository_git() {{
         scripts/upgrade-host-control.sh
       [[ ${{BINDER_MUTATION:-none}} == stage-current-paths ]] || printf '%s\n' scripts/validate-repository.py
       [[ ${{BINDER_MUTATION:-none}} != stage-current-status ]] || return 83
-      ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_failed_bootstrap_commit}} ${{reviewed_acme_transport_recovery_commit}}")
-      printf '%s\n' \
-        .github/workflows/disposable-bootstrap.yml \
-        .github/workflows/validate-repository.yml \
-        config/acme-sh-3.0.6.LICENSE.md \
-        config/acme-sh-3.0.6.gz.b64 \
-        config/acme-sh-3.1.4.LICENSE.md \
-        config/acme-sh-3.1.4.gz.b64 \
-        config/immutable-letsencrypt.fragment.yml \
-        docs/operations/PROVIDER-DNS-TLS.md \
-        docs/operations/SOURCE-PROVENANCE.md \
-        docs/operations/THIRD-PARTY-NOTICES.md \
-        docs/operations/third-party-components.v1.json \
-        scripts/check-repository.ps1 \
-        scripts/check-source-introduction.ps1 \
-        scripts/host-deploy.sh \
-        scripts/test-contracts.py \
-        scripts/test-source-introduction.ps1 \
-        scripts/validate-repository.py
-      [[ ${{BINDER_MUTATION:-none}} == transport-repair-paths ]] || printf '%s\n' scripts/verify-runtime-assets.sh
-      [[ ${{BINDER_MUTATION:-none}} != transport-repair-status ]] || return 83
-      ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_recovery_commit}} ${{reviewed_acme_transport_postfailure_parent_commit}}")
-      printf '%s\n' \
-        .github/workflows/disposable-bootstrap.yml \
-        .github/workflows/validate-repository.yml \
-        docs/operations/DEPLOYMENT.md \
-        docs/operations/RECOVERY.md \
-        scripts/check-repository.ps1 \
-        scripts/check-source-introduction.ps1 \
-        scripts/finalize-member-rollout.sh \
-        scripts/host-backup.sh \
-        scripts/host-break-glass-admin.sh \
-        scripts/host-deploy.sh \
-        scripts/host-finalize-authentication.sh \
-        scripts/host-operation-lock.py \
-        scripts/host-restore-validate.sh \
-        scripts/host-stop-pending-activation.sh \
-        scripts/host-verify-wrapper.sh \
-        scripts/install-host-control.sh \
-        scripts/install-media-certificate-renewal.sh \
-        scripts/prepare-media-certificate.sh \
-        scripts/quarantine-failed-bootstrap.sh \
-        scripts/run-media-certificate-renewal.sh \
-        scripts/test-contracts.py \
-        scripts/test-host-operation-lock.py \
-        scripts/test-source-introduction.ps1 \
-        scripts/upgrade-host-control.sh
-      [[ ${{BINDER_MUTATION:-none}} == transport-current-paths ]] || printf '%s\n' scripts/validate-repository.py
-      printf '%s\n' scripts/verify-host-security.sh
-      [[ ${{BINDER_MUTATION:-none}} != transport-current-status ]] || return 83
-      ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_postfailure_parent_commit}} ${{requested}}")
-      printf '%s\n' {TRANSPORT_SHELL}
-      [[ ${{BINDER_MUTATION:-none}} != transport-postfailure-paths ]] || printf '%s\n' unexpected
-      [[ ${{BINDER_MUTATION:-none}} != transport-postfailure-status ]] || return 83
       ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{pending}} ${{requested}}")
       case "${{BINDER_LINEAGE:-legacy}}" in
@@ -13614,9 +13594,15 @@ bind_invoked_canonical_successor "$requested" "$pending"
             binder_cases.extend(
                 ("transport", mutation, False)
                 for mutation in (
+                    "transport-main-parent", "transport-main-parents",
+                    "transport-successor-parent", "transport-successor-parents",
                     "transport-parent", "transport-parents",
                     "transport-repair-paths", "transport-repair-status",
                     "transport-current-paths", "transport-current-status",
+                    "transport-postfailure-successor-paths", "transport-postfailure-successor-status",
+                    "transport-current-main-paths", "transport-current-main-status",
+                    "transport-lineage-repair-paths", "transport-lineage-repair-status",
+                    "transport-postsuccessor-paths", "transport-postsuccessor-status",
                     "transport-postfailure-paths", "transport-postfailure-status",
                 )
             )
@@ -14579,9 +14565,9 @@ def test_failed_bootstrap_quarantine_contract() -> None:
     manifest = json.loads(TRUSTED_MANIFEST_SOURCE)
     if (
         hashlib.sha256(source.encode("utf-8")).hexdigest()
-        != "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f"
+        != "f2ab456141ea9a2aaa90a08f99194d30190e687093c305a0944e5d72cc75bbfc"
         or hashlib.sha256(upgrader.encode("utf-8")).hexdigest()
-        != "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4"
+        != "dc5a85875e2946325361d1b035fe2516f64f0011c81d9688fcf39cdb8ffa9cd5"
     ):
         raise RuntimeError("Failed-bootstrap production control source seal differs.")
 
@@ -15881,14 +15867,14 @@ e35273fb1fd470d780ebbadf720c9b231bd0bf608817430735f2d1d2f1e5ef73
 e34f64928aa6e5679ca75752464f730c468619d3b09c85f1a53df06c1dcd9d58
 32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f
 2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa
-90d30f29d1e2136dfa24596ae2adcdfc4d2825a12e82f72eb6986df644580333
+fc8c52676e61f18c38bebc67fa2b22a8f3abf382a276450ec1a8aa9a91a86eec
 384733dad7fbc9bd502059dd1e6d71aaabcc99e3dd74ff4c426a85aefa6d0080
 a400d1c326e60627c30647bdea253193797d5bef71ff1697612c4df4c812e952
 77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d
 0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156
 0e40b1ff2fb132ed69e3eead53e5ae3b3ffeac9dc9727bc689f5ffbb62c92268
-82a960c090f3520a7f08d6a8bd47e38b518d50ba2edab0095c4328aef7dbf1ed
-5cd5c1c9608bf6f12f57278caaeec05bdd04a98a4254a86632a826b70e41d419
+80cf2b8b2c363c137e14794492a42c95ac1781051221cbd0e6056a734c845601
+874654d82786b2b2ebfe0aa215f7dd2f90d34a9adf95d6aca9d328a19ac0ad8d
 9da1fb4f1b95523e4f5b45d2df7421b8537e05a02284308b6e218ebfd2b6d7b9
 f772ab41e59c625de9c3d73cfe4d0638dd966396a198a32c3d235acef310df76
 83fab62655d7a4eb81261d65415018d9fed720f5cf92d276675c93e728ac2493
@@ -16390,8 +16376,14 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
         'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
         'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
+        'readonly reviewed_acme_transport_postfailure_successor_commit="0050c53fea27387c85248bccd952dc4b1d483b9f"',
+        'readonly reviewed_acme_transport_current_main_commit="2ef406103c06d0b4defa339d79a08cba035239e4"',
         'rev-parse --verify "${current}^1"',
         'rev-list --parents -n 1 "${current}"',
+        'rev-parse --verify "${reviewed_acme_transport_current_main_commit}^1"',
+        'rev-list --parents -n 1 "${reviewed_acme_transport_current_main_commit}"',
+        'rev-parse --verify "${reviewed_acme_transport_postfailure_successor_commit}^1"',
+        'rev-list --parents -n 1 "${reviewed_acme_transport_postfailure_successor_commit}"',
         'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
         'rev-list --parents -n 1 "${reviewed_acme_material_review_authority_commit}"',
         'rev-parse --verify "${reviewed_recovery_commit}^1"',
@@ -16497,6 +16489,8 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
     acme_transport_repair_expected_paths = sorted({*acme_stage_repair_expected_paths[:-1], *_paths("@workflows/disposable-bootstrap.yml %acme-sh-3.0.6.LICENSE.md %acme-sh-3.0.6.gz.b64 %acme-sh-3.1.4.LICENSE.md %acme-sh-3.1.4.gz.b64 ^PROVIDER-DNS-TLS.md ^SOURCE-PROVENANCE.md ^THIRD-PARTY-NOTICES.md ^third-party-components.v1.json $verify-runtime-assets.sh")})
     acme_transport_current_expected_paths = sorted({*acme_material_current_expected_paths, *_paths("@workflows/disposable-bootstrap.yml $finalize-member-rollout.sh $host-backup.sh $host-break-glass-admin.sh $host-finalize-authentication.sh $host-operation-lock.py $host-restore-validate.sh $host-stop-pending-activation.sh $host-verify-wrapper.sh $install-host-control.sh $install-media-certificate-renewal.sh $prepare-media-certificate.sh $run-media-certificate-renewal.sh $test-host-operation-lock.py")})
     acme_transport_postfailure_current_expected_paths = TRANSPORT_PATHS
+    acme_transport_current_main_expected_paths = _paths("@workflows/validate-repository.yml $check-repository.ps1 $check-source-introduction.ps1 $host-deploy.sh $quarantine-failed-bootstrap.sh $test-contracts.py $test-source-introduction.ps1 $upgrade-host-control.sh $validate-repository.py")
+    acme_transport_lineage_repair_expected_paths = _paths("@workflows/validate-repository.yml $check-repository.ps1 $check-source-introduction.ps1 $host-deploy.sh $quarantine-failed-bootstrap.sh $test-contracts.py $test-source-introduction.ps1 $upgrade-host-control.sh $validate-repository.py")
     acme_transport_expected_paths = sorted({*acme_transport_repair_expected_paths, *acme_transport_current_expected_paths, *acme_transport_postfailure_current_expected_paths})
     for name, expected_paths in (
         ("legacy_expected_paths", legacy_expected_paths),
@@ -16520,6 +16514,14 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         (
             "acme_transport_postfailure_current_expected_paths",
             acme_transport_postfailure_current_expected_paths,
+        ),
+        (
+            "acme_transport_current_main_expected_paths",
+            acme_transport_current_main_expected_paths,
+        ),
+        (
+            "acme_transport_lineage_repair_expected_paths",
+            acme_transport_lineage_repair_expected_paths,
         ),
         ("acme_transport_expected_paths", acme_transport_expected_paths),
     ):
@@ -16580,6 +16582,8 @@ fail() {{ printf '%s\n' "$1" >&2; exit 1; }}
         'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
         'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
         'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
+        'readonly reviewed_acme_transport_postfailure_successor_commit="0050c53fea27387c85248bccd952dc4b1d483b9f"',
+        'readonly reviewed_acme_transport_current_main_commit="2ef406103c06d0b4defa339d79a08cba035239e4"',
         'local config="$1" descriptor="$2"',
         "[[ ${keys_text} == *$'\\n' ]] || return 1",
         '[[ ${repository} == /root/Mochirii-Forums ]] || return 1',
@@ -17541,6 +17545,8 @@ reviewed_acme_stage_recovery_commit=9683e62abd3d0f41c41fc2a126a49eb33216c265
 reviewed_acme_transport_failed_bootstrap_commit=ed2d1f0bedf4e7865c5ac3737fdae2308630e25a
 reviewed_acme_transport_recovery_commit=5272554d33e9fcfc8f634ea14bc8e1f295b4278b
 reviewed_acme_transport_postfailure_parent_commit=da21f45b6b7b0ed5514b7242113b3c5cf95e86f6
+reviewed_acme_transport_postfailure_successor_commit=0050c53fea27387c85248bccd952dc4b1d483b9f
+reviewed_acme_transport_current_main_commit=2ef406103c06d0b4defa339d79a08cba035239e4
 case "${{LINEAGE_KIND:-legacy}}" in
   legacy) failed="$reviewed_legacy_failed_bootstrap_commit"; reviewed="$reviewed_failed_bootstrap_recovery_commit" ;;
   active) failed="$reviewed_active_swap_failed_bootstrap_commit"; reviewed="$reviewed_active_swap_recovery_commit" ;;
@@ -17557,7 +17563,7 @@ esac
 current_parent="$reviewed"
 [[ ${{LINEAGE_KIND:-legacy}} != reload_privacy ]] || current_parent="$reviewed_acme_reload_privacy_launcher_child_commit"
 [[ ${{LINEAGE_KIND:-legacy}} != material ]] || current_parent="$reviewed_acme_material_review_authority_commit"
-[[ ${{LINEAGE_KIND:-legacy}} != transport ]] || current_parent="$reviewed_acme_transport_postfailure_parent_commit"
+[[ ${{LINEAGE_KIND:-legacy}} != transport ]] || current_parent="$reviewed_acme_transport_current_main_commit"
 bounded() {{ [[ $1 == 5s ]] || return 80; shift; "$@"; }}
 validated_source_repository_boundary_identity() {{
   [[ $# -eq 12 ]] || return 78
@@ -17601,8 +17607,7 @@ git() {{
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_reload_privacy_recovery_child_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-child-parents ]] && printf '%s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_reload_privacy_recovery_child_commit" "$reviewed" unrelated ;;
     "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_material_review_authority_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != review-authority-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_material_review_authority_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != review-authority-parents ]] && printf '%s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_material_review_authority_commit" "$reviewed" unrelated ;;
-    "-C ${{source_root}} rev-parse --verify ${{reviewed_acme_transport_postfailure_parent_commit}}^1") [[ ${{LINEAGE_MUTATION:-none}} != transport-parent ]] && printf '%s\n' "$reviewed" || printf '%s\n' unrelated ;;
-    "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed_acme_transport_postfailure_parent_commit}}") [[ ${{LINEAGE_MUTATION:-none}} != transport-parents ]] && printf '%s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" || printf '%s %s %s\n' "$reviewed_acme_transport_postfailure_parent_commit" "$reviewed" unrelated ;;
+{_transport_git_cases("LINEAGE_MUTATION", "current")}
     "-C ${{source_root}} rev-parse --verify ${{reviewed}}^1") [[ ${{LINEAGE_MUTATION:-none}} != failed-parent ]] && printf '%s\n' "$failed" || printf '%s\n' unrelated ;;
     "-C ${{source_root}} rev-list --parents -n 1 ${{reviewed}}") [[ ${{LINEAGE_MUTATION:-none}} != recovery-parents ]] && printf '%s %s\n' "$reviewed" "$failed" || printf '%s %s %s\n' "$reviewed" "$failed" unrelated ;;
     "-C ${{source_root}} -c core.fsmonitor=false -c core.untrackedCache=false status --porcelain=v1 --untracked-files=all --ignored=matching")
@@ -17682,63 +17687,6 @@ git() {{
         scripts/upgrade-host-control.sh
       [[ ${{LINEAGE_MUTATION:-none}} == stage-current-paths ]] || printf '%s\n' scripts/validate-repository.py
       [[ ${{LINEAGE_MUTATION:-none}} != stage-current-status ]] || return 83
-      ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_failed_bootstrap_commit}} ${{reviewed_acme_transport_recovery_commit}}")
-      printf '%s\n' \
-        .github/workflows/disposable-bootstrap.yml \
-        .github/workflows/validate-repository.yml \
-        config/acme-sh-3.0.6.LICENSE.md \
-        config/acme-sh-3.0.6.gz.b64 \
-        config/acme-sh-3.1.4.LICENSE.md \
-        config/acme-sh-3.1.4.gz.b64 \
-        config/immutable-letsencrypt.fragment.yml \
-        docs/operations/PROVIDER-DNS-TLS.md \
-        docs/operations/SOURCE-PROVENANCE.md \
-        docs/operations/THIRD-PARTY-NOTICES.md \
-        docs/operations/third-party-components.v1.json \
-        scripts/check-repository.ps1 \
-        scripts/check-source-introduction.ps1 \
-        scripts/host-deploy.sh \
-        scripts/test-contracts.py \
-        scripts/test-source-introduction.ps1 \
-        scripts/validate-repository.py
-      [[ ${{LINEAGE_MUTATION:-none}} == transport-repair-paths ]] || printf '%s\n' scripts/verify-runtime-assets.sh
-      [[ ${{LINEAGE_MUTATION:-none}} != transport-repair-status ]] || return 83
-      ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_recovery_commit}} ${{reviewed_acme_transport_postfailure_parent_commit}}")
-      printf '%s\n' \
-        .github/workflows/disposable-bootstrap.yml \
-        .github/workflows/validate-repository.yml \
-        docs/operations/DEPLOYMENT.md \
-        docs/operations/RECOVERY.md \
-        scripts/check-repository.ps1 \
-        scripts/check-source-introduction.ps1 \
-        scripts/finalize-member-rollout.sh \
-        scripts/host-backup.sh \
-        scripts/host-break-glass-admin.sh \
-        scripts/host-deploy.sh \
-        scripts/host-finalize-authentication.sh \
-        scripts/host-operation-lock.py \
-        scripts/host-restore-validate.sh \
-        scripts/host-stop-pending-activation.sh \
-        scripts/host-verify-wrapper.sh \
-        scripts/install-host-control.sh \
-        scripts/install-media-certificate-renewal.sh \
-        scripts/prepare-media-certificate.sh \
-        scripts/quarantine-failed-bootstrap.sh \
-        scripts/run-media-certificate-renewal.sh \
-        scripts/test-contracts.py \
-        scripts/test-host-operation-lock.py \
-        scripts/test-source-introduction.ps1 \
-        scripts/upgrade-host-control.sh
-      [[ ${{LINEAGE_MUTATION:-none}} == transport-current-paths ]] || printf '%s\n' scripts/validate-repository.py
-      printf '%s\n' scripts/verify-host-security.sh
-      [[ ${{LINEAGE_MUTATION:-none}} != transport-current-status ]] || return 83
-      ;;
-    "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{reviewed_acme_transport_postfailure_parent_commit}} ${{current}}")
-      printf '%s\n' {TRANSPORT_SHELL}
-      [[ ${{LINEAGE_MUTATION:-none}} != transport-postfailure-paths ]] || printf '%s\n' unexpected
-      [[ ${{LINEAGE_MUTATION:-none}} != transport-postfailure-status ]] || return 83
       ;;
     "-C ${{source_root}} diff-tree --no-commit-id --name-only -r ${{failed}} ${{current}}")
       case "${{LINEAGE_KIND:-legacy}}" in
@@ -17884,9 +17832,15 @@ validate_source_lineage "$current" "$failed"
             lineage_cases.extend(
                 ("transport", mutation, False)
                 for mutation in (
+                    "transport-main-parent", "transport-main-parents",
+                    "transport-successor-parent", "transport-successor-parents",
                     "transport-parent", "transport-parents",
                     "transport-repair-paths", "transport-repair-status",
                     "transport-current-paths", "transport-current-status",
+                    "transport-postfailure-successor-paths", "transport-postfailure-successor-status",
+                    "transport-current-main-paths", "transport-current-main-status",
+                    "transport-lineage-repair-paths", "transport-lineage-repair-status",
+                    "transport-postsuccessor-paths", "transport-postsuccessor-status",
                     "transport-postfailure-paths", "transport-postfailure-status",
                 )
             )

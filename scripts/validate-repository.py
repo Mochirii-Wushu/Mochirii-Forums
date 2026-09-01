@@ -1171,11 +1171,11 @@ def validate_python_acceptance_launchers(text_files: dict[str, str]) -> None:
 
 
 VALIDATOR_CLI_SOURCE_SHA256 = "fd5b34ca0c39695e3d597863ef2e82117b874f78f7d6787935c4ece135115d4b"
-CONTRACT_TEST_SOURCE_SHA256 = "954c6a74759d2a03d9191e690802e51166345d4b5b0294b596daa7fe137f18c6"
-CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "a6a0a2567b911b82a25a670f7ad86eef7c157128bfba2221636f174911da7e35"
+CONTRACT_TEST_SOURCE_SHA256 = "3677795c3d1f0ff9f102c2dd9c7f8d59cc6277e5ee8ca7dafea1734cb33e8f72"
+CONTRACT_TEST_FUNCTION_INVENTORY_SHA256 = "79d85d44803759e109a73d78b5e92468760024b61aca6be26d7ea1464bb1d2d3"
 CONTRACT_TEST_INDEPENDENT_VERIFIER_SHA256 = "3e38b67366ad45a0343527a69964f108dd701aa5a294fd1464eb7686f8cdead9"
-CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "0f9012de5e9ddc510ddda805096c8800ad6f8481a094086412c25a4ae1fbf429"
-FAILED_BOOTSTRAP_TEST_SHA256 = "58789429a11e6790b8debfa81741f1874ca479c063be202de9d9f8fe0a37353b"
+CONTRACT_TEST_INDEPENDENT_STRUCTURE_SHA256 = "7b5df90a50e518c685e095371cf242bfb861c2aefed8330d76127e0cb6d41cae"
+FAILED_BOOTSTRAP_TEST_SHA256 = "f1c9a4489e1cd8e4bb6d57e6e8bcc9d828c2e941fba4d10b80af3b8ca42c4050"
 
 HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/host-operation-lock.py": "120b12e7f963b59423c55e64610ac83ea2c51edd8def3dd944db8197dff0b364",
@@ -1194,8 +1194,8 @@ HOST_OPERATION_LOCK_SOURCE_SHA256 = {
     "scripts/run-media-certificate-renewal.sh": "be0b1e5ba3f6024c436fcc7dbdb7e73b5ca7a72e62a44cfd93c8b74b5ccd36c2",
     "scripts/install-host-control.sh": "8e48943db3284e1c4bbcd8181a47d3bd9278fdde4cb5dca8477e7dbacec79f5b",
     "scripts/install-media-certificate-renewal.sh": "3809145fb4d8591e79cfefec92ebad7b36d8f772a280650221cb589d07d9994b",
-    "scripts/quarantine-failed-bootstrap.sh": "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f",
-    "scripts/upgrade-host-control.sh": "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4",
+    "scripts/quarantine-failed-bootstrap.sh": "f2ab456141ea9a2aaa90a08f99194d30190e687093c305a0944e5d72cc75bbfc",
+    "scripts/upgrade-host-control.sh": "dc5a85875e2946325361d1b035fe2516f64f0011c81d9688fcf39cdb8ffa9cd5",
 }
 HOST_DEPLOY_ACCEPTANCE_SEALS = (
     "repository_validator_sha256",
@@ -1591,7 +1591,7 @@ def validate_contract_test_acceptance_chain(source: str) -> None:
     )
     if (
         hashlib.sha256(module_startup_source.encode("utf-8")).hexdigest()
-        != "949da7a46399039c0a1dc172fed95417625b9c95de774aab85733ae2c2a588ec"
+        != "a994da390398747d4449aa1b46e007ae8631da22600248846cd5143160598049"
     ):
         fail("Hostile fixture module-startup source seal differs.")
     if any(
@@ -7856,9 +7856,9 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
     }
     if (
         hashlib.sha256(failed_bootstrap_quarantine.encode("utf-8")).hexdigest()
-        != "f5d0224559cfc2ff879dcf0cc598b3bae746d30494c682e931d93fe017c23b5f"
+        != "f2ab456141ea9a2aaa90a08f99194d30190e687093c305a0944e5d72cc75bbfc"
         or hashlib.sha256(control_upgrade.encode("utf-8")).hexdigest()
-        != "1f50f30f086a4fe959d96ecb8d69877cd879ffdfea3ee1c99b53be7e03bde1f4"
+        != "dc5a85875e2946325361d1b035fe2516f64f0011c81d9688fcf39cdb8ffa9cd5"
     ):
         fail("Failed-bootstrap production control source seal differs.")
     if operator_sudoers.splitlines() != [
@@ -8018,8 +8018,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "scripts/run-media-certificate-renewal.sh": "66b78f777483ebf3d679a5c73b241c1f476756af85af32320feda90a34baa2f1",
         "scripts/install-host-control.sh": "59ffa6abd659145f051c58e8130c89ec4349ac43b5dd5ede22fc4bb2ed714c28",
         "scripts/install-media-certificate-renewal.sh": "cd98f7f929522d94031c3d5e5ed8fdfd6cac7ffb907d6a006fb079db3acffe94",
-        "scripts/quarantine-failed-bootstrap.sh": "52d13046bb1f637fe644dcec1188e4a7b833c26a033e060b5938b017b348a0ac",
-        "scripts/upgrade-host-control.sh": "bfe0f97c8f10eaf71fbc305c999efc58fd502cb13bdbcbe9f7d9db1cb7fb109f",
+        "scripts/quarantine-failed-bootstrap.sh": "10d848ae8eab977b9956296b3223bb9f09503254000ff99b7040c1f9bb1b9418",
+        "scripts/upgrade-host-control.sh": "7af635432c2a53f35cb43d6779a21c9a1119e595bbd7e4eb23c12093ec330019",
     }
     post_lock_operation_anchors = {
         "scripts/prepare-media-certificate.sh": '[[ ! -e /var/lib/mochirii/forums/deployment-mutation.json && ! -L /var/lib/mochirii/forums/deployment-mutation.json ]] || fail "Certificate preparation refuses an active deployment mutation."',
@@ -8737,6 +8737,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
             'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
             'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
+            'readonly reviewed_acme_transport_postfailure_successor_commit="0050c53fea27387c85248bccd952dc4b1d483b9f"',
+            'readonly reviewed_acme_transport_current_main_commit="2ef406103c06d0b4defa339d79a08cba035239e4"',
             'rev-parse --verify "${requested_commit}^1"',
             'rev-list --parents -n 1 "${requested_commit}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8757,6 +8759,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_transport_repair_expected_paths=(',
             'acme_transport_current_expected_paths=(',
             'acme_transport_postfailure_current_expected_paths=(',
+            'acme_transport_current_main_expected_paths=(',
+            'acme_transport_lineage_repair_expected_paths=(',
             'acme_transport_expected_paths=(',
             'diff-tree --no-commit-id --name-only -r "${pending_commit}" "${requested_commit}"',
             'GIT_NO_REPLACE_OBJECTS=1',
@@ -8847,6 +8851,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'readonly reviewed_acme_transport_failed_bootstrap_commit="ed2d1f0bedf4e7865c5ac3737fdae2308630e25a"',
             'readonly reviewed_acme_transport_recovery_commit="5272554d33e9fcfc8f634ea14bc8e1f295b4278b"',
             'readonly reviewed_acme_transport_postfailure_parent_commit="da21f45b6b7b0ed5514b7242113b3c5cf95e86f6"',
+            'readonly reviewed_acme_transport_postfailure_successor_commit="0050c53fea27387c85248bccd952dc4b1d483b9f"',
+            'readonly reviewed_acme_transport_current_main_commit="2ef406103c06d0b4defa339d79a08cba035239e4"',
             'rev-parse --verify "${current}^1"',
             'rev-list --parents -n 1 "${current}"',
             'rev-parse --verify "${reviewed_acme_material_review_authority_commit}^1"',
@@ -8891,6 +8897,8 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
             'acme_transport_repair_expected_paths=(',
             'acme_transport_current_expected_paths=(',
             'acme_transport_postfailure_current_expected_paths=(',
+            'acme_transport_current_main_expected_paths=(',
+            'acme_transport_lineage_repair_expected_paths=(',
             'acme_transport_expected_paths=(',
             'object_pairs_hook=reject_duplicate',
             'metadata.st_uid != 0',
@@ -9301,14 +9309,14 @@ reject_sensitive_log!(:input) unless ENV["MOCHIRII_STAGE4_CONNECT_FIXTURE"] == "
         "repository-clean": "e34f64928aa6e5679ca75752464f730c468619d3b09c85f1a53df06c1dcd9d58",
         "repository-bound-file": "32ccf0b9dca63fc2359343a7fbf53910177f3916a63507ae6101ccb5bfa46f8f",
         "canonical-remote": "2ef17a0c9c251c543f673cc8b1d484660f245aa496b52ace15f4904949fcccaa",
-        "quarantine-lineage": "90d30f29d1e2136dfa24596ae2adcdfc4d2825a12e82f72eb6986df644580333",
+        "quarantine-lineage": "fc8c52676e61f18c38bebc67fa2b22a8f3abf382a276450ec1a8aa9a91a86eec",
         "quarantine-state": "384733dad7fbc9bd502059dd1e6d71aaabcc99e3dd74ff4c426a85aefa6d0080",
         "quarantine-identity": "a400d1c326e60627c30647bdea253193797d5bef71ff1697612c4df4c812e952",
         "quarantine-preflight": "77a6756e317ba9e27ccbe09394888df019710121d05605a447365cc00ed1bb9d",
         "quarantine-recovery": "0e632a9a2145a929e087f018ea69769eef5e81609f56e0d37430cd070c31c156",
         "upgrade-selector": "0e40b1ff2fb132ed69e3eead53e5ae3b3ffeac9dc9727bc689f5ffbb62c92268",
-        "upgrade-path-validator": "82a960c090f3520a7f08d6a8bd47e38b518d50ba2edab0095c4328aef7dbf1ed",
-        "upgrade-binder": "5cd5c1c9608bf6f12f57278caaeec05bdd04a98a4254a86632a826b70e41d419",
+        "upgrade-path-validator": "80cf2b8b2c363c137e14794492a42c95ac1781051221cbd0e6056a734c845601",
+        "upgrade-binder": "874654d82786b2b2ebfe0aa215f7dd2f90d34a9adf95d6aca9d328a19ac0ad8d",
         "upgrade-preflight": "9da1fb4f1b95523e4f5b45d2df7421b8537e05a02284308b6e218ebfd2b6d7b9",
         "upgrade-exception": "f772ab41e59c625de9c3d73cfe4d0638dd966396a198a32c3d235acef310df76",
         "upgrade-predecessor-requirement": "83fab62655d7a4eb81261d65415018d9fed720f5cf92d276675c93e728ac2493",
